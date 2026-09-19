@@ -1,6 +1,6 @@
 <div align="center">
 
-# Mousiki 🎵
+ # Mousiki 🎵
 
 <p align="center">
   <a href="https://opensource.org/" target="_blank">
@@ -22,6 +22,8 @@
 
 Mousiki is a terminal music player built from the ground up for people who prefer control, simplicity, and a keyboard. It's a fast, focused TUI (Terminal User Interface) without unnecessary interface layers — fully keyboard-driven and configurable, with spectrum visualizers, synced lyrics, and online streaming, all without leaving your terminal.
 
+``Personal preference is not a compromise—it's the design goal.``
+ 
 ## Preview
 
 ![Mousiki Preview](./preview.gif)
