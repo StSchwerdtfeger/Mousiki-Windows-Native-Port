@@ -1,5 +1,6 @@
 # Mousiki Configuration File
-# Location: $HOME/.config/mousiki/config.txt
+# Location (Windows): %USERPROFILE%\.config\mousiki\config.txt
+# Location (Linux/macOS): $HOME/.config/mousiki/config.txt
 
 ##-------------------------------------------
 ##              PANEL 1: COLORS
@@ -83,7 +84,7 @@ ConsoleVerbosity=basic
 ## basic , verbose
 ## basic   = every command mousiki ran (yt-dlp/ffprobe/ffmpeg/lyrics-fetch) + its raw output
 ## verbose = basic, plus internal/OS-level events (terminal resize, audio device init, spawn errors, ...)
-## Log file: $HOME/.cache/mousiki/logs/console.log -- wiped fresh at the start of every session.
+## Log file (Windows): %USERPROFILE%\.cache\mousiki\logs\console.log -- wiped fresh at the start of every session.
 
 ##-------------------------------------------
 ##             AUTOSAVE / SESSION SNAPSHOT
@@ -91,7 +92,7 @@ ConsoleVerbosity=basic
 
 AutoSave=true
 ## resumes the exact song/position/queue/repeat/shuffle next launch.
-## Snapshot file: $HOME/.cache/mousiki/snapshot/snapshot.json
+## Snapshot file (Windows): %USERPROFILE%\.cache\mousiki\snapshot\snapshot.json
 AutoSaveIndicator=true
 AutoSaveDelayInSec=30
 AutoSaveChr=•
@@ -149,10 +150,12 @@ ListSeparator="|"
 HKeySetting="s"
 
 # Local Music Paths
-LocalMusicPath=/data/data/com.termux/files/home/disk/Download
-LocalMusicPath=~/disk/Music
-LocalMusicPath=~/music
+# Windows paths and ~ expansion both work; forward and backward slashes
+# are both fine. Add/edit these while mousiki is closed -- the library is
+# scanned once at startup, there's no live rescan.
+LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=~/Music
+
 
 # Navigation
 HKeyNavigateUp="ARROW_KEY_UP"
@@ -181,6 +184,13 @@ HKeyConsole="t"
 HKeyToggleMute="x"
 HKeyCheatsheet="?"
 HKeyRetryLyrics="l"
+# Added in the Windows fork -- all five are remappable like every hotkey
+# above (see "Hotkey remapping" in README.md).
+HKeyShuffleNext="#"
+HKeyToggleLyrics="+"
+HKeyQueueMoveUp="u"
+HKeyToggleWaveform="w"
+HKeyCycleSortMode="T"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
@@ -188,17 +198,16 @@ HKeyRetryLyrics="l"
 
 ClassTextAboutApp= {
 
-
-
-
-
-
 Devloper : ender
 Github   : itzender5820
 Email    : itz.ender5820@gmail.com
 Discord  : itx.ender
-Version  : orignal and final v1.0 
+Version  : orignal and final v1.0
 Licence  : Apache licence 2.0
+
+Windows port : Steffen Schwerdtfeger
+Github       : StSchwerdtfeger
+Adjusted to run on Windows, with the help of AI tools.
 
 
 Mousiki
@@ -223,7 +232,8 @@ Features
 - Fully configurable hotkeys
 
 Configuration
-$HOME/.config/mousiki/config.txt
+Windows: %USERPROFILE%\.config\mousiki\config.txt
+Linux/macOS: $HOME/.config/mousiki/config.txt
 
 Mousiki is free software.
 Built with care for the terminal.
