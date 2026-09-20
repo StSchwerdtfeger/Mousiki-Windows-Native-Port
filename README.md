@@ -1,150 +1,160 @@
-<div align="center">
+# Mousiki 🎵 (Windows port, tested on PowerShell 7.6.6)
 
- # Mousiki 🎵
+A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author.
 
-<p align="center">
-  <a href="https://opensource.org/" target="_blank">
-    <img src="https://i0.wp.com/opensource.org/wp-content/uploads/2023/03/cropped-OSI-horizontal-large.png?fit=640%2C229&quality=80&ssl=1" alt="OSI" height="52" /></a>
-&nbsp;
-  <a href="https://www.apache.org/" target="_blank">
-    <img src="https://www.apache.org/images/oakleaf.svg" alt="Apache" height="52" /></a>
-</p>
+This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
+- **Original:** [github.com/itzender5820/mousiki](https://github.com/itzender5820/mousiki) — ender ([itzender5820](https://github.com/itzender5820))
+- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly Sonett 5 set on medium). Therefore take the below with a grain of salt, since I am not a developer for applications like this. However, I liked this music player way too much to not want to use it on my Windows setup, so I went this path and vibe coded a port for Windows. *Huge shout out for the great work by itzender5820 for this beautiful music player.*  
+- **License:** Apache 2.0 — see [LICENSE](LICENSE)
 
-> [!NOTE]
-> **Developer note:** Mousiki is released under the Apache License 2.0.
-> You are free to use, modify, fork, re-distribute, and sell the software,
-> subject to the terms of the license.
+![preview](preview.gif)
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/itzender5820/mousiki/blob/main/LICENSE)
-[![Language](https://img.shields.io/badge/Language-C++17-orange.svg)](https://github.com/itzender5820/mousiki)
-[![Platform](https://img.shields.io/badge/Platform-Linux_%7C_Android_%7C_MacOS-brightgreen.svg)](https://github.com/itzender5820/mousiki)
+## Quick start
 
-Mousiki is a terminal music player built from the ground up for people who prefer control, simplicity, and a keyboard. It's a fast, focused TUI (Terminal User Interface) without unnecessary interface layers — fully keyboard-driven and configurable, with spectrum visualizers, synced lyrics, and online streaming, all without leaving your terminal.
+```powershell
+# from the repo root, in PowerShell 7.6.6 (not tested with older versions!!!)
+.\setup.ps1
+```
+This temporarily disables script blocking and warning prompts for the currently active PowerShell session only,
+in case the above does not compute in your PowerShell.
 
-``Personal preference is not a compromise—it's the design goal.``
- 
-## Preview
-
-![Mousiki Preview](./preview.gif)
-
-</div>
-## ✨ Features
-
-- **Local Music Playback:** Instantly browse and play your local music files.
-- **Online Search & Streaming:** Search and stream tracks directly from online sources.
-- **Synced Lyrics:** Real-time, word-by-word active lyrics highlighting as the song plays.
-- **Visualizers:** Real-time FFT spectrum, waveform rendering, and spinning disk art.
-- **Queue Management:** Effortless queueing, shuffling, and repeating.
-- **Highly Configurable:** Tweak colors, visualizer fluidity, animations, and hotkeys to match your exact workflow.
-
-## 🚀 Supported Platforms
-
-- **Native Support:** **Linux**, **macOS**, and **Android (Termux)**.
-- **Unverified Support:** *Windows*. (Support for Windows is currently not verified because I don't have the hardware access needed to test and debug on that operating system. If you try it out and get it working, feel free to contribute!)
-
-## 🛠️ Getting Started
-<div align="center">
-  
-## Default Keybindings
-
-Configurable in `$HOME/.config/mousiki/config.txt`.
-
-### Search & Playback
-| Action | Keybinding | Description |
-| :--- | :--- | :--- |
-| **Local Search** | `/` | Filter and search local library |
-| **Online Stream Search** | `/s: <query>` | Search and stream music online |
-| **Download Stream** | `y` | Download currently streaming track |
-| **Play / Pause** | `p` (or `ENTER`) | Toggle playback |
-| **Next / Previous Track** | `n` / `b` | Skip between songs |
-| **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
-| **Volume** | `1` / `2` | Decrease / Increase volume |
-| **Shuffle / Repeat** | `m` / `r` | Toggle shuffle or repeat mode |
-
-### Navigation & Queue
-| Action | Keybinding | Description |
-| :--- | :--- | :--- |
-| **Navigate** | `ARROW_UP` / `ARROW_DOWN` | Move selection |
-| **Switch Tabs/Cards** | `TAB` | Cycle between UI panels |
-| **Add to Queue** | `a` | Enqueue selected track |
-| **Remove from Queue** | `d` | Dequeue selected track |
-| **Filter by Folder** | `f` | Apply folder filter |
-| **Clear Filter** | `c` | Reset active search/filters |
-| **Quit** | `q` | Exit application |
-
-</div>
-
-### Prerequisites & Installation
-
-Mousiki relies on a few external tools for audio fetching, decoding, and lyrics. The easiest way to get started is by running the setup script on macOS (requires [Homebrew](https://brew.sh)), Debian-based Linux, or Termux:
-
-```bash
-# Clone the repository
-git clone https://github.com/itzender5820/mousiki.git
-cd mousiki
-
-# Run the setup script (installs dependencies, sets up config, and builds the app)
-bash setup.sh
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
 ```
 
-If you're building manually, ensure you have `cmake`, a C++17 compiler, `ffmpeg`, `yt-dlp`, and the Python `requests` package installed.
+You can build the .exe via the following, however, the setup.ps1 already performs building the file
+(so the below is just in case something didn't work computing setup.ps1 and you want to build after debugging):
 
-### Running the App
-
-After a successful build, you can start the player with:
-```bash
-./build/mousiki
+```powershell
+.\build\Release\mousiki.exe
 ```
 
-## ⚙️ Configuration
+Run app e.g. via (adjust username in the path before executing!!).
+Note that you haave to add your local files path via the config.txt file in "C:\Users\YOURNAME\.config" (more details further below).
+See original repo by itzender5820 for an introduction on how to use Mousiki.
+```powershell
+& 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe'
+```
+Personally, I recommend writing a function in your Powershell profile.ps1 in order to be able to run the app via a command (in my case I set the command to be "lala"):
+To do so, open your profile file via:
 
-Your configuration file will be automatically generated at `$HOME/.config/mousiki/config.txt`. From there, you have complete freedom to customize Mousiki.
-
-### Adding Custom Music Paths
-You can easily tell Mousiki where to look for your music. Simply add multiple `LocalMusicPath` entries in your `config.txt`:
-
-```ini
-# Add as many custom paths as you need:
-LocalMusicPath=/custom/path
-LocalMusicPath=/home/user/Music
+```powershell
+notepad $PROFILE
 ```
 
-## 🙏 Attribution & Dependencies
+Then add the following (as said, I called the function lala but you can choose whatever you want; there is certainly a bunch of already existing commands, such as e.g. python, but you should be safe for most of the cases). 
+Again, add your Username in the path!
 
-Mousiki stands on the shoulders of giants. A huge thank you to the developers behind these awesome open-source projects that make Mousiki tick:
+```powershell
+function lala {
+    & 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe' @args
+}
+```
+Save your profile.ps1 via Ctrl + S and open a new terminal in order to be able to test your new function.
+Voilá, you can now open Mousiki from any folder you're at using the command "lala", or whatever you set as command respectively...
 
-- **[miniaudio](https://github.com/mackron/miniaudio):** An incredible single-file audio playback and capture library.
-- **[kissfft](https://github.com/mborgerding/kissfft):** A wonderfully simple and lightweight real-input FFT library (powering the spectrum visualizer).
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp):** The backend magic for our online search and streaming capabilities.
-- **requests:** Python package used by `scripts/lrc.py` to fetch synced lyrics from Better Lyrics (primary) and [LRCLIB](https://lrclib.net) (fallback).
-- **[FFmpeg](https://ffmpeg.org/):** The Swiss army knife of multimedia handling.
+## Prerequisites
 
-<div align="center">
+Note, I had a bunch of the below already installed, so I am not sure how smooth setup.ps1 runs installing the below for the first time using setup.ps1 (such as installing Visual Studio 2022 Build Tools...).
 
-## 📜 License
+`setup.ps1` installs these via winget, except the compiler:
 
-This project is open-sourced under the [Apache License 2.0](LICENSE). 
+| Tool | Why | Install |
+|---|---|---|
+| Visual Studio 2022 Build Tools, "Desktop development with C++" | compiles the app | must be selected interactively — winget's silent mode won't pick the C++ workload |
+| CMake ≥ 3.16 | build system | `winget install Kitware.CMake` |
+| FFmpeg | decodes Opus (miniaudio can't), `ffprobe` supplies metadata | `winget install Gyan.FFmpeg` |
+| yt-dlp | online search fallback, playlists, streaming | `winget install yt-dlp.yt-dlp` |
+| Python 3 + `requests` | lyrics and fast online search (`scripts/`) | `winget install Python.Python.3.12` then `py -3 -m pip install requests` |
 
-## Star History
+All of these are independent of each other and of the core player. With none of them installed, local playback still works.
 
-<a href="https://www.star-history.com/?repos=itzender5820%2Fmousiki&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=itzender5820/mousiki&type=date&theme=dark&legend=top-left" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=itzender5820/mousiki&type=date&legend=top-left" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=itzender5820/mousiki&type=date&legend=top-left" />
-  </picture>
-</a>
+MinGW-w64 (MSYS2 UCRT64) also builds this — configure with `-G "MinGW Makefiles"`. The code guards on `_WIN32`, not on `_MSC_VER`, except where MSVC genuinely differs (noted inline where it matters).
 
----
-*Crafted with ❤️ for the terminal by [itzender5820](https://github.com/itzender5820)*
+`third_party/` (miniaudio, kissfft) isn't vendored in this repo — `CMakeLists.txt` downloads both automatically on first configure if they're not already present locally. That means the very first build needs an internet connection even if you already have every tool above installed.
+
+## Use Windows Terminal
+
+The entire UI is ANSI escape sequences. `mousiki.exe` enables `ENABLE_VIRTUAL_TERMINAL_PROCESSING` at startup and exits with a clear message if that fails, rather than rendering garbage. Windows Terminal (`wt.exe`) works; the legacy conhost window on pre-1511 Windows builds does not.
+
+## Where your files go
+
+`$HOME` doesn't exist on Windows, and the original codebase looks it up in seven different places to find its directories. Rather than rewrite all seven call sites to be platform-aware, this port points `HOME` at `%USERPROFILE%` for its own process at startup, so every one of those paths resolves exactly the way it does on Linux/macOS:
+
+| | Path |
+|---|---|
+| Config | `%USERPROFILE%\.config\mousiki\config.txt` |
+| Cache (downloaded/streamed tracks) | `%USERPROFILE%\.cache\mousiki\` |
+| Log | `%USERPROFILE%\.cache\mousiki\logs\console.log` |
+| Session snapshot | `%USERPROFILE%\.cache\mousiki\snapshot\snapshot.json` |
+
+`LocalMusicPath=` entries accept Windows paths and `~` expansion, and both slash directions work (`std::filesystem` normalizes them):
+
+```
+LocalMusicPath=C:\Users\you\Music
+LocalMusicPath=~/Music
+```
+
+There's no in-app UI for adding a folder — that isn't a Windows-port limitation, the original never had one either; `config.txt` is the only way, on every platform. The library is scanned once at startup, so add or edit `LocalMusicPath=` lines while mousiki is closed; there's no live rescan.
+
+## Hotkey remapping
+
+Every hotkey in `config.txt` — and everything editable under Settings → Reference in the app itself — is genuinely rebindable, including the five new ones this fork adds (see below). This is worth calling out specifically because **it wasn't actually true in the original codebase either**: the lookup function that turns a configured key string into an action existed there, fully implemented, but nothing ever called it, so editing a binding only ever changed what was *displayed*, never what the key actually did. This port wires that lookup into the real input dispatch, so `config.txt` and the in-app editor now mean what they say — on top of everything already provided upstream, not as a Windows-specific feature.
+
+## What had to change
+
+Thirteen files needed direct `#ifdef _WIN32` branches; a similar number needed changes that apply on every platform but were only ever exposed by something Windows does differently (mostly the UTF-8 path handling below). Everything else compiled and ran unmodified.
+
+### Console & terminal I/O
+
+POSIX raw mode (`termios`), key polling (`read()` off `STDIN_FILENO`), window size (`ioctl(TIOCGWINSZ)`), and even `wcwidth()` for East-Asian character width have no Windows equivalent. All of it is replaced by Win32 Console API calls behind a small platform shim (`win_compat.h`/`.cpp`, new in this fork) — `SetConsoleMode`, `_kbhit`/`_getch` (with its own extended-key scan codes translated to match the POSIX escape-sequence path, so the rest of the app never has to know which platform it's on), `GetConsoleScreenBufferInfo`, and a hardcoded East-Asian-width table for `wcwidth`, since MSVC's CRT doesn't ship one at all.
+
+Rendering initially used `SetConsoleOutputCP(CP_UTF8)`, which turned out to be unreliable across console hosts — box-drawing and other multi-byte glyphs could still come out as mojibake depending on the terminal. `win_compat.cpp` now converts to UTF-16 and writes through `WriteConsoleW` directly, which removes the ambiguity.
+
+### Filenames, paths, and non-ASCII text
+
+This was the deepest rabbit hole, and the one most likely to still bite on an untested edge case. MSVC's `std::filesystem::path::string()` converts through the process's **ANSI code page** — and a character with no mapping in that code page (which, for the vast majority of Windows installs, includes almost anything outside Western European Latin script) doesn't get substituted, it throws `std::system_error`. A library with any Japanese, Korean, Cyrillic, or similar filenames would crash outright the moment such a file scrolled into view, with no way to work around it from inside the app.
+
+The fix is a small header, `path_utf8.h` (new), providing `path_utf8()` / `path_from_utf8()` as the only sanctioned way to convert between `fs::path` and the UTF-8 `std::string`s the rest of the codebase already speaks — UTF-16⇄UTF-8 conversion on Windows, a plain passthrough everywhere else. Every `.string()` call and every `fs::path(some_std_string)` construction across the tree (about twenty call sites, in `app.cpp`, `local_source.cpp`, `metadata_probe.cpp`, `settings.cpp`, `cache_manager.cpp`, `youtube_source.cpp`, `lyrics_fetcher.cpp`, `native_duration.cpp`, `console_log.cpp`) was audited and routed through it. A handful of related fixes came out of the same pass:
+
+- `waveform.cpp`'s use of `miniaudio`'s narrow file-open API silently failed (and fell through to a much slower `ffmpeg` decode) for any non-ASCII path — switched to `ma_decoder_init_file_w` on Windows.
+- Case-insensitive matching (search, extension checks) used to fold text byte-by-byte with `std::tolower`, which corrupts multi-byte UTF-8 sequences under a single-byte locale. Replaced with ASCII-only folding that leaves every non-ASCII byte untouched.
+- The cache filename sanitizer kept only `[A-Za-z0-9]`, so any track with no Latin characters in its title collapsed to a generic `untitled` filename, and every such track collided on the same name. Non-ASCII codepoints are now kept verbatim (they're legal in NTFS filenames; the characters Windows actually forbids are all ASCII, and were already excluded).
+
+### Subprocess execution
+
+The original shells out to `ffprobe`, `ffmpeg`, `yt-dlp`, and Python for a handful of tasks. POSIX quoting/spawning and Windows' `CreateProcess`/command-line quoting rules are entirely different beasts, so `process_util.cpp` gained a full Windows implementation: an sh-compatible tokenizer that parses the POSIX-style quoted command string the rest of the app already builds, then re-serializes each argument using the (unintuitive, backslash-doubling) rules `CreateProcessW` actually expects. `CreateProcess`'s handle inheritance also turned out to be racy across concurrent spawns in a way POSIX's `posix_spawn` isn't — mousiki spawns several subprocesses from different threads at once by design (a background metadata sweep, a track's own `ffprobe`/`ffmpeg`, yt-dlp resolution, the lyrics helper), so every spawn now gets an explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` instead of inheriting every handle open in the process.
+
+### Native audio-file parsing
+
+`native_duration.cpp` reads MP4/OGG/MP3 headers directly (no subprocess) for fast duration lookups. It leaned on `pread()`, `off_t`, and `open()` — none of which exist as such on Windows. Replaced with `_wopen()` (taking the native wide path, with `_O_BINARY` so the CRT doesn't mangle binary audio data by translating CRLF sequences inside it), `_fstat64`, and a `pread` emulation built on `OVERLAPPED` I/O. `off_t` is 32-bit under MSVC, so every offset in this file is a plain `long long` now instead.
+
+### The playback thread
+
+Track switches used to spin up a fresh OS thread per track to call into WASAPI. WASAPI's COM objects are apartment-affine to whichever thread created them, which a fresh thread per track violates outright. Playback now runs through one persistent device-worker thread for the whole session, which made `Player` genuinely concurrent with the main thread for the first time — it gained an internal mutex (`player.h`/`.cpp`) to guard against the two actually racing.
+
+### Locale
+
+`main()` calls `setlocale(LC_ALL, "")` to get correct character handling for the active locale — inherited from the original, not Windows-specific. What's Windows-specific is the consequence: that call also sets `LC_NUMERIC`, and on a comma-decimal Windows locale (German, French, ...), every `std::stod()` call in the app — settings parsing, `ffprobe`/JSON durations, lyric timestamps — silently truncated at the first `.` with no exception thrown. `LC_NUMERIC` is now pinned back to `"C"` immediately after, independent of whatever the rest of the locale is doing.
+
+### Thread-safety net
+
+Every background `std::thread` (metadata sweep, decode, lyrics fetch, waveform pass, search, playlist add, the device worker) is now wrapped so an exception escaping it becomes a log line instead of an immediate, silent `std::terminate()` — the default behavior for an uncaught exception in a detached thread, and on Windows that means the whole process vanishes with no message at all. Several of the bugs above were originally diagnosed by their symptom being exactly this: total, silent process death with nothing to go on.
+
+### Python helper scripts
+
+`scripts/fetch_lyrics.py` and `scripts/lrc.py` are unchanged in what they fetch, but gained a UTF-8 stdout/stderr reconfiguration at startup. Python picks a text encoding for a redirected pipe from the OS locale; Linux desktop sessions inherit a UTF-8 `LANG` down to every child process automatically, Windows has no equivalent, so Python fell back to the ANSI code page — meaning a lookup for a Japanese, Cyrillic, or otherwise non-Latin track title could crash the script outright the instant it tried to print that title back (even just to report "no lyrics found"), which looked from the app's side identical to the script not existing at all. `scripts/fast_yt_search.py` — present upstream but never actually called from the C++ side — is now wired in as the default online search path (see below), with the same UTF-8 safeguard applied on principle.
+
+## Beyond the port
+
+A few things added on top of the original design rather than required to run it at all:
+
+- **Hotkey remapping actually works** (see above) — arguably a bug fix rather than a feature, but it's new behavior either way.
+- **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. It's tried first; `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
+- **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
+- **A Lyrics Engine toggle that actually gates fetching**, not just the panel's visibility (`+` to toggle, or Settings → On/Off) — previously the fetch ran and hit the network every single track regardless of whether the panel was shown. Toggling it off now shows the sphere visualization in that space instead of leaving it blank.
+- **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
 
 
-<p align="center">
-  <img
-    src="https://raw.githubusercontent.com/mayankchaudhary26/Cool-Readme-ideas/refs/heads/master/data/trust%20me.gif"
-    alt="Trust me"
-  />
-</p>
-
-</div>
