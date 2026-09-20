@@ -1,29 +1,56 @@
 #include "local_source.h"
+#include "path_utf8.h"
+#include "utf8_util.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <set>
+#if defined(_WIN32)
+#include "win_compat.h"
+#endif
 
 namespace muisc {
 
+namespace {
+// This used to be a file-local helper. The same conversion is needed in a
+// dozen other translation units (every one of which was still calling the
+// throwing .string()), so it now lives in path_utf8.h; this alias keeps the
+// call sites below unchanged.
+inline std::string path_str(const fs::path& p) { return path_utf8(p); }
+} // namespace
+
 bool LocalSource::is_audio_file(const fs::path& p) {
     static const std::set<std::string> exts = {".wav", ".mp3", ".opus", ".flac", ".ogg", ".m4a", ".aac", ".webm"};
-    return exts.count(p.extension().string()) > 0;
+    // fs::path::extension() preserves whatever case is actually stored on
+    // disk -- it does not normalize it. On Linux that's rarely an issue
+    // since lowercase extensions are close to universal convention there,
+    // but Windows files routinely carry ".MP3"/".Mp3"/etc. (ripped CDs,
+    // older downloads, files that passed through Explorer at some point),
+    // and a case-sensitive set lookup silently excluded every one of them
+    // from the scan -- not an error, just an empty-looking library.
+    std::string ext = ascii_lower_str(path_str(p.extension()));
+    return exts.count(ext) > 0;
 }
 
-std::vector<LocalTrack> LocalSource::scan(const std::vector<std::string>& custom_paths) const {
+std::vector<LocalTrack> LocalSource::scan(const std::vector<std::string>& custom_paths,
+                                           std::vector<std::string>* diagnostics) const {
     std::vector<LocalTrack> tracks;
     std::vector<fs::path> roots;
 
     if (!custom_paths.empty()) {
         for (const auto& cp : custom_paths) {
-            roots.push_back(fs::path(cp));
+            // path_from_utf8, not fs::path(cp): `cp` came out of
+            // config.txt as UTF-8, and fs::path(std::string) reinterprets
+            // it as ANSI on Windows -- so a music folder with an accent in
+            // its name resolved to a path that does not exist, and the
+            // scan silently found nothing.
+            roots.push_back(path_from_utf8(cp));
         }
     } else {
         const char* home = std::getenv("HOME");
         if (home) {
-            roots.push_back(fs::path(home) / "Music");
-            roots.push_back(fs::path(home) / "disk" / "Music");
+            roots.push_back(path_from_utf8(home) / "Music");
+            roots.push_back(path_from_utf8(home) / "disk" / "Music");
         }
     }
 
@@ -38,30 +65,66 @@ std::vector<LocalTrack> LocalSource::scan(const std::vector<std::string>& custom
 
     for (const auto& root : roots) {
         std::error_code ec;
-        if (!fs::exists(root, ec) || !fs::is_directory(root, ec)) continue;
+        bool exists = fs::exists(root, ec);
+        bool is_dir = exists && !ec && fs::is_directory(root, ec);
+        if (!exists || ec || !is_dir) {
+            if (diagnostics) {
+                diagnostics->push_back(
+                    "local scan: '" + path_str(root) + "' -- " +
+                    (ec ? ("error: " + ec.message())
+                        : (!exists ? "does not exist" : "exists but is not a directory")));
+            }
+            continue;
+        }
+
+        size_t before = tracks.size();
         for (const auto& entry : fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
-            if (entry.is_regular_file() && is_audio_file(entry.path())) {
+            // is_regular_file() with no error_code argument throws on
+            // anything the OS can't stat cleanly -- which, unlike a plain
+            // local folder, a OneDrive-backed folder (the common case for
+            // "Music"/"Musik" on Windows, per the Known Folder note above)
+            // routinely contains: cloud-only placeholder files that don't
+            // have real on-disk content until opened. Every other call in
+            // this loop already goes through an error_code out-param for
+            // exactly this reason; this one was missed, and an uncaught
+            // exception here unwinds straight out of App's constructor.
+            std::error_code fec;
+            bool is_file = entry.is_regular_file(fec);
+            if (fec) continue; // couldn't stat it (cloud placeholder, permissions, ...) -- skip, don't crash
+            if (is_file && is_audio_file(entry.path())) {
                 std::error_code cec;
                 fs::path canon = fs::canonical(entry.path(), cec);
-                std::string key = cec ? entry.path().string() : canon.string();
+                std::string key = cec ? path_str(entry.path()) : path_str(canon);
                 if (!seen_canonical.insert(key).second) continue; // already listed via another root
 
-                std::string folder = entry.path().parent_path().filename().string();
-                if (folder.empty() || fs::path(folder) == root.filename()) folder = "-";
-                tracks.push_back({entry.path().stem().string(), entry.path(), folder});
+                std::string folder = path_str(entry.path().parent_path().filename());
+                // Compare as UTF-8 strings. Round-tripping `folder` back
+                // through fs::path(std::string) would re-encode it via the
+                // ANSI code page and make the comparison fail (or throw).
+                if (folder.empty() || folder == path_str(root.filename())) folder = "-";
+                tracks.push_back({path_str(entry.path().stem()), entry.path(), folder});
             }
+        }
+        if (diagnostics) {
+            diagnostics->push_back(
+                "local scan: '" + path_str(root) + "' -- found " +
+                std::to_string(tracks.size() - before) + " audio file(s)" +
+                (ec ? (" (stopped early: " + ec.message() + ")") : ""));
         }
     }
     return tracks;
 }
 
 std::optional<LocalTrack> LocalSource::find(const std::string& query, const std::vector<std::string>& custom_paths) const {
-    std::string needle = query;
-    std::transform(needle.begin(), needle.end(), needle.begin(), ::tolower);
+    // ascii_lower_str, not ::tolower over bytes: `query` and the titles it is
+    // matched against are UTF-8, and a byte-wise locale-aware fold corrupts
+    // every multi-byte character in them (see utf8_util.h). ASCII folding is
+    // all a case-insensitive substring match needs, and it leaves Japanese,
+    // Cyrillic, accented latin and everything else intact.
+    std::string needle = ascii_lower_str(query);
 
     for (const auto& track : scan(custom_paths)) {
-        std::string hay = track.title;
-        std::transform(hay.begin(), hay.end(), hay.begin(), ::tolower);
+        std::string hay = ascii_lower_str(track.title);
         if (hay.find(needle) != std::string::npos) return track;
     }
     return std::nullopt;

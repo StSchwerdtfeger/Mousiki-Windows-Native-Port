@@ -4,16 +4,28 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#if defined(_WIN32)
+#include "win_compat.h"
+#else
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <cwchar>
+#endif
 
 namespace muisc {
 
+#if !defined(_WIN32)
 static struct termios g_orig_termios;
+#endif
 
 TerminalIO::TerminalIO() {
+#if defined(_WIN32)
+    // The console mode/code-page save already happened in main() via
+    // win_console_init(); this only flips input into the no-echo,
+    // no-line-editing state that the termios branch below sets up.
+    win_raw_mode_enter();
+#else
     struct termios raw;
     tcgetattr(STDIN_FILENO, &g_orig_termios);
     raw = g_orig_termios;
@@ -21,6 +33,7 @@ TerminalIO::TerminalIO() {
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+#endif
     raw_mode_active_ = true;
     // Alternate screen buffer: the terminal keeps a second, separate
     // grid (same dimensions as the visible one) while this is active.
@@ -48,7 +61,11 @@ TerminalIO::~TerminalIO() { restore(); }
 
 void TerminalIO::restore() {
     if (raw_mode_active_) {
+#if defined(_WIN32)
+        win_raw_mode_exit();
+#else
         tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
+#endif
         std::cout << "\x1b[?25h" << "\x1b[?1049l" << std::flush; // show cursor, leave alt-screen
         raw_mode_active_ = false;
     }
@@ -67,15 +84,26 @@ void TerminalIO::restore() {
 // the entire render loop until a keypress+Enter happens to satisfy it.
 void TerminalIO::reassert_raw_mode() {
     if (!raw_mode_active_) return;
+#if defined(_WIN32)
+    // Same reasoning, different mechanism: ffmpeg and yt-dlp are spawned with
+    // their own console handles (see process_util.cpp), but re-asserting the
+    // input mode every frame is one cheap call and makes the render loop
+    // self-healing if anything else resets it.
+    win_raw_mode_enter();
+#else
     struct termios raw = g_orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+#endif
 }
 
 int TerminalIO::poll_key() {
     reassert_raw_mode();
+#if defined(_WIN32)
+    return win_poll_key();
+#else
     unsigned char c = 0;
     if (read(STDIN_FILENO, &c, 1) != 1) return 0;
 
@@ -94,24 +122,39 @@ int TerminalIO::poll_key() {
         return 27;
     }
     return c;
+#endif
 }
 
 int TerminalIO::rows() const {
+#if defined(_WIN32)
+    return win_term_rows();
+#else
     struct winsize ws{};
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) return ws.ws_row;
     return 40;
+#endif
 }
 
 int TerminalIO::cols() const {
+#if defined(_WIN32)
+    return win_term_cols();
+#else
     struct winsize ws{};
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) return ws.ws_col;
     return 155;
+#endif
 }
 
 static int codepoint_width(uint32_t cp) {
     if (cp == 0) return 0;
     if (is_indic_codepoint(cp)) return indic_codepoint_width(cp);
+#if defined(_WIN32)
+    // Not wcwidth(static_cast<wchar_t>(cp)): wchar_t is 16 bits here, so
+    // that cast silently mangles every codepoint above U+FFFF.
+    int w = win_codepoint_width(cp);
+#else
     int w = wcwidth(static_cast<wchar_t>(cp));
+#endif
     return w < 0 ? 0 : w;
 }
 // w
@@ -187,6 +230,29 @@ std::string utf8_take(const std::string& s, int width) {
     return out;
 }
 
+std::string utf8_skip_take(const std::string& s, int skip_cols, int take_cols) {
+    std::string out;
+    size_t i = 0;
+    int skipped = 0;
+    uint32_t prev_cp = 0;
+    while (i < s.size() && skipped < skip_cols) {
+        uint32_t cp = utf8_decode(s, i);
+        skipped += codepoint_width(cp);
+        prev_cp = cp;
+    }
+    (void)prev_cp;
+    int taken = 0;
+    while (i < s.size() && taken < take_cols) {
+        size_t start = i;
+        uint32_t cp = utf8_decode(s, i);
+        int w = codepoint_width(cp);
+        if (taken + w > take_cols) break;
+        out += s.substr(start, i - start);
+        taken += w;
+    }
+    return out;
+}
+
 std::string pad_right(const std::string& s, int width) {
     if (width <= 0) return "";
     int w = display_width(s);
@@ -207,6 +273,69 @@ std::string truncate_str(const std::string& s, int width) {
     if (w <= width) return s;
     if (width <= 3) return utf8_take(s, width);
     return utf8_take(s, width - 3) + "...";
+}
+
+std::vector<std::string> wrap_lines(const std::string& s, int width, int max_lines) {
+    std::vector<std::string> out;
+    if (width <= 0 || max_lines <= 0) return out;
+
+    // Word-wrap on ASCII spaces (the only inputs are track titles and
+    // filesystem paths). The hard case this exists for: a "word" that alone
+    // is wider than one whole line -- a long unbroken filename, or a CJK/
+    // Thai/etc. title, which has no spaces at all and would otherwise be
+    // one giant word -- is sliced into successive width-sized chunks
+    // instead of being dumped whole onto an overflowing line or silently
+    // cut down to a single line.
+    std::vector<std::string> words;
+    {
+        std::string cur;
+        for (char c : s) {
+            if (c == ' ') { if (!cur.empty()) { words.push_back(cur); cur.clear(); } }
+            else cur += c;
+        }
+        if (!cur.empty()) words.push_back(cur);
+    }
+
+    size_t wi = 0;
+    while (wi < words.size() && static_cast<int>(out.size()) < max_lines) {
+        std::string line;
+        int line_w = 0;
+        bool line_done = false;
+        while (wi < words.size() && !line_done) {
+            std::string& w = words[wi];
+            int ww = display_width(w);
+            if (ww > width) {
+                // Doesn't fit on a line by itself. If this line already has
+                // something on it, close it out so the oversized word gets
+                // its own fresh line(s) to be chunked across.
+                if (!line.empty()) { line_done = true; break; }
+                std::string piece = utf8_take(w, width);
+                if (piece.empty()) { ++wi; continue; } // width too small for even one codepoint; skip rather than loop forever
+                line = piece;
+                line_w = display_width(piece);
+                std::string rest = w.substr(piece.size());
+                if (rest.empty()) ++wi; else w = rest;
+                line_done = true;
+                break;
+            }
+            int add_w = ww + (line.empty() ? 0 : 1);
+            if (line_w + add_w > width) { line_done = true; break; }
+            if (!line.empty()) { line += ' '; line_w += 1; }
+            line += w;
+            line_w += ww;
+            ++wi;
+        }
+        out.push_back(line);
+    }
+
+    // Words remain but we're out of lines: mark the truncation on the last
+    // line actually produced, the same way truncate_str() does for a
+    // single line.
+    if (wi < words.size() && !out.empty()) {
+        std::string& last = out.back();
+        last = (width <= 3) ? utf8_take(last, width) : utf8_take(last, std::max(0, width - 3)) + "...";
+    }
+    return out;
 }
 
 } // namespace muisc

@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include "miniaudio.h"
 #include "streaming_pcm.h"
 #include "fft_visualizer.h"
@@ -48,7 +49,7 @@ public:
 
     void seek_relative(double delta_sec);
     void set_volume(int volume_pct);
-    int volume() const { return volume_pct_; }
+    int volume() const;
 
     double poll_elapsed() const;
     bool finished() const { return finished_.load(); }
@@ -65,6 +66,27 @@ public:
     void stop();
 
 private:
+    // Guards play()/stop() and every getter/setter below against each
+    // other. Now load-bearing rather than a nice-to-have: play()/stop() run
+    // on App's persistent device-worker thread for the whole session, while
+    // seek/volume/pause hotkeys and the shutdown path's stop() run on the
+    // main thread -- two long-lived threads genuinely calling into the same
+    // Player concurrently, not a short-lived ad-hoc thread that mostly
+    // didn't overlap anything. NOT taken inside data_callback(): that runs
+    // on miniaudio's own real-time audio thread, and ma_device_uninit() is
+    // documented to block until that callback thread has fully stopped
+    // before returning -- by the time stop_locked() reassigns pcm_, the
+    // callback that used to read it is already provably not running, so
+    // there is nothing there for this mutex to protect, and taking it in
+    // the callback would risk an audible stall if it ever had to wait on a
+    // slow device_init() elsewhere.
+    mutable std::mutex mutex_;
+
+    // stop()'s actual work, factored out so play() can call it without
+    // re-locking mutex_ (std::mutex isn't recursive -- play() calling the
+    // public stop() from inside its own already-held lock would deadlock).
+    void stop_locked();
+
     ma_context context_{};
     bool context_ready_ = false;
     ma_device device_{};

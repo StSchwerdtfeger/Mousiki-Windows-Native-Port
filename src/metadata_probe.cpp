@@ -1,5 +1,7 @@
 #include "metadata_probe.h"
 #include "process_util.h"
+#include "path_utf8.h"
+#include "utf8_util.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -9,13 +11,12 @@
 namespace muisc {
 
 static std::string to_upper(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::toupper(c); });
-    return s;
+    return ascii_upper_str(std::move(s));
 }
 
 double probe_duration_seconds(const fs::path& file) {
     std::string cmd = "ffprobe -v error -show_entries format=duration -of csv=p=0 "
-                       + shell_quote(file.string());
+                       + shell_quote(path_utf8(file));
     ProcResult r = run_capture(cmd);
     if (r.out.empty()) return -1.0;
     try {
@@ -28,7 +29,7 @@ double probe_duration_seconds(const fs::path& file) {
 RowMeta probe_row_meta(const fs::path& file) {
     RowMeta rm;
     std::string cmd = "ffprobe -v error -show_entries format=duration:format_tags=artist "
-                       "-of default=noprint_wrappers=1 " + shell_quote(file.string());
+                       "-of default=noprint_wrappers=1 " + shell_quote(path_utf8(file));
     ProcResult r = run_capture(cmd);
     if (r.out.empty()) return rm;
 
@@ -70,7 +71,7 @@ TrackMetadata probe_metadata(const fs::path& file, const std::string& fallback_n
 
     std::string cmd = "ffprobe -v error "
                        "-show_entries format=duration:format_tags=artist,date,title:stream=sample_rate,codec_name "
-                       "-of default=noprint_wrappers=1 " + shell_quote(file.string());
+                       "-of default=noprint_wrappers=1 " + shell_quote(path_utf8(file));
     ProcResult r = run_capture(cmd);
     if (!r.ok() && r.out.empty()) return md;
 

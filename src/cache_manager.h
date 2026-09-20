@@ -22,6 +22,9 @@ public:
 private:
     fs::path cache_dir_;
     static std::string sanitize(const std::string& raw);
+    // Old ASCII-only naming rule, used only to locate files cached
+    // before sanitize() became UTF-8 aware.
+    static std::string legacy_sanitize(const std::string& raw);
 };
 
 } // namespace muisc

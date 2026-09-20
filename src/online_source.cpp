@@ -2,6 +2,9 @@
 #include "process_util.h"
 #include <cctype>
 #include <sstream>
+#if defined(_WIN32)
+#include "win_compat.h"
+#endif
 
 namespace muisc {
 
@@ -62,14 +65,13 @@ static bool json_get_number(const std::string& json, const std::string& key, dou
     return true;
 }
 
-std::vector<OnlineResult> OnlineSource::search(const std::string& query, int count) {
+// Shared by both search paths -- yt-dlp's flat-playlist -j output and
+// fast_yt_search.py's output are both one JSON object per line, and
+// fast_yt_search.py deliberately mirrors yt-dlp's field names for exactly
+// this reason (see its own comment).
+static std::vector<OnlineResult> parse_json_lines(const std::string& out) {
     std::vector<OnlineResult> results;
-    std::string cmd = "yt-dlp -4 --no-warnings --match-filters \"categories *= 'Music' & duration >= 90\" --flat-playlist -j "
-                       "\"ytsearch" + std::to_string(count) + ":" + query + "\"";
-    ProcResult r = run_capture(cmd);
-    if (r.out.empty()) return results;
-
-    std::istringstream stream(r.out);
+    std::istringstream stream(out);
     std::string line;
     while (std::getline(stream, line)) {
         if (line.empty() || line[0] != '{') continue;
@@ -85,6 +87,39 @@ std::vector<OnlineResult> OnlineSource::search(const std::string& query, int cou
         if (!item.video_id.empty() && !item.title.empty()) results.push_back(std::move(item));
     }
     return results;
+}
+
+static std::vector<OnlineResult> search_via_ytdlp(const std::string& query, int count) {
+    std::string cmd = "yt-dlp -4 --no-warnings --match-filters \"categories *= 'Music' & duration >= 90\" --flat-playlist -j "
+                       "\"ytsearch" + std::to_string(count) + ":" + query + "\"";
+    ProcResult r = run_capture(cmd);
+    return parse_json_lines(r.out);
+}
+
+static std::vector<OnlineResult> search_via_fast_script(const std::string& query, int count,
+                                                          const std::string& script_path) {
+#if defined(_WIN32)
+    const std::string& python = win_python_command();
+    if (python.empty()) return {};
+#else
+    const std::string python = "python3";
+#endif
+    std::string cmd = python + " " + shell_quote(script_path) +
+                       " " + shell_quote(query) + " " + std::to_string(count);
+    ProcResult r = run_capture(cmd);
+    return parse_json_lines(r.out);
+}
+
+std::vector<OnlineResult> OnlineSource::search(const std::string& query, int count,
+                                                const std::string& fast_script_path) {
+    if (!fast_script_path.empty()) {
+        auto results = search_via_fast_script(query, count, fast_script_path);
+        if (!results.empty()) return results;
+        // Empty covers every failure mode uniformly (script missing,
+        // Python missing, network error, or a genuine zero-result
+        // query) -- yt-dlp gets a full attempt in every one of them.
+    }
+    return search_via_ytdlp(query, count);
 }
 
 std::vector<OnlineResult> OnlineSource::list_playlist(const std::string& url, std::string* error_out) {

@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -52,11 +53,18 @@ private:
     DiskArt disk_;
     mutable Player player_;
     fs::path lyrics_script_;
+    fs::path fast_search_script_; // empty if not found -- OnlineSource falls back to yt-dlp
 
     // --- lists / navigation ---
     Mode mode_ = Mode::Browse;
     ListSource list_source_ = ListSource::Local;
     std::vector<LocalTrack> all_local_tracks_;
+    // scan() runs from the constructor, before ConsoleLog::instance().init()
+    // is called at the top of run() -- and init() wipes the in-memory log
+    // buffer, so anything logged before it would just be discarded. This
+    // holds scan()'s per-root diagnostics (found/missing, file counts) until
+    // run() can actually flush them into the log.
+    std::vector<std::string> local_scan_diagnostics_;
     std::vector<LocalTrack> local_view_;     // filtered
     std::vector<OnlineResult> online_view_;
     int selected_ = 0;
@@ -132,6 +140,14 @@ private:
     mutable std::string last_lyrics_status_;
     mutable std::chrono::steady_clock::time_point lyrics_status_shown_at_;
     mutable double viz_dt_ = 0.08;
+
+    // --- local list marquee (hovered row's title, when too long to fit) ---
+    // Tracks which row the scroll animation is currently following and
+    // when it started, so moving the cursor to a different row always
+    // restarts the scroll from the beginning of that row's title instead
+    // of resuming wherever the previous row's animation had reached.
+    mutable int marquee_row_idx_ = -1;
+    mutable std::chrono::steady_clock::time_point marquee_since_;
 
     // --- lyrics (background-fetched) ---
     mutable std::mutex lyrics_mutex_;
@@ -315,9 +331,45 @@ private:
     std::atomic<bool> load_in_progress_{false};
     std::atomic<int> load_stage_{0};
     std::chrono::steady_clock::time_point load_started_at_;
-    std::thread device_thread_;
-    std::mutex device_mutex_;
-    std::atomic<int> device_gen_{0}; // incremented each launch; stale threads abort when their gen != current
+
+    // Every Player call (play/stop/seek/volume/...) funnels through one
+    // persistent thread that lives for the whole app session, rather than a
+    // fresh std::thread per track switch. On Windows this is load-bearing,
+    // not just tidy: WASAPI's underlying COM objects are apartment-affine
+    // to the thread that created them, and the old per-track-thread design
+    // meant track 2's play() call -- which starts by tearing down track 1's
+    // device -- ran on a *different* OS thread than the one that created
+    // that device. That mismatch is exactly why playback worked once and
+    // then silently stopped starting on every subsequent switch. Routing
+    // every device operation through one fixed thread removes the mismatch
+    // outright, on every platform (Linux/PulseAudio never had this
+    // constraint, but there's no downside to the safer design there either).
+    //
+    // player_mutex_ guards every call into player_ from either this worker
+    // thread or the main thread (seek/volume/pause hotkeys, the shutdown
+    // path's player_.stop()) -- Player's public methods were never
+    // documented as safe to call concurrently from two threads, and with a
+    // long-lived worker thread now genuinely overlapping the main loop for
+    // the whole session (instead of a short-lived ad-hoc thread that mostly
+    // wasn't), that latent race needed closing rather than just getting
+    // more likely to bite.
+    std::mutex player_mutex_;
+    std::thread device_worker_thread_;
+    std::mutex device_request_mutex_;
+    std::condition_variable device_request_cv_;
+    std::atomic<int> device_gen_{0}; // incremented each launch; guards against a stale request read racing a newer post
+    bool device_worker_stop_ = false;
+    bool device_request_ready_ = false;
+    struct DevicePlayRequest {
+        std::shared_ptr<StreamingPcm> pcm;
+        int volume = 70;
+        double start_sec = 0.0;
+        int generation = 0;
+    };
+    DevicePlayRequest device_request_;
+    void device_worker_loop();       // body of device_worker_thread_, runs for the app's whole session
+    void start_device_worker();      // called once, from the constructor
+    void stop_device_worker();       // called once, from run()'s shutdown, before joining device_worker_thread_
     void launch_device_play_async();
 
     PendingLoad pending_load_;

@@ -1,9 +1,12 @@
 #pragma once
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace muisc {
+
+namespace fs = std::filesystem;
 
 // Two verbosity tiers:
 //   Basic   -- every external command mousiki actually ran (yt-dlp,
@@ -57,7 +60,11 @@ private:
     mutable std::mutex mutex_;
     std::vector<std::string> lines_;
     LogVerbosity level_ = LogVerbosity::Basic;
-    std::string log_path_;
+    // fs::path, not std::string: std::ofstream(std::string) opens the
+    // file through the ANSI code page on Windows, so a user profile
+    // containing a non-ASCII character (C:\\Users\\Jürgen\\...) could not
+    // be opened at all. The fs::path overload uses the native wide path.
+    fs::path log_path_;
     static constexpr size_t kMaxLines = 800;
 
     void push_line_locked(const std::string& line);

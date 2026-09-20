@@ -1,6 +1,10 @@
 #include "console_log.h"
+#include "path_utf8.h"
 #include <chrono>
 #include <cstdlib>
+#if defined(_WIN32)
+#include "win_compat.h"
+#endif
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -8,11 +12,13 @@
 
 namespace muisc {
 
-namespace fs = std::filesystem;
-
 static fs::path log_dir() {
     const char* home = std::getenv("HOME");
-    fs::path base = home ? fs::path(home) : fs::path(".");
+    // HOME is stored as UTF-8 by win_bootstrap_env() (it comes out of
+    // GetEnvironmentVariableW, which is UTF-16). fs::path(std::string)
+    // would re-read those bytes as ANSI, so a user profile with a
+    // non-ASCII name produced a garbled base directory.
+    fs::path base = home ? path_from_utf8(home) : fs::path(".");
     return base / ".cache" / "mousiki" / "logs";
 }
 
@@ -20,7 +26,11 @@ static std::string now_hms() {
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::tm tmv{};
+#if defined(_WIN32)
+    tmv = win_localtime(t);   // MSVC has localtime_s, with the arguments swapped
+#else
     localtime_r(&t, &tmv);
+#endif
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
     return buf;
@@ -39,7 +49,7 @@ void ConsoleLog::init(LogVerbosity level) {
     std::error_code ec;
     fs::path dir = log_dir();
     fs::create_directories(dir, ec);
-    log_path_ = (dir / "console.log").string();
+    log_path_ = dir / "console.log";
 
     // Truncate (std::ios::trunc, not append) -- this is exactly the
     // "previous session's log gets cleaned, a new one starts" behavior:

@@ -1,4 +1,6 @@
 #include "app.h"
+#include "path_utf8.h"
+#include "utf8_util.h"
 #include "console_log.h"
 #include <algorithm>
 #include <chrono>
@@ -10,8 +12,12 @@
 #include <random>
 #include <sstream>
 #include <thread>
+#if defined(_WIN32)
+#include "win_compat.h"
+#else
 #include <unistd.h>
 #include <sys/utsname.h>
+#endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -20,9 +26,39 @@ namespace muisc {
 
 namespace {
 
+// ---------------------------------------------------------------------
+// Worker-thread exception guard
+//
+// An exception that escapes a std::thread's function does NOT propagate to
+// the thread that spawned it and does not unwind anywhere useful: the
+// standard says it calls std::terminate(), which kills the entire process on
+// the spot. On Windows that means the app vanishes with no message at all --
+// no stack trace, no console output, nothing in the log. Every background
+// task in this file (metadata sweep, decode, lyrics fetch, waveform pass,
+// search, bulk queue add) touches the filesystem or spawns subprocesses, and
+// any of those can throw.
+//
+// This wrapper is the process-level safety net: whatever a worker throws is
+// turned into a log line, and that task alone fails. The encoding bugs fixed
+// alongside it were the cause we know about; this makes sure the next one
+// (a disappearing USB drive, a permissions change mid-scan) degrades instead
+// of detonating.
+template <class F>
+void run_guarded(const char* what, F&& body) noexcept {
+    try {
+        body();
+    } catch (const std::exception& e) {
+        ConsoleLog::instance().log_basic(std::string("internal error in ") + what + ": " + e.what());
+    } catch (...) {
+        ConsoleLog::instance().log_basic(std::string("internal error in ") + what + " (unknown exception)");
+    }
+}
+
+// ASCII-only, deliberately: this folds track titles and artist names, which
+// are UTF-8. std::tolower over raw bytes mangles multi-byte sequences under
+// any single-byte locale -- see ascii_lower() in utf8_util.h.
 std::string lower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    return s;
+    return ascii_lower_str(std::move(s));
 }
 
 bool contains_ci(const std::string& hay, const std::string& needle) {
@@ -334,12 +370,16 @@ std::vector<std::string> render_lyric_line_wrapped(const LyricLine& line, double
     return out;
 }
 
-fs::path find_lyrics_script() {
+// Resolves a filename under scripts/ next to the running binary. Shared by
+// the lyrics helper and the fast-search helper -- same candidate list
+// (env override, cwd, exe-relative at one/two/three levels up to cover a
+// multi-config MSVC build), only the filename differs.
+fs::path find_scripts_file(const std::string& filename) {
     if (const char* env = std::getenv("MOUSIKI_SCRIPTS_DIR")) {
-        fs::path p = fs::path(env) / "fetch_lyrics.py";
+        fs::path p = path_from_utf8(env) / filename;
         if (fs::exists(p)) return p;
     }
-    fs::path cwd_candidate = fs::path("scripts") / "fetch_lyrics.py";
+    fs::path cwd_candidate = fs::path("scripts") / filename;
     if (fs::exists(cwd_candidate)) return cwd_candidate;
 
 #if defined(__APPLE__)
@@ -349,9 +389,27 @@ fs::path find_lyrics_script() {
         std::error_code ec;
         fs::path exe_dir = fs::canonical(fs::path(exe_buf), ec).parent_path();
         if (!ec) {
-            fs::path p = exe_dir / "scripts" / "fetch_lyrics.py";
+            fs::path p = exe_dir / "scripts" / filename;
             if (fs::exists(p)) return p;
-            p = exe_dir.parent_path() / "scripts" / "fetch_lyrics.py";
+            p = exe_dir.parent_path() / "scripts" / filename;
+            if (fs::exists(p)) return p;
+        }
+    }
+#elif defined(_WIN32)
+    // No /proc on Windows; GetModuleFileNameW is the direct equivalent.
+    // Worth noting the lookup one level up matters more here than on Linux:
+    // a multi-config MSVC build puts the exe in build\\Release\\, so
+    // scripts/ is two levels above it, and the CMake copy step mirrors
+    // scripts/ next to the exe to cover that.
+    {
+        std::string exe = win_executable_path();
+        if (!exe.empty()) {
+            fs::path exe_dir = path_from_utf8(exe).parent_path();
+            fs::path p = exe_dir / "scripts" / filename;
+            if (fs::exists(p)) return p;
+            p = exe_dir.parent_path() / "scripts" / filename;
+            if (fs::exists(p)) return p;
+            p = exe_dir.parent_path().parent_path() / "scripts" / filename;
             if (fs::exists(p)) return p;
         }
     }
@@ -361,28 +419,65 @@ fs::path find_lyrics_script() {
     if (n > 0) {
         exe_buf[n] = '\0';
         fs::path exe_dir = fs::path(exe_buf).parent_path();
-        fs::path p = exe_dir / "scripts" / "fetch_lyrics.py";
+        fs::path p = exe_dir / "scripts" / filename;
         if (fs::exists(p)) return p;
-        p = exe_dir.parent_path() / "scripts" / "fetch_lyrics.py";
+        p = exe_dir.parent_path() / "scripts" / filename;
         if (fs::exists(p)) return p;
     }
 #endif
     return cwd_candidate;
 }
 
+fs::path find_lyrics_script() { return find_scripts_file("fetch_lyrics.py"); }
+
+// The InnerTube-based search script (see OnlineSource::search()). Unlike
+// the lyrics script, its absence is not an error condition anywhere --
+// OnlineSource falls back to yt-dlp's own search whenever this path
+// doesn't resolve to a real file, so an empty/missing result here is a
+// normal, silent path for anyone who only has the core scripts installed.
+fs::path find_fast_search_script() { return find_scripts_file("fast_yt_search.py"); }
+
 } // namespace
 
 App::App() {
     settings_ = load_settings();
     lyrics_script_ = find_lyrics_script();
-    
+    fast_search_script_ = find_fast_search_script();
+
+    // BUGFIX: the cache-dir injection below used to push_back()
+    // unconditionally, every single launch -- and since save_settings()
+    // (called on every quit) writes settings_.local_music_paths back to
+    // config.txt verbatim, *including* this appended entry, the cache
+    // directory accumulated one more duplicate line in config.txt every
+    // session. Harmless for correctness -- LocalSource::scan()'s
+    // dedup-by-canonical-path already prevents the same file being
+    // counted twice -- but wasteful: dozens of redundant directory
+    // existence checks and walks on every startup, and a config.txt that
+    // silently grows without bound over months of use. Deduping the whole
+    // list first (in case manual edits introduced other repeats too),
+    // order preserved so the saved file doesn't get needlessly reshuffled.
+    {
+        std::vector<std::string> deduped;
+        deduped.reserve(settings_.local_music_paths.size());
+        for (const auto& p : settings_.local_music_paths) {
+            if (std::find(deduped.begin(), deduped.end(), p) == deduped.end()) deduped.push_back(p);
+        }
+        settings_.local_music_paths = std::move(deduped);
+    }
+
     // Inject the cache directory into local music paths so streamed songs
     // automatically appear in the local view for seamless offline playback
-    settings_.local_music_paths.push_back(cache_.cache_dir().string());
-    
-    all_local_tracks_ = local_source_.scan(settings_.local_music_paths);
+    // -- only if it isn't already there (see the dedup note just above).
+    std::string cache_dir_str = path_utf8(cache_.cache_dir());
+    if (std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), cache_dir_str)
+        == settings_.local_music_paths.end()) {
+        settings_.local_music_paths.push_back(cache_dir_str);
+    }
+
+    all_local_tracks_ = local_source_.scan(settings_.local_music_paths, &local_scan_diagnostics_);
     local_view_ = all_local_tracks_;
     launch_row_meta_resolver();
+    start_device_worker();
 }
 
 
@@ -461,7 +556,7 @@ std::vector<LocalTrack> App::filter_and_rank_local(const std::string& query) con
         std::string artist = t.folder_artist;
         {
             std::lock_guard<std::mutex> lk(row_meta_mutex_);
-            auto it = row_meta_cache_.find(t.path.string());
+            auto it = row_meta_cache_.find(path_utf8(t.path));
             if (it != row_meta_cache_.end() && !it->second.artist.empty()) artist = it->second.artist;
         }
         double title_score = fuzzy_score(query, t.title);
@@ -501,7 +596,7 @@ void App::apply_local_sort(std::vector<LocalTrack>& tracks) const {
         std::stable_sort(tracks.begin(), tracks.end(), [this](const LocalTrack& a, const LocalTrack& b) {
             auto artist_of = [this](const LocalTrack& t) {
                 std::lock_guard<std::mutex> lk(row_meta_mutex_);
-                auto it = row_meta_cache_.find(t.path.string());
+                auto it = row_meta_cache_.find(path_utf8(t.path));
                 return (it != row_meta_cache_.end() && !it->second.artist.empty()) ? it->second.artist : t.folder_artist;
             };
             return lower(artist_of(a)) < lower(artist_of(b));
@@ -519,7 +614,7 @@ void App::refresh_local_view() {
         std::vector<LocalTrack> filtered;
         filtered.reserve(local_view_.size());
         for (auto& t : local_view_) {
-            if (t.path.parent_path().string() == folder_filter_) filtered.push_back(t);
+            if (path_utf8(t.path.parent_path()) == folder_filter_) filtered.push_back(t);
         }
         local_view_ = std::move(filtered);
     }
@@ -587,7 +682,7 @@ void App::write_load_timing_log(const std::string& title, bool is_local, double 
                                  double t_probe, double t_total, const std::string& error) {
     const char* home = std::getenv("HOME");
     if (!home) return;
-    fs::path dir = fs::path(home) / ".cache" / "mousiki";
+    fs::path dir = path_from_utf8(home) / ".cache" / "mousiki";
     std::error_code ec;
     fs::create_directories(dir, ec);
     std::ofstream log(dir / "load_timing.log", std::ios::app);
@@ -623,6 +718,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
     // makes it safe to join from launch_load_async without risking a
     // freeze if the user switches tracks again quickly.
     load_thread_ = std::thread([this, local_path, title, artist, location_label, is_local, video_id]() {
+      run_guarded("track load", [&] {
         using clock = std::chrono::steady_clock;
         auto t_start = clock::now();
         auto elapsed_s = [](clock::time_point from) {
@@ -702,7 +798,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
         fs::path decode_path = path;
         std::string wtitle = pl.title, wartist = pl.artist;
         bool waveform_smooth = settings_.waveform_smooth; // captured by value — see below, avoids a cross-thread read of settings_
-        std::thread([this, decode_path, pcm, waveform_smooth]() {
+        std::thread([this, decode_path, pcm, waveform_smooth]() { run_guarded("track decode", [&] {
             stream_decode_ffmpeg(decode_path, *pcm);
 
             // Deferred mini-waveform pass — only starts once decode is
@@ -720,7 +816,24 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
                 pending_waveform_envelope_ = std::move(envelope);
                 waveform_pending_ready_ = true;
             }
-        }).detach();
+        }); }).detach();
+      });
+
+      // If the guard above swallowed an exception, nothing published a
+      // result -- and poll_pending_load() is the only thing that clears
+      // load_in_progress_, so the app would refuse to start any track for
+      // the rest of the session ("still loading the previous track ...").
+      // Publish a failed load instead so the UI recovers and says why.
+      if (!load_ready_.load()) {
+          std::lock_guard<std::mutex> lk(load_mutex_);
+          PendingLoad failed;
+          failed.title = title;
+          failed.is_local = is_local;
+          failed.success = false;
+          failed.error = "couldn't load \"" + title + "\" -- see the console log (t)";
+          pending_load_ = std::move(failed);
+          load_ready_ = true;
+      }
     });
 }
 
@@ -736,13 +849,13 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
 void App::launch_lyrics_fetch(std::string title, std::string artist, fs::path path, bool force_network) {
     lyrics_ready_ = false;
     int my_epoch = ++lyrics_epoch_;
-    std::thread([this, title, artist, path, force_network, my_epoch]() {
-        LyricsResult r = fetch_synced_lyrics(title, artist, lyrics_script_.string(), path, force_network);
+    std::thread([this, title, artist, path, force_network, my_epoch]() { run_guarded("lyrics fetch", [&] {
+        LyricsResult r = fetch_synced_lyrics(title, artist, path_utf8(lyrics_script_), path, force_network);
         std::lock_guard<std::mutex> lock(lyrics_mutex_);
         if (my_epoch != lyrics_epoch_.load()) return; // a newer/retried fetch has since started — discard
         lyrics_result_ = std::move(r);
         lyrics_ready_ = true;
-    }).detach();
+    }); }).detach();
 }
 
 void App::poll_pending_load() {
@@ -784,7 +897,14 @@ void App::poll_pending_load() {
     last_lyrics_status_.clear();
     fft_.reset(); // don't let the previous track's spectrum tail linger into this one's first frame
 
-    launch_lyrics_fetch(pl.title, pl.artist, pl.path);
+    // "Lyrics Engine" (settings_.element_lyrics) used to only hide the
+    // panel -- fetch_synced_lyrics() still ran, still spawned Python, and
+    // still hit the network for every single track, whether or not
+    // anything was ever shown. Toggling it off now actually turns the
+    // feature off, matching what the settings label already claimed.
+    if (settings_.element_lyrics) {
+        launch_lyrics_fetch(pl.title, pl.artist, pl.path);
+    }
 
     // This is the whole point of the redesign: play() is handed a
     // StreamingPcm that may have zero frames decoded yet. The audio
@@ -797,21 +917,6 @@ void App::poll_pending_load() {
 }
 
 void App::launch_device_play_async() {
-    // Never join here — that would risk blocking whichever thread calls
-    // this (poll_pending_load / advance_track, both on the main thread)
-    // on however long the OLD device op takes to finish. Detach it: the
-    // old attempt just finishes on its own (Player::play() stops the
-    // previous device as its first step anyway, so an old in-flight
-    // play() call safely becomes a no-op-ish teardown once it gets to
-    // run, even if a newer one has already taken over by then).
-    //
-    // BUG FIX #2: previously the detached old thread could call
-    // ma_device_start() on a device that the new thread had already torn
-    // down inside play() → stop() — undefined behaviour and the root
-    // cause of audio glitches on fast track-switching. The generation
-    // counter lets the old thread detect that it has been superseded and
-    // bail out before it ever touches the device.
-    if (device_thread_.joinable()) device_thread_.detach();
     int my_gen = ++device_gen_;
     auto pcm = current_pcm_;
     int vol = player_.volume() > 0 ? player_.volume() : 70;
@@ -819,16 +924,65 @@ void App::launch_device_play_async() {
     // here exactly once, then zeroed so every subsequent track change
     // (skip, search-and-play, queue advance, ...) starts at 0 like
     // always. Reading+clearing it up front (still on the main thread,
-    // before the lambda captures it by value) avoids any race with a
-    // second restore attempt -- there isn't one, but this keeps that
-    // invariant obvious rather than implicit.
+    // before it's handed to the worker) avoids any race with a second
+    // restore attempt -- there isn't one, but this keeps that invariant
+    // obvious rather than implicit.
     double start_sec = resume_start_sec_;
     resume_start_sec_ = 0.0;
-    device_thread_ = std::thread([this, pcm, vol, my_gen, start_sec]() {
-        std::lock_guard<std::mutex> lk(device_mutex_);
-        if (my_gen != device_gen_.load()) return; // superseded — a newer play request won
-        player_.play(pcm, start_sec, vol, &fft_);
-    });
+
+    // Post to device_worker_loop() rather than spawning a thread here.
+    // There's only one request slot, not a queue: if the worker is still
+    // busy with an older request when a newer one lands, this simply
+    // overwrites it in place before the worker ever reads it, so only the
+    // latest survives -- the same "a superseded switch is silently
+    // dropped" behaviour the old generation-counter design gave, just
+    // enforced by construction instead of by a check the stale thread had
+    // to remember to perform.
+    {
+        std::lock_guard<std::mutex> lk(device_request_mutex_);
+        device_request_.pcm = std::move(pcm);
+        device_request_.volume = vol;
+        device_request_.start_sec = start_sec;
+        device_request_.generation = my_gen;
+        device_request_ready_ = true;
+    }
+    device_request_cv_.notify_one();
+}
+
+void App::start_device_worker() {
+    device_worker_thread_ = std::thread(&App::device_worker_loop, this);
+}
+
+void App::stop_device_worker() {
+    {
+        std::lock_guard<std::mutex> lk(device_request_mutex_);
+        device_worker_stop_ = true;
+    }
+    device_request_cv_.notify_one();
+}
+
+void App::device_worker_loop() {
+    for (;;) {
+        DevicePlayRequest req;
+        {
+            std::unique_lock<std::mutex> lk(device_request_mutex_);
+            device_request_cv_.wait(lk, [this] { return device_request_ready_ || device_worker_stop_; });
+            if (device_worker_stop_) return;   // quitting -- don't start one more track on the way out
+            req = device_request_;
+            device_request_ready_ = false;
+        }
+        // Defensive only: with a single overwritable slot rather than a
+        // real queue, req.generation should already equal device_gen_ by
+        // construction every time this fires.
+        if (req.generation != device_gen_.load()) continue;
+        // Guarded like every other worker: this loop lives for the whole
+        // session, and an exception escaping it would take the process with
+        // it rather than just failing one track.
+        run_guarded("audio device start", [&] {
+            std::lock_guard<std::mutex> lk(player_mutex_);
+            player_.play(req.pcm, req.start_sec, req.volume, &fft_);
+        });
+    }
 }
 
 void App::poll_pending_waveform() {
@@ -850,10 +1004,14 @@ void App::launch_search_async(const std::string& query) {
     search_ready_ = false;
     status_line_ = "searching online for \"" + query + "\" ...";
 
-    search_thread_ = std::thread([this, query]() {
-        auto results = online_.search(query);
+    search_thread_ = std::thread([this, query]() { run_guarded("online search", [&] {
+        auto results = online_.search(query, /*count=*/15, path_utf8(fast_search_script_));
         std::lock_guard<std::mutex> lk(search_mutex_);
         pending_search_results_ = std::move(results);
+    }); 
+        // Set outside the guard: poll_pending_search() waits on this flag,
+        // so it has to be raised even when the search threw, or the UI sits
+        // on "searching ..." forever.
         search_ready_ = true;
     });
 }
@@ -952,7 +1110,7 @@ void App::play_next_from_queue() {
     if (queue_selected_ >= idx && queue_selected_ > 0) --queue_selected_; // index shifted down by the erase
     clamp_queue_selected();
     if (item.is_local) {
-        LocalTrack t{fs::path(item.local_path).stem().string(), item.local_path, item.artist};
+        LocalTrack t{path_utf8(item.local_path.stem()), item.local_path, item.artist};
         start_local_track(t);
     } else {
         OnlineResult r{item.video_id, item.title, item.artist};
@@ -1065,7 +1223,7 @@ SnapshotData App::build_snapshot() const {
     if (has_track_) {
         snap.has_now_playing = true;
         snap.now_playing.is_local = current_is_local_;
-        snap.now_playing.path = current_is_local_ ? current_path_.string() : std::string();
+        snap.now_playing.path = current_is_local_ ? path_utf8(current_path_) : std::string();
         snap.now_playing.video_id = current_is_local_ ? std::string() : current_video_id_;
         snap.now_playing.title = metadata_.name;
         snap.now_playing.artist = metadata_.artist;
@@ -1075,7 +1233,7 @@ SnapshotData App::build_snapshot() const {
     for (const auto& item : queue_) {
         SnapshotTrack t;
         t.is_local = item.is_local;
-        t.path = item.is_local ? item.local_path.string() : std::string();
+        t.path = item.is_local ? path_utf8(item.local_path) : std::string();
         t.video_id = item.is_local ? std::string() : item.video_id;
         t.title = item.title;
         t.artist = item.artist;
@@ -1098,17 +1256,17 @@ void App::restore_snapshot(const SnapshotData& snap) {
 
     queue_.clear();
     for (const auto& t : snap.queue) {
-        queue_.push_back({t.is_local, t.title, t.artist, t.is_local ? fs::path(t.path) : fs::path(), t.video_id});
+        queue_.push_back({t.is_local, t.title, t.artist, t.is_local ? path_from_utf8(t.path) : fs::path(), t.video_id});
     }
     clamp_queue_selected();
 
     if (snap.has_now_playing) {
         resume_start_sec_ = std::max(0.0, snap.position_sec);
         if (snap.now_playing.is_local) {
-            fs::path p(snap.now_playing.path);
+            fs::path p = path_from_utf8(snap.now_playing.path);
             std::error_code ec;
             if (fs::exists(p, ec)) {
-                LocalTrack t{p.stem().string(), p, snap.now_playing.artist};
+                LocalTrack t{path_utf8(p.stem()), p, snap.now_playing.artist};
                 start_local_track(t);
                 log_event("resuming: " + t.title);
             } else {
@@ -1173,12 +1331,22 @@ void App::launch_bulk_add_async(const std::string& url) {
     if (bulk_add_thread_.joinable()) bulk_add_thread_.join();
     bulk_add_in_progress_ = true;
     bulk_add_ready_ = false;
-    bulk_add_thread_ = std::thread([this, url]() {
+    {
+        // Clear the slot before the worker starts: if the fetch throws, the
+        // guard below leaves pending_bulk_add_ untouched, and a stale
+        // success from a previous playlist would otherwise be re-committed.
+        std::lock_guard<std::mutex> lk(bulk_add_mutex_);
+        pending_bulk_add_ = BulkAddResult{};
+    }
+    bulk_add_thread_ = std::thread([this, url]() { run_guarded("playlist add", [&] {
         BulkAddResult res;
         res.items = online_.list_playlist(url, &res.error);
         res.success = res.error.empty() && !res.items.empty();
         std::lock_guard<std::mutex> lk(bulk_add_mutex_);
         pending_bulk_add_ = std::move(res);
+    }); 
+        // Same reasoning as launch_search_async(): the poll loop is gated on
+        // this flag, so it is raised whether or not the work succeeded.
         bulk_add_ready_ = true;
     });
 }
@@ -1247,8 +1415,9 @@ static const char* kRefHotkeyNames[] = {
     "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
     "HKeyFilterForFolder", "HKeyClearFilter", "HKeyDownloadStream",
     "HKeyRefreshUi", "HKeyConsole", "HKeyToggleMute", "HKeyCheatsheet", "HKeyRetryLyrics",
+    "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyToggleWaveform", "HKeyCycleSortMode",
 };
-static constexpr int kRefRowCount = 25;
+static constexpr int kRefRowCount = 30;
 
 std::string* App::color_field_ptr(int row, int col) {
     switch (row) {
@@ -1452,6 +1621,13 @@ void App::handle_settings_key(int key) {
             return;
         }
         if (key == 127 || key == 8) { if (!color_edit_buffer_.empty()) color_edit_buffer_.pop_back(); return; }
+        // Same bug as Mode::Search below: arrow keys collapse to 'A'-'D',
+        // which sit inside 32-126 and would otherwise get typed as literal
+        // letters. No navigable list here to repurpose them for, so they're
+        // just excluded -- also avoids letting a hotkey rebind on this same
+        // buffer accidentally capture an arrow-key code, which would create
+        // exactly this collision for whatever action got bound to it.
+        if ((key == 'A' || key == 'B' || key == 'C' || key == 'D')) return;
         if (key >= 32 && key < 127 && color_edit_buffer_.size() < 18) color_edit_buffer_ += static_cast<char>(key);
         return;
     }
@@ -1501,7 +1677,7 @@ void App::start_local_track(const LocalTrack& track) {
     if (load_in_progress_.load()) { status_line_ = "still loading the previous track ..."; return; }
     fs::path parent = track.path.parent_path().filename();
     launch_load_async(track.path, track.title, track.folder_artist == "-" ? "" : track.folder_artist,
-                       parent.string() + "/", /*is_local=*/true, /*video_id=*/"");
+                       path_utf8(parent) + "/", /*is_local=*/true, /*video_id=*/"");
 }
 
 void App::start_online_track(const OnlineResult& result) {
@@ -1579,6 +1755,10 @@ void App::handle_key(int key) {
             return; // stays open -- poll_pending_bulk_add() moves to phase 2 once the fetch resolves
         }
         if (key == 127 || key == 8) { if (!bulk_add_buffer_.empty()) bulk_add_buffer_.pop_back(); return; }
+        // Same bug as Mode::Search below: arrow keys collapse to 'A'-'D',
+        // which sit inside 32-126 and would otherwise get typed as literal
+        // letters into the link being entered.
+        if ((key == 'A' || key == 'B' || key == 'C' || key == 'D')) return;
         if (key >= 32 && key < 127 && bulk_add_buffer_.size() < 200) bulk_add_buffer_ += static_cast<char>(key);
         return;
     }
@@ -1625,6 +1805,12 @@ void App::handle_key(int key) {
 
         if (std::string* t = rl_text_ptr(rl_focus_)) {
             if (key == 127 || key == 8) { if (!t->empty()) t->pop_back(); return; }
+            // 'A'/'B' (up/down) are already intercepted above for field
+            // navigation, but 'C'/'D' (right/left) fall through to here
+            // uncaught -- same bug as Mode::Search below, where an arrow
+            // code inside the printable range gets typed as a literal
+            // letter instead of being recognized as an arrow key.
+            if (key == 'C' || key == 'D') return;
             if (key >= 32 && key < 127 && t->size() < 200) *t += static_cast<char>(key);
             return;
         }
@@ -1648,6 +1834,35 @@ void App::handle_key(int key) {
             update_live_search_preview();
             return;
         }
+        // BUGFIX (pre-existing, not Windows-specific): arrow keys collapse
+        // to the same 'A'-'D' codes terminal_ui.h documents for Up/Down/
+        // Right/Left, which sit inside the printable ASCII range the catch
+        // below appends to the query -- so every arrow press was getting
+        // typed into the search box as a literal letter instead of doing
+        // anything. update_live_search_preview() already keeps local_view_
+        // fully populated and live as you type, using the same selected_/
+        // scroll_ state Browse mode does, so Up/Down here just navigates
+        // that same list; Right/Left mirror Browse mode's seek-by-5-seconds
+        // so you can still adjust playback without leaving the search box.
+        if (key == 'A') { // up
+            if (selected_ > 0) --selected_;
+            if (selected_ < scroll_) scroll_ = selected_;
+            return;
+        }
+        if (key == 'B') { // down
+            size_t list_len = local_view_.size();
+            if (list_len > 0 && selected_ < static_cast<int>(list_len) - 1) ++selected_;
+            if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+            return;
+        }
+        if (key == 'C') { // right = seek forward
+            if (has_track_) player_.seek_relative(5.0);
+            return;
+        }
+        if (key == 'D') { // left = seek back
+            if (has_track_) player_.seek_relative(-5.0);
+            return;
+        }
         if (key >= 32 && key < 127) {
             search_buffer_ += static_cast<char>(key);
             update_live_search_preview();
@@ -1659,237 +1874,259 @@ void App::handle_key(int key) {
     // Mode::Browse
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
 
-    switch (key) {
-        case 's': case 'S':
-            mode_ = Mode::Settings;
-            settings_tab_ = 0;
-            settings_row_ = 0;
-            settings_col_ = 0;
-            break;
-        case 9: // Tab: toggle Up/Down + reorder focus between the list and the queue
-            queue_focus_ = !queue_focus_;
-            break;
-        case 'A': // up
-            if (queue_focus_) {
-                if (queue_selected_ > 0) --queue_selected_;
-                clamp_queue_selected();
-            } else {
-                if (selected_ > 0) --selected_;
-                if (selected_ < scroll_) scroll_ = selected_;
-            }
-            break;
-        case 'B': // down
-            if (queue_focus_) {
-                if (!queue_.empty() && queue_selected_ < static_cast<int>(queue_.size()) - 1) ++queue_selected_;
-                clamp_queue_selected();
-            } else {
-                if (list_len > 0 && selected_ < static_cast<int>(list_len) - 1) ++selected_;
-                // BUGFIX: selection could move past the visible window without
-                // the window ever following it, leaving the highlighted row
-                // invisible below row 8 instead of the list scrolling up.
-                if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
-            }
-            break;
-        case 'C': // right = seek forward
-            if (has_track_) player_.seek_relative(5.0);
-            break;
-        case 'D': // left = seek back ... OR, while queue-focused, move the hovering queue item down.
-            // Left-arrow and Shift+D are indistinguishable at the terminal-
-            // input layer (see TerminalIO::poll_key) — reusing this case
-            // for reordering while queue-focused means seeking is
-            // unavailable during that time, but that's an acceptable
-            // trade since you're not usually seeking while reordering a
-            // queue anyway.
-            if (queue_focus_) queue_move_hovering(1);
-            else if (has_track_) player_.seek_relative(-5.0);
-            break;
-        case 'u': case 'U': // move the hovering queue item up (only meaningful once you've Tab'd into the queue)
-            queue_move_hovering(-1);
-            break;
-        case 'p': case 'P': // play/pause
-            if (has_track_) { if (player_.is_paused()) player_.resume(); else player_.pause(); }
-            break;
-        case '1': // volume up
-            if (has_track_) player_.set_volume(std::min(100, player_.volume() + 5));
-            break;
-        case '2': // volume down
-            if (has_track_) player_.set_volume(std::max(0, player_.volume() - 5));
-            break;
-        case 'n': case 'N': // next -- the queue (if any) takes priority,
-                             // same as auto-advance-on-finish does, and
-                             // respects Shuffle/Repeat Queue via
-                             // play_next_from_queue() (a manual skip
-                             // still always actually skips, though --
-                             // Repeat/Stop only govern *automatic*
-                             // advance, not an explicit "n" press).
-            if (!queue_.empty()) play_next_from_queue();
-            else play_relative(1);
-            break;
-        case 'b': // prev -- relative to what's actually playing (see
-                  // current_track_list_index()), not the hover cursor.
-                  // No queue equivalent: a FIFO queue has no well-defined
-                  // "previous" once an item's been consumed.
-            play_relative(-1);
-            break;
-        case 'a': // add hovering song to queue (List focus) -- or, when
-                  // the Queue panel itself is focused, "a" has nothing
-                  // hovering-in-the-list to add, so it opens the bulk-add
-                  // panel instead (paste a YouTube playlist link, queue
-                  // everything in it).
-            if (queue_focus_) {
-                mode_ = Mode::BulkAdd;
-                bulk_add_buffer_.clear();
-                bulk_add_results_ready_ = false;
-                pending_bulk_add_ = BulkAddResult{};
-                bulk_add_selected_.clear();
-                bulk_add_cursor_ = 0;
-                bulk_add_scroll_ = 0;
-                status_line_.clear();
-            } else {
-                queue_add_selected();
-                log_event("added to queue");
-            }
-            break;
-        case 'd': // remove hovering queue item
-            queue_remove_hovering();
-            log_event("removed from queue");
-            break;
-        case 'm': case 'M': // cycle play mode: list -> repeat -> shuffle
-                             // -> repeat queue -> stop -> list -- one key
-                             // for all five instead of a separate toggle
-                             // per mode.
-            settings_.play_mode = (settings_.play_mode + 1) % 5;
-            {
-                // Indexed 0=list,1=repeat,2=shuffle,3=stop,4=repeat queue,
-                // matching play_mode's own numbering (not cycle order).
-                static const char* mode_names[] = {"list", "repeat", "shuffle", "stop", "repeat queue"};
-                log_event(std::string("play mode: ") + mode_names[settings_.play_mode]);
-            }
-            break;
-        case 'k': case 'K': // refresh ui -- force a full redraw, for when a
-                             // resize or terminal-session switch raced the
-                             // render loop and left a torn/stale frame on
-                             // screen. hard_clear is normally only set on a
-                             // detected width or mode change; this forces
-                             // it once unconditionally on the very next
-                             // frame.
-            force_redraw_ = true;
-            log_event("ui refreshed");
-            break;
-        case 't': // console -- overlay showing recent status/log events
-            mode_ = Mode::Console;
-            break;
-        case 'x': case 'X': // mute -- force volume to 0 without touching pause state
-            if (!muted_) {
-                pre_mute_volume_ = player_.volume();
-                player_.set_volume(0);
-                muted_ = true;
-                log_event("muted");
-            } else {
-                player_.set_volume(pre_mute_volume_);
-                muted_ = false;
-                log_event("unmuted");
-            }
-            break;
-        case '?': // cheatsheet overlay
-            mode_ = Mode::Cheatsheet;
-            break;
-        case 'f': case 'F': // filter local list to the hovering track's folder
-            if (list_source_ == ListSource::Local && !local_view_.empty() &&
-                selected_ >= 0 && selected_ < static_cast<int>(local_view_.size())) {
-                folder_filter_ = local_view_[selected_].path.parent_path().string();
-                refresh_local_view();
-                log_event("filtered: " + fs::path(folder_filter_).filename().string());
-            }
-            break;
-        case 'c': // clear folder filter
-            if (!folder_filter_.empty()) {
-                folder_filter_.clear();
-                refresh_local_view();
-                log_event("filter cleared");
-            }
-            break;
-        case 'l': case 'L': // retry lyrics -- opens the manual title/artist override form
-            if (has_track_) {
-                rl_open_from_current_track();
-                mode_ = Mode::RetryLyrics;
-            }
-            break;
-        case 'w': case 'W': // toggle waveform style (raw/smooth) directly, without going into Settings
-            settings_.waveform_smooth = !settings_.waveform_smooth;
-            recompute_waveform_for_current_track();
-            log_event(settings_.waveform_smooth ? "waveform: smooth" : "waveform: raw");
-            break;
-        case 'y': case 'Y': // save cached stream to local music path
-            if (has_track_) {
-                if (current_path_.string().find(".cache") != std::string::npos || metadata_.location == "youtube") {
-                    std::string dest_dir;
-                    if (!settings_.local_music_paths.empty()) {
-                        dest_dir = settings_.local_music_paths[0];
-                    } else {
-                        const char* home = std::getenv("HOME");
-                        dest_dir = home ? std::string(home) + "/Music" : "./Music";
-                    }
-                    std::error_code ec;
-                    fs::create_directories(dest_dir, ec);
-                    
-                    std::string safe_name = metadata_.name;
-                    for (char& c : safe_name) if (c == '/' || c == '\\') c = '_';
-                    std::string safe_artist = (metadata_.artist == "-" ? "" : metadata_.artist);
-                    for (char& c : safe_artist) if (c == '/' || c == '\\') c = '_';
-                    
-                    std::string filename = safe_artist.empty() ? safe_name : safe_name + " - " + safe_artist;
-                    filename += current_path_.extension().string();
-                    
-                    fs::path dest_path = fs::path(dest_dir) / filename;
-                    if (fs::exists(dest_path, ec)) {
-                        status_line_ = "already saved: " + dest_path.filename().string();
-                    } else {
-                        fs::copy_file(current_path_, dest_path, fs::copy_options::overwrite_existing, ec);
-                        if (!ec) {
-                            fs::remove(current_path_, ec);
-                            current_path_ = dest_path; // update so sidecar lyrics go to the new folder
-                            metadata_.location = dest_dir;
-                            status_line_ = "saved to " + dest_path.string();
-                            refresh_local_view();
-                        } else {
-                            status_line_ = "failed to save: " + ec.message();
-                        }
-                    }
-                } else {
-                    status_line_ = "not a cached stream";
-                }
-            }
-            break;
-        case 'T': // cycle local-list sort mode (folder order -> title A-Z -> artist A-Z)
-            local_sort_mode_ = (local_sort_mode_ + 1) % 3;
+    // Hotkeys are resolved to an action name via settings_.hotkeys /
+    // resolve_hotkey_action() instead of switching on the raw key
+    // directly, so a rebinding in Settings > Reference (or config.txt)
+    // actually changes what a keypress does. This closes a gap that
+    // exists in the *original* Linux/macOS codebase too, not something
+    // the Windows port introduced: resolve_hotkey_action() was already
+    // there, fully implemented, but nothing ever called it -- the
+    // switch below was hardcoded on literal characters no matter what
+    // config.txt or the Settings UI said. Two small normalizations keep
+    // every default binding behaving exactly as it did before this
+    // change: CR (13, what Windows' _getch() actually sends for Enter)
+    // is treated as LF (10, what hotkey_string_to_key("ENTER") maps to)
+    // so Enter keeps working regardless of which one a given terminal
+    // reports; and a letter that doesn't resolve on its own also tries
+    // its opposite case, so rebinding an action to "n" still fires on
+    // Shift+N the same way the old hardcoded "case \'n\': case \'N\':"
+    // pairs always did, without having to special-case every letter
+    // action individually.
+    int lookup_key = (key == '\r') ? '\n' : key;
+    std::string action = resolve_hotkey_action(lookup_key);
+    if (action.empty() && lookup_key >= 'a' && lookup_key <= 'z') action = resolve_hotkey_action(lookup_key - 32);
+    if (action.empty() && lookup_key >= 'A' && lookup_key <= 'Z') action = resolve_hotkey_action(lookup_key + 32);
+
+    if (action == "HKeySetting") {
+        mode_ = Mode::Settings;
+        settings_tab_ = 0;
+        settings_row_ = 0;
+        settings_col_ = 0;
+    } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
+        queue_focus_ = !queue_focus_;
+    } else if (action == "HKeyNavigateUp") {
+        if (queue_focus_) {
+            if (queue_selected_ > 0) --queue_selected_;
+            clamp_queue_selected();
+        } else {
+            if (selected_ > 0) --selected_;
+            if (selected_ < scroll_) scroll_ = selected_;
+        }
+    } else if (action == "HKeyNavigateDown") {
+        if (queue_focus_) {
+            if (!queue_.empty() && queue_selected_ < static_cast<int>(queue_.size()) - 1) ++queue_selected_;
+            clamp_queue_selected();
+        } else {
+            if (list_len > 0 && selected_ < static_cast<int>(list_len) - 1) ++selected_;
+            // BUGFIX: selection could move past the visible window without
+            // the window ever following it, leaving the highlighted row
+            // invisible below row 8 instead of the list scrolling up.
+            if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+        }
+    } else if (action == "HKeySeekForward") {
+        if (has_track_) player_.seek_relative(5.0);
+    } else if (action == "HKeySeekBackward") {
+        // Doubles as "move the hovering queue item down" while queue-
+        // focused -- Left-arrow and Shift+D are indistinguishable at the
+        // terminal-input layer (see TerminalIO::poll_key), so reusing
+        // this action for reordering means seeking is unavailable while
+        // queue-focused. Acceptable trade: you're not usually seeking
+        // while reordering a queue anyway.
+        if (queue_focus_) queue_move_hovering(1);
+        else if (has_track_) player_.seek_relative(-5.0);
+    } else if (action == "HKeyQueueMoveUp") { // move the hovering queue item up (only meaningful once you've Tab'd into the queue)
+        queue_move_hovering(-1);
+    } else if (action == "HKeyTogglePlayPause") {
+        if (has_track_) { if (player_.is_paused()) player_.resume(); else player_.pause(); }
+    } else if (action == "HKeyIncreaseVolume") {
+        if (has_track_) player_.set_volume(std::min(100, player_.volume() + 5));
+    } else if (action == "HKeyDecreaseVolume") {
+        if (has_track_) player_.set_volume(std::max(0, player_.volume() - 5));
+    } else if (action == "HKeyPlayNextSong") {
+        // The queue (if any) takes priority, same as auto-advance-on-
+        // finish does, and respects Shuffle/Repeat Queue via
+        // play_next_from_queue() -- a manual skip still always actually
+        // skips, though: Repeat/Stop only govern *automatic* advance,
+        // not an explicit "next" press.
+        if (!queue_.empty()) play_next_from_queue();
+        else play_relative(1);
+    } else if (action == "HKeyPlayPreviousSong") {
+        // Relative to what's actually playing (see
+        // current_track_list_index()), not the hover cursor. No queue
+        // equivalent: a FIFO queue has no well-defined "previous" once
+        // an item's been consumed.
+        play_relative(-1);
+    } else if (action == "HKeyShuffleNext") {
+        // Shuffle to a random next track in the current list -- a
+        // manual one-off jump, independent of Play Mode
+        // (settings_.play_mode). Reuses the same play_relative_random()
+        // the automatic Shuffle play mode already calls on auto-advance;
+        // unlike PlayNextSong, this does not consult the queue at all --
+        // shuffling picks from the browse list on purpose, since the
+        // queue is a deliberately ordered, user-built list and jumping
+        // it around at random would defeat the point of it.
+        play_relative_random();
+    } else if (action == "HKeyToggleLyrics") {
+        // Toggle the Lyrics Engine without going through Settings >
+        // On/Off. Turning it off needs nothing extra -- the panel
+        // already checks element_lyrics every frame and falls back to
+        // the sphere on its own. Turning it *on* mid-track does need a
+        // nudge though: the only other place that starts a fetch is
+        // track load (poll_pending_load), so without this, flipping it
+        // on here would just sit showing the sphere with no caption
+        // until the next track change.
+        settings_.element_lyrics = !settings_.element_lyrics;
+        if (settings_.element_lyrics && has_track_) {
+            std::string artist = (metadata_.artist == "-") ? "" : metadata_.artist;
+            last_lyrics_status_.clear(); // fresh 1.75s caption window, not a leftover from before it was off
+            launch_lyrics_fetch(metadata_.name, artist, current_path_);
+        }
+        status_line_ = settings_.element_lyrics ? "lyrics engine: on" : "lyrics engine: off";
+    } else if (action == "HKeyAddHoveringSongToQueue") {
+        // Add hovering song to queue (List focus) -- or, when the Queue
+        // panel itself is focused, there's nothing hovering-in-the-list
+        // to add, so it opens the bulk-add panel instead (paste a
+        // YouTube playlist link, queue everything in it).
+        if (queue_focus_) {
+            mode_ = Mode::BulkAdd;
+            bulk_add_buffer_.clear();
+            bulk_add_results_ready_ = false;
+            pending_bulk_add_ = BulkAddResult{};
+            bulk_add_selected_.clear();
+            bulk_add_cursor_ = 0;
+            bulk_add_scroll_ = 0;
+            status_line_.clear();
+        } else {
+            queue_add_selected();
+            log_event("added to queue");
+        }
+    } else if (action == "HKeyRemoveHoveringSongFromQueue") {
+        queue_remove_hovering();
+        log_event("removed from queue");
+    } else if (action == "HKeyCyclePlayMode") {
+        // Cycle play mode: list -> repeat -> shuffle -> repeat queue ->
+        // stop -> list -- one key for all five instead of a separate
+        // toggle per mode.
+        settings_.play_mode = (settings_.play_mode + 1) % 5;
+        {
+            // Indexed 0=list,1=repeat,2=shuffle,3=stop,4=repeat queue,
+            // matching play_mode's own numbering (not cycle order).
+            static const char* mode_names[] = {"list", "repeat", "shuffle", "stop", "repeat queue"};
+            log_event(std::string("play mode: ") + mode_names[settings_.play_mode]);
+        }
+    } else if (action == "HKeyRefreshUi") {
+        // Force a full redraw, for when a resize or terminal-session
+        // switch raced the render loop and left a torn/stale frame on
+        // screen. hard_clear is normally only set on a detected width or
+        // mode change; this forces it once unconditionally on the very
+        // next frame.
+        force_redraw_ = true;
+        log_event("ui refreshed");
+    } else if (action == "HKeyConsole") {
+        mode_ = Mode::Console;
+    } else if (action == "HKeyToggleMute") { // force volume to 0 without touching pause state
+        if (!muted_) {
+            pre_mute_volume_ = player_.volume();
+            player_.set_volume(0);
+            muted_ = true;
+            log_event("muted");
+        } else {
+            player_.set_volume(pre_mute_volume_);
+            muted_ = false;
+            log_event("unmuted");
+        }
+    } else if (action == "HKeyCheatsheet") {
+        mode_ = Mode::Cheatsheet;
+    } else if (action == "HKeyFilterForFolder") {
+        if (list_source_ == ListSource::Local && !local_view_.empty() &&
+            selected_ >= 0 && selected_ < static_cast<int>(local_view_.size())) {
+            folder_filter_ = path_utf8(local_view_[selected_].path.parent_path());
             refresh_local_view();
-            log_event(std::string("sort: ") + sort_mode_name(local_sort_mode_));
-            break;
-        case '\r': case '\n':
-            play_selected();
-            break;
-        case '/':
-            mode_ = Mode::Search;
-            search_buffer_.clear();
-            pre_search_list_source_ = list_source_;
-            pre_search_local_query_ = last_local_query_;
-            break;
-        case 27: // ESC -- back to the home view: full local library, no
-                 // filter, from the top. Same destination regardless of
-                 // how buried you are (mid search results, viewing
-                 // online results, scrolled deep into the list).
-            list_source_ = ListSource::Local;
-            last_local_query_.clear();
+            log_event("filtered: " + path_utf8(path_from_utf8(folder_filter_).filename()));
+        }
+    } else if (action == "HKeyClearFilter") {
+        if (!folder_filter_.empty()) {
             folder_filter_.clear();
             refresh_local_view();
-            status_line_.clear();
-            break;
-        case 'q': case 'Q':
-            quit_ = true;
-            break;
-        default:
-            break;
+            log_event("filter cleared");
+        }
+    } else if (action == "HKeyRetryLyrics") { // opens the manual title/artist override form
+        if (!settings_.element_lyrics) {
+            status_line_ = "lyrics are turned off (Settings > Lyrics Engine)";
+        } else if (has_track_) {
+            rl_open_from_current_track();
+            mode_ = Mode::RetryLyrics;
+        }
+    } else if (action == "HKeyToggleWaveform") { // toggle waveform style (raw/smooth) directly, without going into Settings
+        settings_.waveform_smooth = !settings_.waveform_smooth;
+        recompute_waveform_for_current_track();
+        log_event(settings_.waveform_smooth ? "waveform: smooth" : "waveform: raw");
+    } else if (action == "HKeyDownloadStream") { // save cached stream to local music path
+        if (has_track_) {
+            if (path_utf8(current_path_).find(".cache") != std::string::npos || metadata_.location == "youtube") {
+                std::string dest_dir;
+                if (!settings_.local_music_paths.empty()) {
+                    dest_dir = settings_.local_music_paths[0];
+                } else {
+                    const char* home = std::getenv("HOME");
+                    dest_dir = home ? std::string(home) + "/Music" : "./Music";
+                }
+                std::error_code ec;
+                fs::create_directories(path_from_utf8(dest_dir), ec);
+
+                std::string safe_name = metadata_.name;
+                for (char& c : safe_name) if (c == '/' || c == '\\') c = '_';
+                std::string safe_artist = (metadata_.artist == "-" ? "" : metadata_.artist);
+                for (char& c : safe_artist) if (c == '/' || c == '\\') c = '_';
+
+                std::string filename = safe_artist.empty() ? safe_name : safe_name + " - " + safe_artist;
+                filename += path_utf8(current_path_.extension());
+
+                fs::path dest_path = path_from_utf8(dest_dir) / path_from_utf8(filename);
+                if (fs::exists(dest_path, ec)) {
+                    status_line_ = "already saved: " + path_utf8(dest_path.filename());
+                } else {
+                    fs::copy_file(current_path_, dest_path, fs::copy_options::overwrite_existing, ec);
+                    if (!ec) {
+                        fs::remove(current_path_, ec);
+                        current_path_ = dest_path; // update so sidecar lyrics go to the new folder
+                        metadata_.location = dest_dir;
+                        status_line_ = "saved to " + path_utf8(dest_path);
+                        refresh_local_view();
+                    } else {
+                        status_line_ = "failed to save: " + ec.message();
+                    }
+                }
+            } else {
+                status_line_ = "not a cached stream";
+            }
+        }
+    } else if (action == "HKeyCycleSortMode") { // cycle local-list sort mode (folder order -> title A-Z -> artist A-Z)
+        local_sort_mode_ = (local_sort_mode_ + 1) % 3;
+        refresh_local_view();
+        log_event(std::string("sort: ") + sort_mode_name(local_sort_mode_));
+    } else if (action == "HKeyPlay") {
+        play_selected();
+    } else if (action == "HKeySearch") {
+        mode_ = Mode::Search;
+        search_buffer_.clear();
+        pre_search_list_source_ = list_source_;
+        pre_search_local_query_ = last_local_query_;
+    } else if (action == "HKeyQuit") {
+        quit_ = true;
+    } else if (key == 27) {
+        // ESC -- back to the home view: full local library, no filter,
+        // from the top. Same destination regardless of how buried you
+        // are (mid search results, viewing online results, scrolled
+        // deep into the list). Not in settings_.hotkeys / kRefHotkeyNames
+        // at all, on purpose: this mirrors the original, which likewise
+        // has no HKeyEsc entry -- ESC is a fixed shortcut, not something
+        // meant to be rebound.
+        list_source_ = ListSource::Local;
+        last_local_query_.clear();
+        folder_filter_.clear();
+        refresh_local_view();
+        status_line_.clear();
     }
 }
 
@@ -1918,7 +2155,7 @@ void App::ensure_visible_row_meta() {
     if (list_source_ != ListSource::Local) return;
     for (int i = scroll_; i < std::min<int>(local_view_.size(), scroll_ + list_visible_rows_); ++i) {
         const auto& t = local_view_[i];
-        std::string key = t.path.string();
+        std::string key = path_utf8(t.path);
         {
             std::lock_guard<std::mutex> lk(row_meta_mutex_);
             if (row_meta_cache_.count(key)) continue; // already resolved (native path or background sweep)
@@ -1954,7 +2191,7 @@ void App::recompute_waveform_for_current_track() {
     // waveform thread will see its own epoch is stale and discard its
     // result instead of racing to overwrite pending_waveform_envelope_.
     int my_epoch = ++waveform_epoch_;
-    std::thread([this, pcm, smooth, my_epoch]() {
+    std::thread([this, pcm, smooth, my_epoch]() { run_guarded("waveform pass", [&] {
         size_t n = pcm->available.load(std::memory_order_acquire);
         if (n == 0) return;
         std::vector<float> snapshot(pcm->data.begin(), pcm->data.begin() + static_cast<long>(n));
@@ -1963,7 +2200,7 @@ void App::recompute_waveform_for_current_track() {
         if (my_epoch != waveform_epoch_.load()) return; // superseded — discard
         pending_waveform_envelope_ = std::move(envelope);
         waveform_pending_ready_ = true;
-    }).detach();
+    }); }).detach();
 }
 
 void App::launch_row_meta_resolver() {
@@ -1977,9 +2214,9 @@ void App::launch_row_meta_resolver() {
     // would just trade one flavor of "blocked and can't do anything" for
     // another. Same tradeoff already accepted for decode threads —
     // worst case on quit is one orphaned ffprobe call, not a crash.
-    std::thread([this, paths]() {
+    std::thread([this, paths]() { run_guarded("library metadata sweep", [&] {
         for (auto& p : paths) {
-            std::string key = p.string();
+            std::string key = path_utf8(p);
             {
                 std::lock_guard<std::mutex> lk(row_meta_mutex_);
                 if (row_meta_cache_.count(key)) continue; // native parse (or an earlier pass) already got it
@@ -1989,7 +2226,7 @@ void App::launch_row_meta_resolver() {
             if (row_meta_cache_.size() < 4096) // BUG FIX #1: same cap as ensure_visible_row_meta
                 row_meta_cache_[key] = rm;
         }
-    }).detach();
+    }); }).detach();
 }
 
 // ---------------------------------------------------------------------
@@ -2006,13 +2243,17 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     const int fixed_extra = settings_.element_disk ? sep_w : 2;
 
     int avail = std::max(10, inner - disk_w - fixed_extra);
-    int meta_w = avail;
-    int lyrics_w = 0;
-    if (settings_.element_lyrics) {
-        meta_w = std::min(42, std::max(10, avail - 10));
-        meta_w = std::min(meta_w, avail);
-        lyrics_w = std::max(0, avail - meta_w);
-    }
+    // Previously this split only happened when settings_.element_lyrics was
+    // true; with it off, lyrics_w stayed 0 and meta_w took the whole
+    // panel, so turning the Lyrics Engine off silently also gave up the
+    // sphere visualization that normally fills this column while nothing
+    // is playing lyrics -- the panel just went from "sphere" to "wide
+    // plain metadata" instead of staying visually alive. The split is now
+    // unconditional; settings_.element_lyrics only gates whether lyrics
+    // are fetched/shown as text (below), not whether this column exists.
+    int meta_w = std::min(42, std::max(10, avail - 10));
+    meta_w = std::min(meta_w, avail);
+    int lyrics_w = std::max(0, avail - meta_w);
 
     std::vector<std::string> disk_frame;
     if (settings_.element_disk) {
@@ -2036,28 +2277,53 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     bool viz_rows_colored = false;
     std::vector<int> bars; // computed once below, reused by the sphere visualizer fallback further down
     if (has_track_) {
+        int meta_row_cursor_ = 1; // row 0 stays reserved for the "no track loaded" message
         std::string k_col = settings_.meta_key_color.empty() ? ansi_for(settings_.list_color) : ansi_for(settings_.meta_key_color);
         std::string v_col = settings_.meta_val_color.empty() ? ansi_for(settings_.list_color) : ansi_for(settings_.meta_val_color);
-        auto kv = [&](int row, const std::string& label, const std::string& value) {
+        auto kv = [&](const std::string& label, const std::string& value, int max_lines = 1) {
             std::string mapped_label = apply_font_map(label, settings_.font_map);
             std::string mapped_val = apply_font_map(value, settings_.font_map);
             int avail_v = std::max(0, meta_w - 12);
             std::string l_pad = pad_right(mapped_label, 10);
-            std::string v_tr = truncate_str(mapped_val, avail_v);
-            std::string plain = l_pad + ": " + v_tr;
-            std::string ansi = k_col + l_pad + "\x1b[0m" + ": " + v_col + v_tr + "\x1b[0m";
-            ansi += std::string(std::max(0, meta_w - display_width(plain)), ' ');
-            meta_rows[row] = ansi;
+
+            // How many rows are actually free before the visualizer's
+            // fixed bottom two rows -- so a long Name/Artist/Location
+            // can spill into the panel's spare rows without ever
+            // overwriting the spectrum, however many fields are above it.
+            int room = std::max(1, (panel_h - 2) - meta_row_cursor_);
+            std::vector<std::string> value_lines = wrap_lines(mapped_val, avail_v, std::min(max_lines, room));
+            if (value_lines.empty()) value_lines.push_back(std::string());
+
+            for (size_t li = 0; li < value_lines.size(); ++li) {
+                if (meta_row_cursor_ >= panel_h) break; // no room left at all; drop silently rather than corrupt later rows
+                const std::string& v_tr = value_lines[li];
+                bool first = (li == 0);
+                // Continuation lines repeat the label column as blank
+                // space (not the colon) so the wrapped text lines up
+                // directly under where the value on line one starts.
+                std::string label_col = first ? l_pad : std::string(10, ' ');
+                std::string sep_txt = first ? ": " : "  ";
+                std::string plain = label_col + sep_txt + v_tr;
+                std::string ansi = first
+                    ? (k_col + label_col + "\x1b[0m" + sep_txt + v_col + v_tr + "\x1b[0m")
+                    : (label_col + sep_txt + v_col + v_tr + "\x1b[0m");
+                ansi += std::string(std::max(0, meta_w - display_width(plain)), ' ');
+                meta_rows[meta_row_cursor_++] = ansi;
+            }
         };
-        kv(1, "Name", metadata_.name);
-        kv(2, "Artist", metadata_.artist);
-        kv(3, "year", metadata_.year);
-        kv(4, "sampling", metadata_.sampling);
-        kv(5, "type", metadata_.type);
-        kv(6, "format", metadata_.format);
-        kv(7, "file size", metadata_.file_size);
-        kv(8, "location", metadata_.location);
-        if (!metadata_.extra_label.empty()) kv(9, metadata_.extra_label, metadata_.extra_value);
+        // Name and Location are the two fields most likely to overrun a
+        // single line (long track titles; deep folder paths); Artist can
+        // too for multi-artist collabs. Everything else is short enough
+        // in practice that one line is always enough.
+        kv("Name", metadata_.name, 3);
+        kv("Artist", metadata_.artist, 2);
+        kv("Year", metadata_.year);
+        kv("Sampling", metadata_.sampling);
+        kv("Type", metadata_.type);
+        kv("Format", metadata_.format);
+        kv("File size", metadata_.file_size);
+        kv("Location", metadata_.location, 2);
+        if (!metadata_.extra_label.empty()) kv(metadata_.extra_label, metadata_.extra_value);
 
         // Real spectrum visualizer (KISS FFT), not a copy of the progress
         // bar's RMS envelope. Two rows: bottom row is the base level
@@ -2119,30 +2385,34 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     std::string lyrics_status;
     {
         std::lock_guard<std::mutex> lock(lyrics_mutex_);
-        if (lyrics_ready_) {
+        if (settings_.element_lyrics && lyrics_ready_) {
             lines_copy = lyrics_result_.lines;
             lyrics_status = lyrics_result_.message;
             lyrics_avail = !lines_copy.empty();
-        } else if (has_track_) {
+        } else if (settings_.element_lyrics && has_track_) {
             lyrics_status = "fetching lyrics ...";
         }
+        // else: Lyrics Engine is off -- no fetch ever ran, so there's
+        // nothing to report. Leaving lyrics_status empty means the sphere
+        // below renders with no caption at all, rather than a stale or
+        // misleading status line.
     }
 
     if (!lyrics_avail) {
         // A status message ("fetching...", "no lyrics found", etc.) is
-        // only shown for the first 10s after it appears — after that the
-        // sphere gets the whole panel to itself instead of a permanently
-        // stuck caption line. Each distinct message content gets its own
-        // fresh 10s window (so "fetching..." showing, then later
-        // changing to "no lyrics found", each get their moment) rather
-        // than one timer for the whole track.
+        // only shown for the first 1.75s after it appears -- after that
+        // the sphere gets the whole panel to itself instead of a
+        // permanently stuck caption line. Each distinct message content
+        // gets its own fresh window (so "fetching..." showing, then
+        // later "no lyrics found", each get their moment) rather than
+        // one timer for the whole track.
         if (lyrics_status != last_lyrics_status_) {
             last_lyrics_status_ = lyrics_status;
             lyrics_status_shown_at_ = std::chrono::steady_clock::now();
         }
         double status_age = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - lyrics_status_shown_at_).count();
-        bool show_caption = status_age < 10.0 && !lyrics_status.empty();
+        bool show_caption = status_age < 1.75 && !lyrics_status.empty();
 
         if (has_track_ && lyrics_w >= 6 && panel_h >= 3 && settings_.element_lyrics_placeholder_ball) {
             // Fill the panel with the audio-reactive sphere instead of
@@ -2248,9 +2518,11 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
             content += "  ";
         }
         content += meta_rows[row];
-        if (settings_.element_lyrics) {
-            content += lyric_rows[row];
-        }
+        // lyrics_w is now always reserved (see the split above), and
+        // lyric_rows is always fully padded to it -- whether that's
+        // actual synced lyrics, a status caption, or just the sphere --
+        // so this no longer needs to be conditional on element_lyrics.
+        content += lyric_rows[row];
         out.push_back(bar + " " + content + " " + bar);
     }
 
@@ -2458,6 +2730,16 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
     std::string border_ansi = ansi_for(settings_.border_color, false);
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
 
+    // Whenever the hovered row changes, restart the marquee clock -- this
+    // runs unconditionally (not just when the new row's title overflows)
+    // so that hovering away and back to a long title always begins its
+    // scroll from the start again, rather than resuming mid-scroll from
+    // whatever an earlier visit had reached.
+    if (!online && selected_ != marquee_row_idx_) {
+        marquee_row_idx_ = selected_;
+        marquee_since_ = std::chrono::steady_clock::now();
+    }
+
     std::vector<std::string> out;
     out.push_back(box_top(label, total_width, border_ansi));
 
@@ -2490,7 +2772,7 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                 std::string artist = t.folder_artist;
                 {
                     std::lock_guard<std::mutex> lk(row_meta_mutex_);
-                    auto it = row_meta_cache_.find(t.path.string());
+                    auto it = row_meta_cache_.find(path_utf8(t.path));
                     if (it != row_meta_cache_.end()) {
                         dur = it->second.duration_sec;
                         if (!it->second.artist.empty()) artist = it->second.artist;
@@ -2500,8 +2782,34 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                 std::string t_title = apply_font_map(t.title, settings_.font_map);
                 std::string t_artist = apply_font_map(artist, settings_.font_map);
                 std::string t_dur = apply_font_map(fmt_mmss(dur), settings_.font_map);
+
+                // Only the hovered row animates, and only when its title
+                // is actually too long to fit -- every other row still
+                // gets the same static truncate_str() as before, so
+                // nothing about the rest of the list changes.
+                std::string title_shown;
+                if (idx == selected_ && display_width(t_title) > title_w) {
+                    const double hold_secs = 1.2;    // pause on the title's start before scrolling
+                    const double cols_per_sec = 4.0; // scroll speed
+                    const std::string gap = "    ";  // seam between one loop and the next
+                    std::string loop_text = t_title + gap;
+                    int period = display_width(loop_text);
+                    double elapsed = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - marquee_since_).count();
+                    int start_col = 0;
+                    if (elapsed > hold_secs && period > 0) {
+                        double scrolled = (elapsed - hold_secs) * cols_per_sec;
+                        start_col = static_cast<int>(scrolled) % period;
+                    }
+                    // Three repeats guarantee a full-width window is always
+                    // available no matter where start_col lands in the cycle.
+                    std::string doubled = loop_text + loop_text + loop_text;
+                    title_shown = pad_right(utf8_skip_take(doubled, start_col, title_w), title_w);
+                } else {
+                    title_shown = truncate_str(t_title, title_w);
+                }
                 content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
-                        + pad_right(truncate_str(t_title, title_w), title_w) + settings_.list_separator + " "
+                        + pad_right(title_shown, title_w) + settings_.list_separator + " "
                         + pad_right(truncate_str(t_artist, artist_w), artist_w) + settings_.list_separator + " "
                         + t_dur;
             }
@@ -2744,7 +3052,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                                                     "Add To Queue", "Remove From Queue", "Switch Cards",
                                                     "Filter By Folder", "Clear Filter", "Download Stream",
                                                     "Refresh UI", "Console / Logs", "Toggle Mute", "Cheatsheet",
-                                                    "Retry Lyrics"};
+                                                    "Retry Lyrics", "Shuffle Next", "Toggle Lyrics",
+                                                    "Queue Move Up", "Toggle Waveform", "Cycle Sort Mode"};
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
         int display_count = kRefRowCount + 1 + static_cast<int>(letters.size()); // +1 for the divider row
@@ -2904,6 +3213,11 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyToggleMute",                  "Mute (without pausing)"},
         {"HKeyCheatsheet",                  "This cheatsheet"},
         {"HKeyRetryLyrics",                 "Retry lyrics"},
+        {"HKeyShuffleNext",                 "Shuffle to a random next track"},
+        {"HKeyToggleLyrics",                "Toggle lyrics on/off"},
+        {"HKeyQueueMoveUp",                 "Move hovering queue item up"},
+        {"HKeyToggleWaveform",              "Toggle waveform style (raw/smooth)"},
+        {"HKeyCycleSortMode",               "Cycle local list sort mode"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
@@ -3097,9 +3411,7 @@ void App::rl_open_from_current_track() {
     // leaving it embedded (so it doesn't get double-appended once the
     // TYPE tags get tacked on after the title at submit time).
     static const std::vector<std::string> markers = {" feat. ", " feat ", " ft. ", " ft "};
-    std::string lower_title = metadata_.name;
-    std::transform(lower_title.begin(), lower_title.end(), lower_title.begin(),
-                    [](unsigned char c) { return std::tolower(c); });
+    std::string lower_title = ascii_lower_str(metadata_.name);
     for (const auto& marker : markers) {
         size_t pos = lower_title.find(marker);
         if (pos != std::string::npos) {
@@ -3442,13 +3754,25 @@ std::string App::clamp_output_rows(const std::string& frame, int term_rows) cons
 
 int App::run() {
     ConsoleLog::instance().init(settings_.console_verbosity == 1 ? LogVerbosity::Verbose : LogVerbosity::Basic);
+    // Flush what the constructor's local-library scan found before logging
+    // was ready to record it -- see local_scan_diagnostics_'s declaration
+    // for why this can't just be logged from inside scan() directly. Basic
+    // level, not Verbose: "why does my library look wrong" is exactly the
+    // kind of thing someone shouldn't need to raise console_verbosity to see.
+    for (const auto& line : local_scan_diagnostics_) {
+        ConsoleLog::instance().log_basic(line);
+    }
     {
         // Verbose-only startup facts -- "what the OS provided" at the
         // very start of the session, before anything else has run.
+#if defined(_WIN32)
+        ConsoleLog::instance().log_verbose("os: Windows");
+#else
         struct utsname uts{};
         if (uname(&uts) == 0) {
             ConsoleLog::instance().log_verbose(std::string("os: ") + uts.sysname + " " + uts.release + " " + uts.machine);
         }
+#endif
         ConsoleLog::instance().log_verbose("home: " + std::string(std::getenv("HOME") ? std::getenv("HOME") : "(unset)"));
     }
 
@@ -3516,7 +3840,14 @@ int App::run() {
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
     }
 
-    player_.stop();
+    // Tell the worker to stop taking new requests before touching player_
+    // directly here -- if it's mid-play() this waits (briefly) on
+    // player_mutex_ rather than tearing the device down out from under it.
+    stop_device_worker();
+    {
+        std::lock_guard<std::mutex> lk(player_mutex_);
+        player_.stop();
+    }
     term.restore();
     save_settings(settings_);
     // Final snapshot on a clean quit -- same single-canonical-file
@@ -3528,7 +3859,7 @@ int App::run() {
     }
     if (load_thread_.joinable()) load_thread_.join();
     if (search_thread_.joinable()) search_thread_.join();
-    if (device_thread_.joinable()) device_thread_.join();
+    if (device_worker_thread_.joinable()) device_worker_thread_.join();
     if (bulk_add_thread_.joinable()) bulk_add_thread_.join();
     std::cout << "\nbye.\n";
     return 0;

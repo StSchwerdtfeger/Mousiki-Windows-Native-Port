@@ -1,4 +1,5 @@
 #include "snapshot.h"
+#include "path_utf8.h"
 #include "tiny_json.h"
 #include <cstdlib>
 #include <fstream>
@@ -10,7 +11,11 @@ using namespace tinyjson;
 
 fs::path snapshot_path() {
     const char* home = std::getenv("HOME");
-    fs::path base = home ? fs::path(home) : fs::path(".");
+    // HOME is stored as UTF-8 by win_bootstrap_env() (it comes out of
+    // GetEnvironmentVariableW, which is UTF-16). fs::path(std::string)
+    // would re-read those bytes as ANSI, so a user profile with a
+    // non-ASCII name produced a garbled base directory.
+    fs::path base = home ? path_from_utf8(home) : fs::path(".");
     return base / ".cache" / "mousiki" / "snapshot" / "snapshot.json";
 }
 

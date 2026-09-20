@@ -46,7 +46,8 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
 
 bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volume_pct,
                    FftVisualizer* fft_sink) {
-    stop();
+    std::lock_guard<std::mutex> lk(mutex_);
+    stop_locked();
     if (!pcm) return false;
 
     if (!context_ready_) {
@@ -98,7 +99,13 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
 void Player::pause() { paused_.store(true); }
 void Player::resume() { paused_.store(false); }
 
+int Player::volume() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return volume_pct_;
+}
+
 void Player::seek_relative(double delta_sec) {
+    std::lock_guard<std::mutex> lk(mutex_);
     if (!pcm_) return;
     long long delta_frames = static_cast<long long>(delta_sec * sample_rate_);
     long long cur = cursor_frames_.load();
@@ -112,16 +119,23 @@ void Player::seek_relative(double delta_sec) {
 }
 
 void Player::set_volume(int volume_pct) {
+    std::lock_guard<std::mutex> lk(mutex_);
     volume_pct_ = std::clamp(volume_pct, 0, 100);
     gain_.store(volume_pct_ / 100.0f);
 }
 
 double Player::poll_elapsed() const {
+    std::lock_guard<std::mutex> lk(mutex_);
     if (sample_rate_ <= 0) return 0.0;
     return static_cast<double>(cursor_frames_.load()) / sample_rate_;
 }
 
 void Player::stop() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    stop_locked();
+}
+
+void Player::stop_locked() {
     if (device_ready_) {
         ma_device_uninit(&device_);
         device_ready_ = false;

@@ -1,16 +1,13 @@
 #include "waveform.h"
+#include "path_utf8.h"
 #include "process_util.h"
 #include "miniaudio.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-extern char** environ;
+#include <memory>
+#include <vector>
 
 namespace muisc {
 
@@ -133,7 +130,20 @@ static bool stream_decode_miniaudio(const fs::path& file_path, StreamingPcm& pcm
                                      const std::function<void(const float*, size_t)>& on_chunk) {
     ma_decoder decoder;
     ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, 44100);
-    if (ma_decoder_init_file(file_path.string().c_str(), &config, &decoder) != MA_SUCCESS) {
+    // ma_decoder_init_file() takes a narrow path, which Windows resolves
+    // through the ANSI code page -- so a track whose name contains anything
+    // that code page can't express simply fails to open, and every such file
+    // silently fell through to the (much slower) ffmpeg fallback even for
+    // formats miniaudio handles natively. Worse, getting the narrow string
+    // out of the path in the first place meant .string(), which throws on
+    // exactly those filenames. miniaudio ships a wide-char entry point for
+    // this; on every other platform the narrow one is already UTF-8.
+#if defined(_WIN32)
+    ma_result init_rc = ma_decoder_init_file_w(file_path.c_str(), &config, &decoder);
+#else
+    ma_result init_rc = ma_decoder_init_file(file_path.c_str(), &config, &decoder);
+#endif
+    if (init_rc != MA_SUCCESS) {
         return false; // let the caller fall back to the ffmpeg path (e.g. Opus, which this can't touch)
     }
 
@@ -151,84 +161,47 @@ static bool stream_decode_miniaudio(const fs::path& file_path, StreamingPcm& pcm
     return true;
 }
 
-// Fallback for formats miniaudio's built-in decoders don't cover — Opus
+// Fallback for formats miniaudio's built-in decoders don't cover -- Opus
 // (yt-dlp's cache format) being the main one this project actually needs.
-// Was hardcoding "/bin/sh" here, which doesn't exist on Termux (its whole
-// filesystem lives under its own prefix, not the standard FHS layout) —
-// posix_spawn would just fail outright with no diagnostic the user could
-// see, meaning decode silently never happened. posix_spawnp with a bare
-// "sh" resolves through PATH instead, which finds Termux's shell
-// wherever it actually lives.
+//
+// The spawn itself now lives in process_util.cpp behind spawn_capture(), so
+// this function is identical on every platform: on POSIX it is still
+// posix_spawnp("sh"), on Windows it is CreateProcessW with no shell at all.
+// The stdin-detachment that fixed the render-loop freeze (ffmpeg grabbing the
+// terminal for its interactive controls and leaving it in line-buffered mode
+// on exit) is part of that shared contract.
 static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPcm& pcm,
                                            const std::function<void(const float*, size_t)>& on_chunk) {
-    // -nostdin: tells ffmpeg outright not to expect interactive
-    // keyboard input. Belt-and-suspenders -- the real fix is the stdin
-    // redirect below, which means ffmpeg never even sees our terminal's
-    // fd, but this makes the intent explicit and costs nothing.
-    std::string cmd = "ffmpeg -nostdin -v error -i " + shell_quote(file_path.string())
+    // -nostdin: tells ffmpeg outright not to expect interactive keyboard
+    // input. Belt-and-suspenders -- the real fix is the stdin redirect in
+    // spawn_capture(), but this makes the intent explicit and costs nothing.
+    std::string cmd = "ffmpeg -nostdin -v error -i " + shell_quote(path_utf8(file_path))
                      + " -f f32le -ac 1 -ar 44100 -";
 
-    int out_pipe[2];
-    if (pipe(out_pipe) != 0) {
+    std::unique_ptr<ChildProcess> child = spawn_capture(cmd, /*merge_stderr=*/false);
+    if (!child) {
         pcm.decode_failed.store(true);
         pcm.decode_done.store(true);
         return;
     }
 
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    // See process_util.cpp's run_capture() for the full explanation --
-    // this was the actual freeze bug: ffmpeg inheriting the terminal's
-    // raw-mode stdin and, on exit, leaving it back in canonical mode,
-    // turning our non-blocking key read into a blocking one. This path
-    // in particular is hit on essentially every YouTube-sourced Opus
-    // track, since the primary in-process decoder can't handle Opus and
-    // always falls back to here.
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_addclose(&actions, out_pipe[0]);
-    posix_spawn_file_actions_adddup2(&actions, out_pipe[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-    posix_spawn_file_actions_addclose(&actions, out_pipe[1]);
-
-    const char* argv[] = {"sh", "-c", cmd.c_str(), nullptr};
-    pid_t pid = -1;
-    int rc = posix_spawnp(&pid, "sh", &actions, nullptr, const_cast<char* const*>(argv), environ);
-    posix_spawn_file_actions_destroy(&actions);
-    close(out_pipe[1]);
-
-    if (rc != 0) {
-        close(out_pipe[0]);
-        pcm.decode_failed.store(true);
-        pcm.decode_done.store(true);
-        return;
-    }
-
-    // BUG FIX #3: the old design used std::vector<char> leftover with
-    // erase(begin, begin+n) — an O(N) shift called once per read()
-    // chunk across the whole decode. Replaced with a tiny fixed carry
-    // buffer: at most sizeof(float)-1 = 3 bytes can ever be left over
-    // between chunks, so we never need more than 3 bytes of carry state.
+    // At most sizeof(float)-1 = 3 bytes can ever be left over between reads,
+    // so a fixed carry buffer is enough; the old std::vector::erase approach
+    // was an O(N) shift per chunk across the whole decode.
     char carry[sizeof(float) - 1];
     size_t carry_len = 0;
     std::array<char, 65536> buf{};
-    ssize_t n;
-    while ((n = read(out_pipe[0], buf.data(), buf.size())) > 0) {
-        // Prepend any bytes left from the previous read.
+    std::ptrdiff_t n;
+    while ((n = child->read(buf.data(), buf.size())) > 0) {
         size_t total = carry_len + static_cast<size_t>(n);
         size_t whole_floats = total / sizeof(float);
         size_t whole_bytes  = whole_floats * sizeof(float);
 
         if (whole_floats > 0) {
-            // The first `carry_len` bytes come from the carry buffer;
-            // the remainder from the current read.  We assemble only as
-            // many complete floats as we need, never allocating a
-            // temporary vector for the whole chunk.
             std::vector<float> chunk(whole_floats);
             size_t out_byte = 0;
-            // Copy carry bytes first.
             for (size_t i = 0; i < carry_len && out_byte < whole_bytes; ++i, ++out_byte)
                 reinterpret_cast<char*>(chunk.data())[out_byte] = carry[i];
-            // Then copy from the current read buffer.
             size_t from_buf = whole_bytes - carry_len;
             std::memcpy(reinterpret_cast<char*>(chunk.data()) + carry_len,
                         buf.data(), from_buf);
@@ -236,22 +209,19 @@ static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPc
             pcm.append(chunk.data(), chunk.size());
             if (on_chunk) on_chunk(chunk.data(), chunk.size());
 
-            // Save the remaining 0-3 bytes as new carry.
             size_t leftover_start = from_buf;
             carry_len = static_cast<size_t>(n) - from_buf;
             for (size_t i = 0; i < carry_len; ++i)
                 carry[i] = buf[leftover_start + i];
         } else {
-            // Less than one float across carry+buf combined — absorb into carry.
+            // Less than one float across carry+buf combined -- absorb into carry.
             for (size_t i = 0; i < static_cast<size_t>(n) && carry_len < sizeof(carry); ++i)
                 carry[carry_len++] = buf[i];
         }
     }
-    close(out_pipe[0]);
 
-    int status = 0;
-    waitpid(pid, &status, 0);
-    if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0) && pcm.available.load() == 0) {
+    int exit_code = child->wait();
+    if (exit_code != 0 && pcm.available.load() == 0) {
         pcm.decode_failed.store(true);
     }
     pcm.decode_done.store(true);

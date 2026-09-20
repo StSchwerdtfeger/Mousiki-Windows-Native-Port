@@ -1,11 +1,14 @@
 #include "settings.h"
+#include "path_utf8.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace muisc {
@@ -319,6 +322,11 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyToggleMute",                  "x"},
             {"HKeyCheatsheet",                  "?"},
             {"HKeyRetryLyrics",                 "l"},
+            {"HKeyShuffleNext",                 "#"},
+            {"HKeyToggleLyrics",                "+"},
+            {"HKeyQueueMoveUp",                 "u"},
+            {"HKeyToggleWaveform",              "w"},
+            {"HKeyCycleSortMode",               "T"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -335,14 +343,22 @@ void apply_default_hotkeys(Settings& s) {
 
 fs::path config_path() {
     const char* home = std::getenv("HOME");
-    fs::path base = home ? fs::path(home) : fs::path(".");
+    // HOME is stored as UTF-8 by win_bootstrap_env() (it comes out of
+    // GetEnvironmentVariableW, which is UTF-16). fs::path(std::string)
+    // would re-read those bytes as ANSI, so a user profile with a
+    // non-ASCII name produced a garbled base directory.
+    fs::path base = home ? path_from_utf8(home) : fs::path(".");
     return base / ".config" / "mousiki" / "config.txt";
 }
 
 // Legacy path for migration
 static fs::path legacy_settings_path() {
     const char* home = std::getenv("HOME");
-    fs::path base = home ? fs::path(home) : fs::path(".");
+    // HOME is stored as UTF-8 by win_bootstrap_env() (it comes out of
+    // GetEnvironmentVariableW, which is UTF-16). fs::path(std::string)
+    // would re-read those bytes as ANSI, so a user profile with a
+    // non-ASCII name produced a garbled base directory.
+    fs::path base = home ? path_from_utf8(home) : fs::path(".");
     return base / ".config" / "mousiki" / "settings.txt";
 }
 
@@ -411,7 +427,15 @@ static void parse_about_app_block(std::ifstream& in, Settings& s) {
         if (t == "};" || t == "}") break;
         s.about_app_lines.push_back(line);
     }
-    // Trim trailing blank lines so the About tab doesn't end in empty rows.
+    // Trim blank lines from both ends. Trailing ones were already handled;
+    // leading ones weren't -- config.txt's own About block ships with
+    // several blank lines before the actual text (purely for spacing when
+    // editing the file by hand), and with nothing stripping those, they
+    // became the first several rows of the About App tab. On a short
+    // terminal that's often more blank rows than the tab's visible height,
+    // so the tab looked completely empty until scrolled down -- the
+    // content was always there, just always off the bottom of the view.
+    while (!s.about_app_lines.empty() && trim(s.about_app_lines.front()).empty()) s.about_app_lines.erase(s.about_app_lines.begin());
     while (!s.about_app_lines.empty() && trim(s.about_app_lines.back()).empty()) s.about_app_lines.pop_back();
 }
 
@@ -421,8 +445,35 @@ static void parse_about_app_block(std::ifstream& in, Settings& s) {
 
 static Settings load_from_config(const fs::path& path) {
     Settings s;
-    std::ifstream in(path);
+    std::ifstream in(path, std::ios::binary);
     if (!in.is_open()) return s;
+
+    // Skip a UTF-8 byte-order mark if one is present. Several Windows
+    // editors (older Notepad, and some "Save As" dialogs even in current
+    // versions) write one when saving as UTF-8, which would otherwise
+    // land as three bytes glued onto the front of the first key on the
+    // first line (e.g. "\xEF\xBB\xBFElimentDisk=true") and make it fail
+    // to match anything below.
+    {
+        unsigned char bom[3] = {0, 0, 0};
+        in.read(reinterpret_cast<char*>(bom), 3);
+        std::streamsize got = in.gcount();
+        // UTF-16 (either byte order) is the other thing a Windows editor's
+        // "Save"/"Save As" can silently pick -- and unlike a UTF-8 BOM,
+        // there's no way to transparently paper over it here: every ASCII
+        // byte below is now followed by a NUL, so nothing would match and
+        // the file would parse as entirely empty with no indication why.
+        // Fail loudly and specifically instead.
+        if (got >= 2 && ((bom[0] == 0xFF && bom[1] == 0xFE) || (bom[0] == 0xFE && bom[1] == 0xFF))) {
+            throw std::runtime_error(
+                "this file is saved as UTF-16, not UTF-8 -- re-save it as UTF-8 "
+                "(in Notepad: File > Save As > Encoding: UTF-8)");
+        }
+        if (!(got == 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF)) {
+            in.clear();
+            in.seekg(0);
+        }
+    }
 
     std::string line;
     while (std::getline(in, line)) {
@@ -743,7 +794,33 @@ Settings load_settings() {
 
     Settings s;
     if (fs::exists(cfg, ec)) {
-        s = load_from_config(cfg);
+        // Defensive: load_from_config() is a hand-written parser that
+        // has to tolerate a human editing config.txt directly -- and a
+        // hand edit can introduce anything from a stray character to a
+        // whole different text encoding (Windows Notepad, in particular,
+        // silently re-saves as UTF-16 unless told otherwise, which turns
+        // every ASCII byte into byte+NUL and would previously make the
+        // app disappear with no explanation, indistinguishable from any
+        // other startup failure). Whatever load_from_config() throws (or
+        // whatever we throw ourselves, below) is caught here and reported
+        // instead of propagating out of App's constructor -- config.txt
+        // is meant to be hand-edited, so a bad edit should fall back to
+        // defaults with a visible reason, never take the whole app down.
+        try {
+            s = load_from_config(cfg);
+        } catch (const std::exception& e) {
+            std::cerr << "mousiki: couldn't parse " << path_utf8(cfg) << " (" << e.what()
+                      << ") -- using defaults for this session. Your file on disk is\n"
+                         "unchanged; fix it and restart, or delete it to regenerate a\n"
+                         "clean one.\n";
+            s = Settings();
+        } catch (...) {
+            std::cerr << "mousiki: couldn't parse " << path_utf8(cfg)
+                      << " -- using defaults for this session. Your file on disk is\n"
+                         "unchanged; fix it and restart, or delete it to regenerate a\n"
+                         "clean one.\n";
+            s = Settings();
+        }
     } else if (fs::exists(legacy_settings_path(), ec)) {
         // Migrate from legacy format
         s = load_from_legacy(legacy_settings_path());
@@ -756,6 +833,9 @@ Settings load_settings() {
             "Devloper : ender                Github   : itzender5820",
             "Email    : itz.ender5820@gmail.com",
             "Version  : orignal and final v1.0        Licence  : Apache licence 2.0",
+            "",
+            "Windows port : Steffen Schwerdtfeger   Github   : StSchwerdtfeger",
+            "Adjusted to run on Windows, with the help of AI tools.",
             "",
             "Mousiki",
             "A terminal music player built for people who prefer control.",

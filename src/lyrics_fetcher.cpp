@@ -6,6 +6,9 @@
 #include <regex>
 #include <sstream>
 #include <system_error>
+#if defined(_WIN32)
+#include "win_compat.h"
+#endif
 
 namespace muisc {
 
@@ -16,7 +19,14 @@ namespace muisc {
 // track show lyrics offline.
 static fs::path sidecar_path(const fs::path& track_path) {
     if (track_path.empty()) return {};
-    return track_path.parent_path() / (track_path.stem().string() + ".lrc");
+    // replace_extension() works entirely in the path's native encoding.
+    // The previous stem().string() + ".lrc" went through the ANSI code page
+    // on Windows and threw std::system_error for any track whose filename
+    // contained a character that code page can't represent -- on the lyrics
+    // worker thread, where nothing caught it.
+    fs::path p = track_path;
+    p.replace_extension(".lrc");
+    return p;
 }
 
 static bool load_sidecar(const fs::path& track_path, std::string& out_lrc) {
@@ -250,14 +260,30 @@ LyricsResult fetch_synced_lyrics(const std::string& title, const std::string& ar
     //    logic. Paxsenix and syncedlyrics used to sit in this chain but
     //    were dropped: Paxsenix for being unreliable, syncedlyrics in
     //    favor of calling Better Lyrics/LRCLIB directly.
-    std::string cmd = "python3 " + shell_quote(helper_script_path) +
+    // Windows has no "python3" binary. Which invocation actually works
+    // depends on how Python was installed, and the default-enabled Microsoft
+    // Store alias means a bare "python" may resolve to a stub that opens the
+    // Store instead of running anything. win_python_command() sorts that out
+    // once; everywhere else this is still plain "python3".
+#if defined(_WIN32)
+    const std::string& python = win_python_command();
+    if (python.empty()) {
+        result.status = LyricsStatus::PythonMissing;
+        result.message = "Python 3 not found on PATH -- lyrics unavailable";
+        return result;
+    }
+#else
+    const std::string python = "python3";
+#endif
+
+    std::string cmd = python + " " + shell_quote(helper_script_path) +
                        " " + shell_quote(title) + " " + shell_quote(artist);
     ProcResult r = run_capture(cmd, /*merge_stderr=*/false);
 
     if (r.exit_code < 0) {
-        // posix_spawnp itself failed — python3 genuinely isn't on PATH.
+        // The spawn itself failed -- the interpreter genuinely isn't runnable.
         result.status = LyricsStatus::PythonMissing;
-        result.message = "python3 not found on PATH — lyrics unavailable";
+        result.message = "python3 not found on PATH -- lyrics unavailable";
         return result;
     }
 
