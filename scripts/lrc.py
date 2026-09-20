@@ -1,3 +1,4 @@
+import sys
 import requests
 import xml.etree.ElementTree as ET
 
@@ -272,9 +273,17 @@ def get_lyrics(song, artist):
         1. Better Lyrics TTML
         2. LRCLIB synced LRC
     """
+    # These trace lines used to go to stdout, which is also the channel
+    # fetch_lyrics.py's caller (mousiki's C++ side) reads its single-line
+    # JSON result from. It happened to still work, because that side
+    # extracts fields with a regex search rather than requiring stdout to
+    # contain *only* the JSON object -- but that's incidental, not a
+    # contract, and any of these lines coincidentally containing a
+    # substring like `"ok":` would have broken it. stderr is where
+    # diagnostic noise belongs; it's discarded by the caller either way.
 
     try:
-        print("Trying Better Lyrics...")
+        print("Trying Better Lyrics...", file=sys.stderr)
 
         return get_better_lyrics(
             song,
@@ -284,11 +293,11 @@ def get_lyrics(song, artist):
     except Exception as e:
 
         print(
-            f"Better Lyrics failed: {e}"
+            f"Better Lyrics failed: {e}", file=sys.stderr
         )
 
     try:
-        print("Trying LRCLIB...")
+        print("Trying LRCLIB...", file=sys.stderr)
 
         return get_lrclib_lyrics(
             song,
@@ -298,7 +307,7 @@ def get_lyrics(song, artist):
     except Exception as e:
 
         print(
-            f"LRCLIB failed: {e}"
+            f"LRCLIB failed: {e}", file=sys.stderr
         )
 
     raise RuntimeError(

@@ -4,6 +4,30 @@ import re
 import signal
 import sys
 
+# Windows-only bug, and a real one: when this script's stdout/stderr are a
+# pipe (which they always are here -- mousiki reads them via CreateProcess),
+# Python picks a text encoding for them from the OS's locale settings. On
+# Linux/macOS that's effectively always UTF-8, because a desktop session's
+# LANG/LC_ALL (e.g. "en_US.UTF-8") is inherited by every child process,
+# mousiki included, right down to this script. Windows has no equivalent
+# environment variable, so Python falls back to the ANSI code page --
+# which, unless the user has opted into the (off-by-default) "Use Unicode
+# UTF-8 for worldwide language support" setting, cannot represent most
+# non-Latin text. A track title in Japanese, Cyrillic, or anything outside
+# that code page then throws UnicodeEncodeError the moment this script
+# tries to print it -- which happens even on a lookup MISS, since the
+# "no lyrics found for: <title>" message below embeds the original title.
+# The process dies with a traceback on stderr (discarded) and nothing on
+# stdout, which mousiki's C++ side reports as "lyrics helper script
+# produced no output" -- indistinguishable, from the UI, from the script
+# not existing at all. Forcing UTF-8 here removes the whole failure class
+# regardless of the box's regional settings; errors="replace" is a last
+# resort so a truly unencodable byte degrades to a replacement character
+# instead of taking the whole fetch down with it.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # lrc.py (same directory) does the actual fetching: Better Lyrics first
 # (word-level TTML, converted to enhanced LRC here in lrc.py itself),
 # falling back to LRCLIB (line-synced only) if Better Lyrics has nothing.
@@ -57,7 +81,15 @@ def _find_pipx_site_packages(package_name):
         candidates = sorted(glob.glob(os.path.join(venvs_dir, package_name + "*")))
 
         for venv_dir in candidates:
+            # Windows pipx venvs put the interpreter in Scripts\, not
+            # bin/ -- this previously only ever checked the POSIX layout,
+            # so a Windows pipx install of `requests` was silently never
+            # found here (it would still work if `requests` was on the
+            # normal import path some other way, which is why this was
+            # easy to miss rather than an outright failure).
             venv_python = os.path.join(venv_dir, "bin", "python")
+            if not os.path.isfile(venv_python):
+                venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
             if not os.path.isfile(venv_python):
                 continue
 
