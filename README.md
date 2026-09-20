@@ -31,8 +31,8 @@ You can build the .exe via the following, however, the setup.ps1 already perform
 .\build\Release\mousiki.exe
 ```
 
-Run app e.g. via (adjust username in the path before executing!!).
-Note that you haave to add your local files path via the config.txt file in "C:\Users\YOURNAME\.config" (more details further below).
+Run app e.g. via the commad below (adjust username in the path before executing!!).
+Note that you have to add your local files path via the config.txt file in "C:\Users\YOURNAME\.config" (more details further below).
 See original repo by itzender5820 for an introduction on how to use Mousiki.
 ```powershell
 & 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe'
