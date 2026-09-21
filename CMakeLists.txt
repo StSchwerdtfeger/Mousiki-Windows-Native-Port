@@ -9,40 +9,21 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ---------------------------------------------------------------------------
-# miniaudio.h — fetched at configure time (needs network on the build machine)
+# Third-party code — vendored in third_party/, so configuring needs no network.
+#   miniaudio.h : single-file audio library (public domain / MIT-0), v0.11.25
+#   kissfft/    : small real-input FFT for the spectrum visualizer (BSD-3-Clause)
 # ---------------------------------------------------------------------------
 set(MINIAUDIO_DIR "${CMAKE_SOURCE_DIR}/third_party")
 set(MINIAUDIO_HEADER "${MINIAUDIO_DIR}/miniaudio.h")
-
-if(NOT EXISTS "${MINIAUDIO_HEADER}")
-  message(STATUS "Downloading miniaudio.h ...")
-  file(DOWNLOAD
-       "https://raw.githubusercontent.com/mackron/miniaudio/master/miniaudio.h"
-       "${MINIAUDIO_HEADER}"
-       SHOW_PROGRESS
-       STATUS MA_DL_STATUS)
-  list(GET MA_DL_STATUS 0 MA_DL_CODE)
-  if(NOT MA_DL_CODE EQUAL 0)
-    message(FATAL_ERROR "Failed to download miniaudio.h — download it manually into ${MINIAUDIO_DIR}/miniaudio.h")
-  endif()
-endif()
-
-# ---------------------------------------------------------------------------
-# kissfft — small real-input FFT used by the spectrum visualizer strip.
-# ---------------------------------------------------------------------------
 set(KISSFFT_DIR "${CMAKE_SOURCE_DIR}/third_party/kissfft")
-set(KISSFFT_BASE_URL "https://raw.githubusercontent.com/mborgerding/kissfft/master")
 set(KISSFFT_FILES kiss_fft.c kiss_fft.h _kiss_fft_guts.h kiss_fft_log.h kiss_fftr.c kiss_fftr.h)
 
-file(MAKE_DIRECTORY "${KISSFFT_DIR}")
+if(NOT EXISTS "${MINIAUDIO_HEADER}")
+  message(FATAL_ERROR "Missing ${MINIAUDIO_HEADER} — third_party/ is part of the repository; restore it (e.g. `git checkout -- third_party`).")
+endif()
 foreach(kf IN LISTS KISSFFT_FILES)
   if(NOT EXISTS "${KISSFFT_DIR}/${kf}")
-    message(STATUS "Downloading kissfft/${kf} ...")
-    file(DOWNLOAD "${KISSFFT_BASE_URL}/${kf}" "${KISSFFT_DIR}/${kf}" STATUS KF_DL_STATUS)
-    list(GET KF_DL_STATUS 0 KF_DL_CODE)
-    if(NOT KF_DL_CODE EQUAL 0)
-      message(FATAL_ERROR "Failed to download kissfft/${kf} — download the kissfft repo manually into ${KISSFFT_DIR}")
-    endif()
+    message(FATAL_ERROR "Missing ${KISSFFT_DIR}/${kf} — third_party/ is part of the repository; restore it (e.g. `git checkout -- third_party`).")
   endif()
 endforeach()
 

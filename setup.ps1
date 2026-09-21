@@ -116,8 +116,8 @@ pass -G "MinGW Makefiles" to cmake below.)
 $build = Join-Path $root 'build'
 
 Write-Step "Configuring ($BuildType)"
-# The configure step downloads miniaudio.h and kissfft into third_party/,
-# so this needs network access the first time.
+# miniaudio and kissfft are vendored in third_party/, so configuring
+# needs no network access.
 cmake -S $root -B $build -DCMAKE_BUILD_TYPE=$BuildType
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
