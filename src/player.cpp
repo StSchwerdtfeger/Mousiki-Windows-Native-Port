@@ -31,7 +31,7 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
         out[i] = (idx >= 0 && static_cast<size_t>(idx) < avail) ? pcm.data[static_cast<size_t>(idx)] * gain : 0.0f;
     }
 
-    if (self->fft_sink_) self->fft_sink_->push_samples(out, frame_count, self->sample_rate_);
+    if (self->fft_sink_) self->fft_sink_->push_samples(out, frame_count, self->sample_rate_.load());
 
     long long new_cur = cur + static_cast<long long>(frame_count);
     // Only truly "finished" once decode is done AND playback has caught
@@ -58,17 +58,17 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
 
     pcm_ = std::move(pcm);
     fft_sink_ = fft_sink;
-    sample_rate_ = pcm_->sample_rate > 0 ? pcm_->sample_rate : 44100;
-    volume_pct_ = std::clamp(volume_pct, 0, 100);
-    gain_.store(volume_pct_ / 100.0f);
+    sample_rate_.store(pcm_->sample_rate > 0 ? pcm_->sample_rate : 44100);
+    volume_pct_.store(std::clamp(volume_pct, 0, 100));
+    gain_.store(volume_pct_.load() / 100.0f);
     finished_.store(false);
     paused_.store(false);
-    cursor_frames_.store(static_cast<long long>(std::max(0.0, start_sec) * sample_rate_));
+    cursor_frames_.store(static_cast<long long>(std::max(0.0, start_sec) * sample_rate_.load()));
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format = ma_format_f32;
     cfg.playback.channels = 1;
-    cfg.sampleRate = static_cast<ma_uint32>(sample_rate_);
+    cfg.sampleRate = static_cast<ma_uint32>(sample_rate_.load());
     cfg.dataCallback = data_callback;
     cfg.pUserData = this;
 
@@ -90,7 +90,7 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
     }
     ConsoleLog::instance().log_verbose(
         std::string("audio: device started, backend=") + ma_get_backend_name(device_.pContext->backend) +
-        ", rate=" + std::to_string(sample_rate_) + "Hz");
+        ", rate=" + std::to_string(sample_rate_.load()) + "Hz");
 
     device_ready_ = true;
     return true;
@@ -100,14 +100,18 @@ void Player::pause() { paused_.store(true); }
 void Player::resume() { paused_.store(false); }
 
 int Player::volume() const {
-    std::lock_guard<std::mutex> lk(mutex_);
-    return volume_pct_;
+    // Lock-free on purpose: called every frame by the UI, and mutex_ can be
+    // held for hundreds of ms by play() during a device swap.
+    return volume_pct_.load();
 }
 
 void Player::seek_relative(double delta_sec) {
-    std::lock_guard<std::mutex> lk(mutex_);
-    if (!pcm_) return;
-    long long delta_frames = static_cast<long long>(delta_sec * sample_rate_);
+    // try_lock, not lock: if play()/stop() is mid device swap the old pcm_ is
+    // being torn down anyway, so dropping the seek is right -- and blocking
+    // the main thread on it would freeze the UI.
+    std::unique_lock<std::mutex> lk(mutex_, std::try_to_lock);
+    if (!lk.owns_lock() || !pcm_) return;
+    long long delta_frames = static_cast<long long>(delta_sec * sample_rate_.load());
     long long cur = cursor_frames_.load();
     // Clamp against reserved capacity (the eventual max), not the
     // currently-decoded amount — seeking a bit ahead of what's decoded
@@ -119,15 +123,17 @@ void Player::seek_relative(double delta_sec) {
 }
 
 void Player::set_volume(int volume_pct) {
-    std::lock_guard<std::mutex> lk(mutex_);
-    volume_pct_ = std::clamp(volume_pct, 0, 100);
-    gain_.store(volume_pct_ / 100.0f);
+    // Atomics only -- see volume().
+    const int v = std::clamp(volume_pct, 0, 100);
+    volume_pct_.store(v);
+    gain_.store(v / 100.0f);
 }
 
 double Player::poll_elapsed() const {
-    std::lock_guard<std::mutex> lk(mutex_);
-    if (sample_rate_ <= 0) return 0.0;
-    return static_cast<double>(cursor_frames_.load()) / sample_rate_;
+    // Lock-free on purpose -- see volume().
+    const int sr = sample_rate_.load();
+    if (sr <= 0) return 0.0;
+    return static_cast<double>(cursor_frames_.load()) / sr;
 }
 
 void Player::stop() {

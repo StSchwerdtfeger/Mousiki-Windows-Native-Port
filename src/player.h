@@ -66,8 +66,15 @@ public:
     void stop();
 
 private:
-    // Guards play()/stop() and every getter/setter below against each
-    // other. Now load-bearing rather than a nice-to-have: play()/stop() run
+    // Guards play()/stop() (and seek_relative(), which touches pcm_) against
+    // each other. Deliberately NOT taken by poll_elapsed(), volume() or
+    // set_volume(): play() holds this across ma_device_uninit() and
+    // ma_device_init()/start(), which on WASAPI can take a few hundred ms,
+    // and the main thread calls poll_elapsed()/volume() every rendered frame
+    // -- taking the lock there froze the whole UI for the duration of every
+    // track change. Those three only touch atomics now.
+    //
+    // Original rationale: play()/stop() run
     // on App's persistent device-worker thread for the whole session, while
     // seek/volume/pause hotkeys and the shutdown path's stop() run on the
     // main thread -- two long-lived threads genuinely calling into the same
@@ -94,12 +101,12 @@ private:
 
     std::shared_ptr<StreamingPcm> pcm_;
     FftVisualizer* fft_sink_ = nullptr;
-    int sample_rate_ = 44100;
+    std::atomic<int> sample_rate_{44100};
     std::atomic<long long> cursor_frames_{0};
     std::atomic<bool> finished_{false};
     std::atomic<float> gain_{0.7f};
     std::atomic<bool> paused_{false};
-    int volume_pct_ = 70;
+    std::atomic<int> volume_pct_{70};
 
     static void data_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count);
 };
