@@ -16,7 +16,11 @@ public:
     // Non-blocking single "logical" key read. Arrow keys (3-byte escape
     // sequences) collapse to 'A'/'B'/'C'/'D' (up/down/right/left). A lone
     // Escape key returns 27. Backspace returns 127. Returns 0 if nothing
-    // is waiting.
+    // is waiting. A non-ASCII keystroke (an umlaut, any other accented or
+    // non-Latin character) arrives as its UTF-8 encoding, one byte per
+    // call -- the same shape a plain read() off a UTF-8 terminal already
+    // produces, so text-entry fields that accept it need no special
+    // casing per platform.
     int poll_key();
 
     int rows() const;

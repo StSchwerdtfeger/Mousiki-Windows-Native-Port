@@ -19,7 +19,6 @@
 #define ENABLE_VIRTUAL_TERMINAL_INPUT 0x0200
 #endif
 
-#include <conio.h>
 #include <io.h>
 #include <atomic>
 #include <cstdlib>
@@ -300,10 +299,11 @@ void win_console_restore() {
 
 void win_raw_mode_enter() {
     if (!g_con.have_in_mode) return;
-    // _getch() below does its own unbuffered, non-echoing read, so the only
-    // thing that actually has to change here is turning off the console's
-    // own line editing and echo -- otherwise anything the user types while
-    // the render loop is between polls gets echoed into the frame.
+    // win_poll_key() reads raw key events via ReadConsoleInputW, which
+    // never echoes on its own -- but the console host's line-editing
+    // machinery is a separate layer that still echoes and buffers
+    // whatever's typed until Enter unless these two modes are off, so
+    // that's the only thing that actually has to change here.
     DWORD mode = g_con.orig_in_mode;
     mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
     mode |=  ENABLE_PROCESSED_INPUT;   // keep Ctrl+C working, as ISIG does on POSIX
@@ -315,33 +315,96 @@ void win_raw_mode_exit() {
     SetConsoleMode(g_con.in, g_con.orig_in_mode);
 }
 
+namespace {
+// Bytes still queued from a previously decoded character: a single
+// keypress can produce up to 4 UTF-8 bytes, but win_poll_key()'s contract
+// (documented in win_compat.h) is one int per call, so anything past the
+// first byte waits here for the next call.
+std::string g_pending_key_bytes;
+// A high surrogate holds here until the low surrogate that completes it
+// arrives in a later event -- needed for any character outside the BMP
+// (rare from a keyboard, but IME composition and emoji input can do it).
+wchar_t g_pending_high_surrogate = 0;
+} // namespace
+
 int win_poll_key() {
-    if (!_kbhit()) return 0;
-
-    int c = _getch();
-
-    // 0x00 and 0xE0 are lead bytes announcing an extended key; the scan code
-    // arrives on the next read. This is the Windows equivalent of the
-    // ESC-[-X three-byte sequence the POSIX path decodes, and collapses to
-    // the same four letters so app.cpp's key handling is untouched.
-    if (c == 0x00 || c == 0xE0) {
-        if (!_kbhit()) return 0;
-        int scan = _getch();
-        switch (scan) {
-            case 72: return 'A';   // up
-            case 80: return 'B';   // down
-            case 77: return 'C';   // right
-            case 75: return 'D';   // left
-            default: return 0;     // F-keys, Home/End/PgUp/... : ignored, as on POSIX
-        }
+    if (!g_pending_key_bytes.empty()) {
+        unsigned char b = static_cast<unsigned char>(g_pending_key_bytes.front());
+        g_pending_key_bytes.erase(g_pending_key_bytes.begin());
+        return b;
     }
 
-    // Windows reports Backspace as 0x08; the POSIX terminal sends 0x7F.
-    // app.cpp accepts both, but normalising here keeps the documented
-    // contract in terminal_ui.h honest.
-    if (c == 0x08) return 127;
+    DWORD events = 0;
+    if (!GetNumberOfConsoleInputEvents(g_con.in, &events) || events == 0) return 0;
 
-    return c;
+    INPUT_RECORD rec;
+    DWORD got = 0;
+    if (!ReadConsoleInputW(g_con.in, &rec, 1, &got) || got == 0) return 0;
+
+    if (rec.EventType != KEY_EVENT || !rec.Event.KeyEvent.bKeyDown) {
+        // Key-up, resize, focus-change, mouse (mouse input isn't even
+        // enabled) -- every one of these is interleaved with real
+        // keystrokes constantly (each keypress has its own key-up event
+        // right behind it), so returning 0 here would mean "nothing was
+        // pressed" once per actual keystroke. Recurse instead so the
+        // caller only ever sees 0 when the input queue is genuinely
+        // empty. GetNumberOfConsoleInputEvents above guarantees this
+        // terminates rather than spinning: it never recurses past
+        // however many events are actually queued.
+        return win_poll_key();
+    }
+
+    const KEY_EVENT_RECORD& k = rec.Event.KeyEvent;
+
+    // Arrow keys, by virtual-key code rather than guessing a scan code off
+    // a raw byte stream -- collapses to the same four letters the POSIX
+    // ESC-[-X decoder and the old _getch()-based path both used, so
+    // nothing downstream of this function (app.cpp's key handling) has to
+    // know or care which platform it's running on.
+    switch (k.wVirtualKeyCode) {
+        case VK_UP:    return 'A';
+        case VK_DOWN:  return 'B';
+        case VK_RIGHT: return 'C';
+        case VK_LEFT:  return 'D';
+        default: break;
+    }
+
+    wchar_t wc = k.uChar.UnicodeChar;
+    if (wc == 0) return 0; // a bare modifier, function key, Home/End/PgUp/... -- ignored, as on POSIX
+    if (wc == 8) return 127; // Backspace -- same normalization the old _getch() path applied
+    if (wc < 128) return static_cast<int>(wc); // plain ASCII: Enter (13), Tab (9), Esc (27), space, digits, letters, ...
+
+    // A real non-ASCII character: a German a/o/u-umlaut typed directly off
+    // the keyboard, any other accented or non-Latin letter, or (via a
+    // surrogate pair spanning two events) something outside the BMP. The
+    // OLD path here was _getch(), which reads a single BYTE at a time
+    // under whatever the console's legacy input code page happens to be
+    // -- not reliably UTF-8 even with SetConsoleCP(CP_UTF8) set, which is
+    // exactly why typing an umlaut either vanished (app.cpp's text-entry
+    // fields only ever accepted byte values 32-126) or came through as a
+    // mangled single byte. ReadConsoleInputW hands over the actual UTF-16
+    // code unit the keyboard layout produced, with no code-page ambiguity
+    // at all, so this is encoded straight to UTF-8 and queued -- from
+    // there it's handled exactly like typing the same character over a
+    // UTF-8 POSIX terminal already was.
+    if (wc >= 0xD800 && wc <= 0xDBFF) { // high surrogate: not a complete character on its own
+        g_pending_high_surrogate = wc;
+        return win_poll_key();
+    }
+
+    std::wstring utf16;
+    if (wc >= 0xDC00 && wc <= 0xDFFF && g_pending_high_surrogate != 0) {
+        utf16.push_back(g_pending_high_surrogate);
+        utf16.push_back(wc);
+        g_pending_high_surrogate = 0;
+    } else {
+        utf16.push_back(wc);
+    }
+
+    std::string utf8 = narrow(utf16);
+    if (utf8.empty()) return 0; // conversion failure -- shouldn't happen for a valid code unit
+    g_pending_key_bytes.assign(utf8.begin() + 1, utf8.end());
+    return static_cast<unsigned char>(utf8[0]);
 }
 
 int win_term_rows() {

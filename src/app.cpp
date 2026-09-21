@@ -57,6 +57,34 @@ void run_guarded(const char* what, F&& body) noexcept {
 // ASCII-only, deliberately: this folds track titles and artist names, which
 // are UTF-8. std::tolower over raw bytes mangles multi-byte sequences under
 // any single-byte locale -- see ascii_lower() in utf8_util.h.
+// Every text-entry field below (search box, bulk-add link field, color
+// hex field, the retry-lyrics title/artist/type fields) used to only
+// accept key values 32-126 -- plain printable ASCII. That's not just a
+// Windows gap: a typed umlaut, accented letter, or any other non-ASCII
+// character arrives as a multi-byte UTF-8 sequence whose individual byte
+// values are all >= 0x80 (continuation bytes 0x80-0xBF, lead bytes
+// 0xC2-0xF4), every one of which used to fail this check and simply
+// never reach the buffer -- on POSIX with a real UTF-8 terminal just as
+// much as on Windows. win_poll_key() (Windows) and the POSIX raw-input
+// path both hand such a keystroke over one UTF-8 byte per call already;
+// this is what actually lets any of those bytes through.
+bool is_text_key(int key) {
+    return (key >= 32 && key < 127) || (key >= 0x80 && key <= 0xFF);
+}
+
+// Removes exactly one full UTF-8 codepoint from the end of a text-entry
+// buffer, not just its last byte. A plain pop_back() left a dangling lead
+// byte behind for any accented/non-ASCII character (a German umlaut is
+// two bytes; CJK is three) -- that lone byte decodes as a replacement
+// glyph, and needed a second, confusing Backspace press to actually
+// finish clearing what looked like one character.
+void pop_utf8_char(std::string& s) {
+    if (s.empty()) return;
+    size_t i = s.size() - 1;
+    while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) --i;
+    s.erase(i);
+}
+
 std::string lower(std::string s) {
     return ascii_lower_str(std::move(s));
 }
@@ -1620,7 +1648,7 @@ void App::handle_settings_key(int key) {
             mode_ = Mode::Settings;
             return;
         }
-        if (key == 127 || key == 8) { if (!color_edit_buffer_.empty()) color_edit_buffer_.pop_back(); return; }
+        if (key == 127 || key == 8) { pop_utf8_char(color_edit_buffer_); return; }
         // Same bug as Mode::Search below: arrow keys collapse to 'A'-'D',
         // which sit inside 32-126 and would otherwise get typed as literal
         // letters. No navigable list here to repurpose them for, so they're
@@ -1628,7 +1656,7 @@ void App::handle_settings_key(int key) {
         // buffer accidentally capture an arrow-key code, which would create
         // exactly this collision for whatever action got bound to it.
         if ((key == 'A' || key == 'B' || key == 'C' || key == 'D')) return;
-        if (key >= 32 && key < 127 && color_edit_buffer_.size() < 18) color_edit_buffer_ += static_cast<char>(key);
+        if (is_text_key(key) && color_edit_buffer_.size() < 18) color_edit_buffer_ += static_cast<char>(key);
         return;
     }
 
@@ -1754,12 +1782,12 @@ void App::handle_key(int key) {
             }
             return; // stays open -- poll_pending_bulk_add() moves to phase 2 once the fetch resolves
         }
-        if (key == 127 || key == 8) { if (!bulk_add_buffer_.empty()) bulk_add_buffer_.pop_back(); return; }
+        if (key == 127 || key == 8) { pop_utf8_char(bulk_add_buffer_); return; }
         // Same bug as Mode::Search below: arrow keys collapse to 'A'-'D',
         // which sit inside 32-126 and would otherwise get typed as literal
         // letters into the link being entered.
         if ((key == 'A' || key == 'B' || key == 'C' || key == 'D')) return;
-        if (key >= 32 && key < 127 && bulk_add_buffer_.size() < 200) bulk_add_buffer_ += static_cast<char>(key);
+        if (is_text_key(key) && bulk_add_buffer_.size() < 200) bulk_add_buffer_ += static_cast<char>(key);
         return;
     }
 
@@ -1804,14 +1832,14 @@ void App::handle_key(int key) {
         }
 
         if (std::string* t = rl_text_ptr(rl_focus_)) {
-            if (key == 127 || key == 8) { if (!t->empty()) t->pop_back(); return; }
+            if (key == 127 || key == 8) { pop_utf8_char(*t); return; }
             // 'A'/'B' (up/down) are already intercepted above for field
             // navigation, but 'C'/'D' (right/left) fall through to here
             // uncaught -- same bug as Mode::Search below, where an arrow
             // code inside the printable range gets typed as a literal
             // letter instead of being recognized as an arrow key.
             if (key == 'C' || key == 'D') return;
-            if (key >= 32 && key < 127 && t->size() < 200) *t += static_cast<char>(key);
+            if (is_text_key(key) && t->size() < 200) *t += static_cast<char>(key);
             return;
         }
         return;
@@ -1830,7 +1858,7 @@ void App::handle_key(int key) {
         }
         if (key == '\r' || key == '\n') { submit_search(); mode_ = Mode::Browse; return; }
         if (key == 127 || key == 8) {
-            if (!search_buffer_.empty()) search_buffer_.pop_back();
+            pop_utf8_char(search_buffer_);
             update_live_search_preview();
             return;
         }
@@ -1863,7 +1891,7 @@ void App::handle_key(int key) {
             if (has_track_) player_.seek_relative(-5.0);
             return;
         }
-        if (key >= 32 && key < 127) {
+        if (is_text_key(key)) {
             search_buffer_ += static_cast<char>(key);
             update_live_search_preview();
             return;
@@ -3804,8 +3832,23 @@ int App::run() {
     ConsoleLog::instance().log_verbose("terminal: " + std::to_string(term.rows()) + "x" + std::to_string(term.cols()) + " (rows x cols, raw ioctl)");
 
     while (!quit_) {
-        int key = term.poll_key();
-        handle_key(key);
+        // Drain every key already queued before rendering, rather than
+        // one per frame. A single keystroke can arrive as more than one
+        // poll_key() call's worth of data -- any non-ASCII character (a
+        // German umlaut, most concretely) is a multi-byte UTF-8 sequence
+        // dispensed one byte per call, on both platforms (see
+        // TerminalIO::poll_key() / win_poll_key()). Rendering between
+        // those calls meant the frame in between showed a buffer ending
+        // in a lone, incomplete lead byte -- which decodes as a
+        // replacement glyph -- for one frame, before the next poll
+        // completed the sequence and it snapped to the real character.
+        // Draining first means the frame that actually renders always
+        // has a complete, valid buffer. This never blocks waiting for
+        // more input: poll_key() is non-blocking and returns 0 the
+        // moment nothing already-received is left to hand back.
+        for (int key = term.poll_key(); key != 0; key = term.poll_key()) {
+            handle_key(key);
+        }
 
         poll_pending_search();
         poll_pending_load();

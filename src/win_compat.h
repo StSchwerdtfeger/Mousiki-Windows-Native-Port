@@ -60,7 +60,14 @@ void win_raw_mode_exit();
 
 // Non-blocking single logical key read, with exactly the return contract
 // terminal_ui.h documents: arrows collapse to 'A'/'B'/'C'/'D', a lone Escape
-// is 27, Backspace is 127, nothing waiting is 0.
+// is 27, Backspace is 127, nothing waiting is 0. A non-ASCII keystroke (an
+// umlaut, any other accented or non-Latin character typed directly off the
+// keyboard) is UTF-8 encoded and dispensed one byte per call, exactly like
+// a UTF-8 POSIX terminal already delivers such a keystroke one byte per
+// read() -- callers that only care about single-byte hotkeys are unaffected
+// (multi-byte sequences only ever start with a byte >= 0x80, never a plain
+// ASCII hotkey value), and callers that accept free text (search box, etc.)
+// already handle exactly this shape of input from the POSIX side.
 int win_poll_key();
 
 int win_term_rows();
