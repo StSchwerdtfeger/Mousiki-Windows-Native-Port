@@ -69,11 +69,11 @@ Note, I had a bunch of the below already installed, so I am not sure how smooth 
 | yt-dlp | online search fallback, playlists, streaming | `winget install yt-dlp.yt-dlp` |
 | Python 3 + `requests` | lyrics and fast online search (`scripts/`) | `winget install Python.Python.3.12` then `py -3 -m pip install requests` |
 
-All of these are independent of each other and of the core player. With none of them installed, local playback still works.
+All of these are independent of each other and of the core player. With none of them installed, local playback still works. 
 
 MinGW-w64 (MSYS2 UCRT64) also builds this — configure with `-G "MinGW Makefiles"`. The code guards on `_WIN32`, not on `_MSC_VER`, except where MSVC genuinely differs (noted inline where it matters).
 
-`third_party/` (miniaudio, kissfft) isn't vendored in this repo — `CMakeLists.txt` downloads both automatically on first configure if they're not already present locally. That means the very first build needs an internet connection even if you already have every tool above installed.
+`third_party/` (miniaudio v0.11.25, kissfft) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if either is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause (see the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy.
 
 ## Use Windows Terminal
 
