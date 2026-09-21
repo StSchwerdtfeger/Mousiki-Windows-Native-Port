@@ -122,6 +122,13 @@ private:
 
     // --- now playing ---
     bool has_track_ = false;
+    // True from the moment advance_track() hands off to a load until
+    // poll_pending_load() publishes its result (success or failure). While
+    // it's set the finished track stays "current" (has_track_ remains true, so
+    // the UI doesn't flash "no track loaded" between songs), and this flag is
+    // what stops the main loop re-firing advance_track() every frame on the
+    // still-set finished flag.
+    bool advancing_ = false;
     fs::path current_path_;
     bool current_is_local_ = true;  // for snapshot identity -- current_path_ alone is ambiguous
                                      // (online tracks resolve to a cache path too)

@@ -900,9 +900,15 @@ void App::poll_pending_load() {
     }
     load_in_progress_ = false;
     load_stage_ = 0;
+    const bool was_advancing = advancing_;
+    advancing_ = false;
 
     if (!pl.success) {
         status_line_ = pl.error;
+        // An automatic advance whose next track failed to load: the previous
+        // track is over, so stop treating it as current (otherwise its
+        // finished flag would immediately trigger another advance).
+        if (was_advancing) has_track_ = false;
         return;
     }
 
@@ -1147,7 +1153,13 @@ void App::play_next_from_queue() {
 }
 
 void App::advance_track() {
-    has_track_ = false;
+    // has_track_ is deliberately NOT cleared up front. Clearing it here made
+    // the metadata panel show "no track loaded" for the gap between one track
+    // ending and the next one's load finishing (and made play_relative()
+    // measure "next" from the hover cursor instead of from what was actually
+    // playing). It's only cleared where playback really ends: Stop mode, or
+    // when nothing could be started / the load failed (see below and
+    // poll_pending_load()).
 
     // Repeat: keep replaying whatever just finished -- whether it came
     // from the queue or the library -- without touching the queue or
@@ -1163,26 +1175,32 @@ void App::advance_track() {
         return;
     }
     if (settings_.play_mode == 3 /*stop*/) {
-        return; // leave has_track_ false, no auto-advance -- queue or not
+        has_track_ = false; // the only mode where "no track loaded" is the right message
+        return; // no auto-advance -- queue or not
     }
 
     // The queue always takes priority over the library — it's an
     // explicit user-built-up-next list.
+    advancing_ = true; // suppress re-entry until poll_pending_load() reports back
     if (!queue_.empty()) {
         play_next_from_queue();
-        return;
+    } else {
+        switch (settings_.play_mode) {
+            case 2: // shuffle
+                play_relative_random();
+                break;
+            default: // list (sequential) -- also where Repeat Queue (4) lands
+                     // once the queue's actually empty; there's nothing left
+                     // to "repeat queue" without one, so it just falls back
+                     // to normal sequential playback.
+                play_relative(1);
+                break;
+        }
     }
-
-    switch (settings_.play_mode) {
-        case 2: // shuffle
-            play_relative_random();
-            break;
-        default: // list (sequential) -- also where Repeat Queue (4) lands
-                 // once the queue's actually empty; there's nothing left
-                 // to "repeat queue" without one, so it just falls back
-                 // to normal sequential playback.
-            play_relative(1);
-            break;
+    // Nothing got started (empty list, ...): playback has genuinely ended.
+    if (!load_in_progress_.load()) {
+        advancing_ = false;
+        has_track_ = false;
     }
 }
 
@@ -3863,7 +3881,7 @@ int App::run() {
 
         if (has_track_) {
             player_.poll_elapsed();
-            if (player_.finished()) advance_track();
+            if (!advancing_ && player_.finished()) advance_track();
         }
         // Disk only spins while something is actually playing — frozen
         // when idle or paused, per instruction.
