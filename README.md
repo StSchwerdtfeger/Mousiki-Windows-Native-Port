@@ -10,10 +10,10 @@ This fork exists because the original targets POSIX (Linux/macOS/Termux) and has
 
 ![preview](preview.gif)
 
-## Quick start
+## Quick start (for PowerShell 7.6.6, not tested with other shells or older versions of PWSH)
 
 ```powershell
-# from the repo root, in PowerShell 7.6.6 (not tested with older versions!!!)
+# from the repo root
 .\setup.ps1
 ```
 This temporarily disables script blocking and warning prompts for the currently active PowerShell session only,
