@@ -154,7 +154,7 @@ HKeySetting="s"
 # are both fine. Add/edit these while mousiki is closed -- the library is
 # scanned once at startup, there's no live rescan.
 LocalMusicPath=C:\Users\you\Music
-LocalMusicPath=~/Music
+LocalMusicPath=%USERPROFILE%\Music
 
 
 # Navigation
