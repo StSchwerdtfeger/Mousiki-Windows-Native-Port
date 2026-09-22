@@ -99,9 +99,42 @@ LocalMusicPath=~/Music
 
 There's no in-app UI for adding a folder — that isn't a Windows-port limitation, the original never had one either; `config.txt` is the only way, on every platform. The library is scanned once at startup, so add or edit `LocalMusicPath=` lines while mousiki is closed; there's no live rescan.
 
-## Hotkey remapping
+## Default Keybindings
 
-Every hotkey in `config.txt` — and everything editable under Settings → Reference in the app itself — is genuinely rebindable, including the five new ones this fork adds (see below). This is worth calling out specifically because **it wasn't actually true in the original codebase either**: the lookup function that turns a configured key string into an action existed there, fully implemented, but nothing ever called it, so editing a binding only ever changed what was *displayed*, never what the key actually did. This port wires that lookup into the real input dispatch, so `config.txt` and the in-app editor now mean what they say — on top of everything already provided upstream, not as a Windows-specific feature.
+Configurable in `C:\Users\USER\.config\mousiki\config.txt`.
+
+What's new: Shuffle next key and lyrics on/off key (when off, sphere visualisation is shown). 
+
+### Search & Playback
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
+| **Local Search** | `/` | Filter and search local library |
+| **Online Stream Search** | `/s: <query>` | Search and stream music online |
+| **Download Stream** | `y` | Download currently streaming track |
+| **Play / Pause** | `p` (or `ENTER`) | Toggle playback |
+| **Next / Previous Track** | `n` / `b` | Skip between songs |
+| **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
+| **Volume** | `1` / `2` | Decrease / Increase volume |
+| **Shuffle / Repeat** | `m` / `r` | Toggle shuffle or repeat mode |
+| **Shuffle Next** | `#` | Shuffle to next song |
+| **Toggle Lyrics** | `+` | Turn Lyrics on/off |
+
+### Navigation & Queue
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
+| **Navigate** | `ARROW_UP` / `ARROW_DOWN` | Move selection |
+| **Switch Tabs/Cards** | `TAB` | Cycle between UI panels |
+| **Add to Queue** | `a` | Enqueue selected track |
+| **Remove from Queue** | `d` | Dequeue selected track |
+| **Filter by Folder** | `f` | Apply folder filter |
+| **Clear Filter** | `c` | Reset active search/filters |
+| **Quit** | `q` | Exit application |
+
+</div>
+
+Every hotkey in config.txt — and everything editable under Settings → Reference in the app itself — is genuinely rebindable, including the five new ones this fork adds (see below). This is worth calling out specifically because it wasn't actually true in the original codebase either (**According to my AI helper, since I can't test it myself, but it didn't work with my Windows port at first somehow!!!!!**): the lookup function that turns a configured key string into an action existed there, fully implemented, but nothing ever called it, so editing a binding only ever changed what was displayed, never what the key actually did. This port wires that lookup into the real input dispatch, so config.txt and the in-app editor now mean what they say — on top of everything already provided upstream, not as a Windows-specific feature.
+
+In the config.txt you will also see liens like A = A, a. This is used so you can re-font the UI without changing the font of the terminal, e.g. via A={𝓐,𝓪}.... 
 
 ## What had to change
 
@@ -151,7 +184,8 @@ Every background `std::thread` (metadata sweep, decode, lyrics fetch, waveform p
 
 A few things added on top of the original design rather than required to run it at all:
 
-- **Hotkey remapping actually works** (see above) — arguably a bug fix rather than a feature, but it's new behavior either way.
+- **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à etc.
+- **Hotkey remapping actually works (see above)** — arguably a bug fix rather than a feature, but it's new behavior either way.
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. It's tried first; `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
 - **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
 - **A Lyrics Engine toggle that actually gates fetching**, not just the panel's visibility (`+` to toggle, or Settings → On/Off) — previously the fetch ran and hit the network every single track regardless of whether the panel was shown. Toggling it off now shows the sphere visualization in that space instead of leaving it blank.
