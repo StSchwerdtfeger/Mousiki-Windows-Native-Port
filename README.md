@@ -10,6 +10,11 @@ This fork exists because the original targets POSIX (Linux/macOS/Termux) and has
 
 ![preview](preview.gif)
 
+My current setup looks like the below. The config.txt and everything that comes along with (FastFetch and Oh-My-Posh configs) can be found in my [MeowerShell repository](https://github.com/StSchwerdtfeger/Meower-Shell):
+
+<img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
+
+
 ## Quick start (for PowerShell 7.6.6, not tested with other shells or older versions of PWSH)
 
 ```powershell
