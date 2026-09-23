@@ -64,7 +64,7 @@ Voilá, you can now open Mousiki from any folder you're at using the command "la
 
 Note, I had a bunch of the below already installed, so I am not sure how smooth setup.ps1 runs installing the below for the first time using setup.ps1 (such as installing Visual Studio 2022 Build Tools...).
 
-`setup.ps1` installs these via winget, except the compiler:
+`setup.ps1` installs these via winget in PowerShell 7, except the compiler:
 
 | Tool | Why | Install |
 |---|---|---|
