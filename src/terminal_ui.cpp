@@ -118,6 +118,11 @@ int TerminalIO::poll_key() {
                 case 'C': return 'C';
                 case 'D': return 'D';
                 case 'H': return kKeyHome; // most xterm-likes send ESC [ H for Home
+                case '3': { // ESC [ 3 ~ -- Delete key
+                    unsigned char tail = 0;
+                    if (read(STDIN_FILENO, &tail, 1) == 1 && tail == '~') return kKeyDelete;
+                    return 27;
+                }
             }
         }
         return 27;
@@ -146,6 +151,128 @@ int TerminalIO::cols() const {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Emoji replacement
+//
+// Whether an emoji occupies one cell or two is decided by the *terminal*, not
+// by this program, and terminals disagree: conhost, Windows Terminal (which
+// changed its rules between releases), the VS Code terminal and ConPTY
+// each ship their own width tables, and multi-codepoint emoji (ZWJ sequences,
+// flags, skin tones, VS16 "emoji style" forms, keycaps) are measured
+// differently again. Every column calculation in this file is only as good as
+// our guess at that answer, and a wrong guess by a single cell shifts every
+// "|" to the right of the title on that row.
+//
+// So by default an emoji (a whole cluster, however many codepoints it has) is
+// drawn as ONE plain "?" -- a character every terminal agrees is exactly one
+// cell wide -- and display_width()/pad_right()/truncate_str()/... all measure
+// that "?". The layout is then correct no matter what the terminal thinks of
+// emoji. Set  ReplaceEmoji=false  in config.txt to draw the real emoji again
+// (alignment then depends on the terminal agreeing with the width table).
+//
+// Deliberately narrow: only genuine emoji are replaced. Text symbols that
+// music titles use all the time (music notes, stars, arrows, dingbat checks)
+// are untouched, as are all CJK / Indic / Latin characters.
+// ---------------------------------------------------------------------------
+static bool g_replace_emoji = true;
+
+void set_emoji_replacement(bool on) { g_replace_emoji = on; }
+
+namespace {
+
+struct CpRange { uint32_t lo, hi; };
+
+// Codepoints below U+1F000 with Emoji_Presentation=Yes, i.e. ones that are
+// emoji even without a variation selector (sorted, binary-searched).
+constexpr CpRange kBmpEmoji[] = {
+    {0x231A, 0x231B}, {0x23E9, 0x23EC}, {0x23F0, 0x23F0}, {0x23F3, 0x23F3},
+    {0x25FD, 0x25FE}, {0x2614, 0x2615}, {0x2648, 0x2653}, {0x267F, 0x267F},
+    {0x2693, 0x2693}, {0x26A1, 0x26A1}, {0x26AA, 0x26AB}, {0x26BD, 0x26BE},
+    {0x26C4, 0x26C5}, {0x26CE, 0x26CE}, {0x26D4, 0x26D4}, {0x26EA, 0x26EA},
+    {0x26F2, 0x26F3}, {0x26F5, 0x26F5}, {0x26FA, 0x26FA}, {0x26FD, 0x26FD},
+    {0x2705, 0x2705}, {0x270A, 0x270B}, {0x2728, 0x2728}, {0x274C, 0x274C},
+    {0x274E, 0x274E}, {0x2753, 0x2755}, {0x2757, 0x2757}, {0x2795, 0x2797},
+    {0x27B0, 0x27B0}, {0x27BF, 0x27BF}, {0x2B1B, 0x2B1C}, {0x2B50, 0x2B50},
+    {0x2B55, 0x2B55},
+};
+
+bool cp_in_table(uint32_t cp, const CpRange* t, size_t n) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (cp < t[mid].lo)      hi = mid;
+        else if (cp > t[mid].hi) lo = mid + 1;
+        else                     return true;
+    }
+    return false;
+}
+
+// A codepoint that is an emoji on its own.
+bool is_emoji_base(uint32_t cp) {
+    if (cp >= 0x1F000 && cp <= 0x1FAFF) return true; // pictographs, flags' regional indicators, emoticons, ...
+    return cp_in_table(cp, kBmpEmoji, sizeof(kBmpEmoji) / sizeof(kBmpEmoji[0]));
+}
+
+bool is_regional_indicator(uint32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
+bool is_emoji_modifier(uint32_t cp)     { return cp >= 0x1F3FB && cp <= 0x1F3FF; } // skin tones
+bool is_emoji_tag(uint32_t cp)          { return cp >= 0xE0020 && cp <= 0xE007F; } // flag subdivisions
+
+std::string replace_emoji(const std::string& s) {
+    if (!g_replace_emoji) return s;
+    // Fast path: every emoji, VS16, ZWJ and keycap is encoded with a lead byte
+    // >= 0xE2, so nearly every ordinary title bails out here after one scan.
+    bool maybe = false;
+    for (unsigned char c : s) { if (c >= 0xE2) { maybe = true; break; } }
+    if (!maybe) return s;
+
+    std::string out;
+    out.reserve(s.size());
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t start = i;
+        uint32_t cp = utf8_decode(s, i);
+
+        // A plain character turned into an emoji by a following VS16 (U+FE0F)
+        // or keycap (U+20E3): "\u2764\uFE0F", "1\uFE0F\u20E3", ...
+        bool forms_emoji = false;
+        if (!is_emoji_base(cp) && i < s.size()) {
+            size_t j = i;
+            uint32_t next = utf8_decode(s, j);
+            forms_emoji = (next == 0xFE0F || next == 0x20E3);
+        }
+        if (!is_emoji_base(cp) && !forms_emoji) {
+            out.append(s, start, i - start);
+            continue;
+        }
+
+        // Swallow the rest of the cluster: modifiers, variation selectors,
+        // keycaps, tag sequences, a second regional indicator (flags), and
+        // ZWJ-joined follow-up emoji.
+        bool first_is_ri = is_regional_indicator(cp);
+        while (i < s.size()) {
+            size_t j = i;
+            uint32_t next = utf8_decode(s, j);
+            if (next == 0xFE0F || next == 0xFE0E || next == 0x20E3
+                || is_emoji_modifier(next) || is_emoji_tag(next)) {
+                i = j;
+            } else if (first_is_ri && is_regional_indicator(next)) {
+                i = j;
+                first_is_ri = false; // a flag is exactly two indicators
+            } else if (next == 0x200D && j < s.size()) {
+                size_t k = j;
+                uint32_t after = utf8_decode(s, k);
+                if (is_emoji_base(after)) { i = k; } else { break; }
+            } else {
+                break;
+            }
+        }
+        out += '?';
+    }
+    return out;
+}
+
+} // namespace
+
 static int codepoint_width(uint32_t cp) {
     if (cp == 0) return 0;
     if (is_indic_codepoint(cp)) return indic_codepoint_width(cp);
@@ -170,7 +297,8 @@ static int codepoint_width(uint32_t cp) {
 //         uint32_t cp = utf8_decode(clean, i);
 //         int w = codepoint_width(cp);
 
-int display_width(const std::string& s) {
+int display_width(const std::string& raw) {
+    const std::string s = replace_emoji(raw);
     int cols = 0;
     size_t i = 0;
     uint32_t prev_cp = 0;
@@ -195,7 +323,8 @@ int display_width(const std::string& s) {
     return cols;
 }
 
-std::string utf8_take(const std::string& s, int width) {
+std::string utf8_take(const std::string& raw, int width) {
+    const std::string s = replace_emoji(raw);
     std::string out;
     size_t i = 0;
     int used = 0;
@@ -231,7 +360,8 @@ std::string utf8_take(const std::string& s, int width) {
     return out;
 }
 
-std::string utf8_skip_take(const std::string& s, int skip_cols, int take_cols) {
+std::string utf8_skip_take(const std::string& raw, int skip_cols, int take_cols) {
+    const std::string s = replace_emoji(raw);
     std::string out;
     size_t i = 0;
     int skipped = 0;
@@ -254,29 +384,33 @@ std::string utf8_skip_take(const std::string& s, int skip_cols, int take_cols) {
     return out;
 }
 
-std::string pad_right(const std::string& s, int width) {
+std::string pad_right(const std::string& raw, int width) {
     if (width <= 0) return "";
+    const std::string s = replace_emoji(raw);
     int w = display_width(s);
     if (w >= width) return utf8_take(s, width);
     return s + std::string(width - w, ' ');
 }
 
-std::string pad_left(const std::string& s, int width) {
+std::string pad_left(const std::string& raw, int width) {
     if (width <= 0) return "";
+    const std::string s = replace_emoji(raw);
     int w = display_width(s);
     if (w >= width) return utf8_take(s, width);
     return std::string(width - w, ' ') + s;
 }
 
-std::string truncate_str(const std::string& s, int width) {
+std::string truncate_str(const std::string& raw, int width) {
     if (width <= 0) return "";
+    const std::string s = replace_emoji(raw);
     int w = display_width(s);
     if (w <= width) return s;
     if (width <= 3) return utf8_take(s, width);
     return utf8_take(s, width - 3) + "...";
 }
 
-std::vector<std::string> wrap_lines(const std::string& s, int width, int max_lines) {
+std::vector<std::string> wrap_lines(const std::string& raw, int width, int max_lines) {
+    const std::string s = replace_emoji(raw);
     std::vector<std::string> out;
     if (width <= 0 || max_lines <= 0) return out;
 

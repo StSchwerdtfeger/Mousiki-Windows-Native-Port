@@ -110,4 +110,18 @@ bool PlaylistManager::save(const fs::path& dir, const Playlist& pl, std::string*
     return true;
 }
 
+bool PlaylistManager::remove(const fs::path& dir, const std::string& name, std::string* error) {
+    fs::path file = dir / path_from_utf8(sanitize_name(name) + ".txt");
+    std::error_code ec;
+    if (!fs::exists(file, ec)) {
+        if (error) *error = "no such playlist";
+        return false;
+    }
+    if (!fs::remove(file, ec) || ec) {
+        if (error) *error = ec.message();
+        return false;
+    }
+    return true;
+}
+
 } // namespace muisc

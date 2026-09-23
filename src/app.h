@@ -129,7 +129,7 @@ private:
     std::vector<PlaylistSummary> playlist_view_;
     std::string last_playlist_query_;
     std::vector<PlaylistSummary> filter_playlists(const std::string& query) const;
-    fs::path playlists_dir() const; // local_music_paths[0]/playlists, same fallback HKeyDownloadStream uses
+    fs::path playlists_dir() const; // settings_.playlists_path if set, else local_music_paths[0]/playlists
     void playlist_add_selected_to_queue();
 
     // --- playlist editor overlay (Mode::Playlist, HKeyPlaylist) ----------
@@ -152,6 +152,7 @@ private:
     bool playlist_confirm_exit_ = false;  // "save before exiting?" Y/N prompt, shown in place of the hint line
     std::vector<PlaylistSummary> playlist_manage_view_; // tab 1's list
     int playlist_manage_selected_ = 0;
+    bool playlist_confirm_delete_ = false; // "really delete this playlist?" Y/N prompt (tab 1, DEL key)
     std::string playlist_status_; // shown at the bottom of the overlay; cleared on (re)entry
 
     void playlist_refresh_lib_view();
@@ -160,6 +161,7 @@ private:
     void playlist_load_into_editor(const std::string& name);
     void playlist_add_hovering_to_edit();
     void playlist_remove_hovering_track();
+    void playlist_delete_selected(); // tab 1's DEL, after playlist_confirm_delete_ confirms
     void playlist_save_current();
     void handle_playlist_key(int key);
     void build_playlist_screen(std::ostringstream& frame, int W, int player_h) const;

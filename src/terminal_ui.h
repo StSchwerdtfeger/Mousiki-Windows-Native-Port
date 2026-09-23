@@ -14,6 +14,12 @@ namespace muisc {
 // literally (see e.g. Mode::Search's and Mode::BulkAdd's key handling).
 constexpr int kKeyHome = 300;
 
+// Same idea, for the forward-Delete key (VK_DELETE on Windows, xterm's
+// "\x1b[3~" elsewhere) -- distinct from Backspace (127), which is a
+// different physical key that some overlays additionally accept as a
+// delete/remove action.
+constexpr int kKeyDelete = 301;
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {
@@ -67,5 +73,14 @@ std::string utf8_skip_take(const std::string& s, int skip_cols, int take_cols);
 
 // Computes terminal display width of a UTF-8 string based on wcwidth.
 int display_width(const std::string& s);
+
+// Emoji handling (see the long comment above replace_emoji() in
+// terminal_ui.cpp). On (the default): every emoji cluster is measured and
+// drawn as a single "?" by display_width()/pad_right()/truncate_str()/
+// wrap_lines()/utf8_take()/utf8_skip_take(), so a title containing an emoji
+// can never push the box borders out of line, whatever the terminal thinks the
+// emoji's width is. Off: emoji pass through and are measured by the width
+// table. Driven by config.txt's ReplaceEmoji.
+void set_emoji_replacement(bool on);
 
 } // namespace muisc

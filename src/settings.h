@@ -87,7 +87,7 @@ struct Settings {
     std::string queue_playing_color;
     std::string queue_playing_bg_color;
     std::string queue_cursor_color;     // the "hovering" row once you Tab into the queue
-    std::string queue_cursor_bg_color;             // "0"/empty = no background
+    std::string queue_cursor_bg_color = "238";     // "0" = no background; default matches list_cursor_bg_color so the hovering row is always visible
 
     // Row background colors. Value "0" (or empty) = no background color.
     std::string list_playing_bg_color;
@@ -129,6 +129,12 @@ struct Settings {
     // OS-level events (resizes, audio device init, spawn failures, ...).
     int console_verbosity = 0; // 0=basic, 1=verbose
 
+    // --- emoji in titles (config.txt: ReplaceEmoji) ----------------------
+    // true  = every emoji is drawn as a single "?" so box borders can never
+    //         be shifted by a terminal that measures emoji differently.
+    // false = draw real emoji (alignment then depends on the terminal).
+    bool replace_emoji = true;
+
     // --- autosave / session snapshot (config.txt: AutoSave*) -----------
     bool autosave_enabled = true;
     bool autosave_indicator = true;
@@ -149,6 +155,14 @@ struct Settings {
     // When empty the scanner falls back to the built-in defaults
     // (~/Music and ~/disk/Music).
     std::vector<std::string> local_music_paths;
+
+    // --- playlists folder -----------------------------------------------
+    // Where saved playlists (App::playlists_dir()) live. Empty (the
+    // default) means "use local_music_paths[0]/playlists", which falls
+    // back further to the cache folder if no LocalMusicPath is
+    // configured at all. Set PlaylistsPath= in config.txt to pin it
+    // somewhere specific regardless of local_music_paths.
+    std::string playlists_path;
 
     // --- hotkey mapping ------------------------------------------------
     // Action name → key string (e.g. "ARROW_KEY_UP", "s", "ENTER")

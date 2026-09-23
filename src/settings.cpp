@@ -327,6 +327,8 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyQueueMoveUp",                 "u"},
             {"HKeyToggleWaveform",              "w"},
             {"HKeyCycleSortMode",               "T"},
+            {"HKeyPlaylist",                    "P"},
+            {"HKeySearchPlaylist",              "/p:"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -680,6 +682,9 @@ static Settings load_from_config(const fs::path& path) {
             continue;
         }
 
+        // --- Emoji handling ---------------------------------------------
+        if (key == "ReplaceEmoji") { s.replace_emoji = parse_bool(value); continue; }
+
         // --- Autosave / session snapshot --------------------------------
         if (key == "AutoSave") { s.autosave_enabled = parse_bool(value); continue; }
         if (key == "AutoSaveIndicator") { s.autosave_indicator = parse_bool(value); continue; }
@@ -722,6 +727,20 @@ static Settings load_from_config(const fs::path& path) {
                 }
                 s.local_music_paths.push_back(path);
             }
+            continue;
+        }
+
+        // --- Playlists folder override ---
+        // A single PlaylistsPath= line pins where saved playlists live,
+        // independent of local_music_paths[0]. Same ~ expansion as
+        // LocalMusicPath, above.
+        if (key == "PlaylistsPath" || key == "playlists_path") {
+            std::string path = trim(unquote(value));
+            if (!path.empty() && path[0] == '~') {
+                const char* home = std::getenv("HOME");
+                if (home) path = std::string(home) + path.substr(1);
+            }
+            s.playlists_path = path;
             continue;
         }
 
@@ -931,6 +950,14 @@ void save_settings(const Settings& s) {
     out << "\n";
 
     out << "##-------------------------------------------\n";
+    out << "##             EMOJI IN TITLES\n";
+    out << "##-------------------------------------------\n\n";
+    out << "ReplaceEmoji=" << (s.replace_emoji ? "true" : "false") << "\n";
+    out << "## true  = an emoji in a title is drawn as a single \"?\" so the box borders always stay aligned\n";
+    out << "## false = draw the real emoji (alignment then depends on how your terminal measures emoji)\n";
+    out << "\n";
+
+    out << "##-------------------------------------------\n";
     out << "##             CONSOLE / LOGGING\n";
     out << "##-------------------------------------------\n\n";
     out << "ConsoleVerbosity=" << (s.console_verbosity == 1 ? "verbose" : "basic") << "\n## basic , verbose\n";
@@ -979,6 +1006,9 @@ void save_settings(const Settings& s) {
     for (const auto& path : s.local_music_paths) {
         out << "LocalMusicPath=" << path << "\n";
     }
+    out << "\n# Playlists folder (optional -- overrides the LocalMusicPath[0]/playlists default)\n";
+    if (!s.playlists_path.empty()) out << "PlaylistsPath=" << s.playlists_path << "\n";
+
     out << "\n# Navigation\n";
     // Write every mapped hotkey, stable order, whatever the key is named.
     static const char* hkey_order[] = {

@@ -184,6 +184,15 @@ std::string fmt_mmss(double seconds) {
 // helpers from terminal_ui.cpp so multi-byte glyphs can't throw off the
 // column count the way byte-length padding did before.
 
+// SGR for a "cursor" (hovering) row. If both the configured foreground and
+// background resolve to nothing -- e.g. ColorQueueCursorBg is blank in the
+// user's config -- the row would look identical to its neighbours and the
+// cursor would be invisible, so fall back to reverse video.
+std::string cursor_sgr(const std::string& fg, const std::string& bg) {
+    std::string s = ansi_for(fg) + bg_ansi_for(bg);
+    return s.empty() ? std::string("\x1b[7m") : s;
+}
+
 } // namespace
 
 std::string App::box_top(const std::string& label, int total_width, const std::string& border_ansi) const {
@@ -469,6 +478,7 @@ fs::path find_fast_search_script() { return find_scripts_file("fast_yt_search.py
 
 App::App() {
     settings_ = load_settings();
+    set_emoji_replacement(settings_.replace_emoji);
     lyrics_script_ = find_lyrics_script();
     fast_search_script_ = find_fast_search_script();
 
@@ -735,11 +745,15 @@ std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) con
     return out;
 }
 
-// settings_.local_music_paths[0]/playlists -- same "first configured
-// local path" fallback HKeyDownloadStream uses (~/Music if none
-// configured at all). Computed fresh every call, not cached, so it
+// settings_.playlists_path if the user set one (config.txt's
+// PlaylistsPath=), otherwise settings_.local_music_paths[0]/playlists --
+// same "first configured local path" fallback HKeyDownloadStream uses
+// (~/Music if none configured at all, which by the time this runs may
+// itself have become the cache folder -- see load_library()'s
+// cache-dir injection). Computed fresh every call, not cached, so it
 // always reflects whatever the user currently has set in Settings.
 fs::path App::playlists_dir() const {
+    if (!settings_.playlists_path.empty()) return path_from_utf8(settings_.playlists_path);
     std::string base;
     if (!settings_.local_music_paths.empty()) {
         base = settings_.local_music_paths[0];
@@ -1542,9 +1556,9 @@ static const char* kRefHotkeyNames[] = {
     "HKeyFilterForFolder", "HKeyClearFilter", "HKeyDownloadStream",
     "HKeyRefreshUi", "HKeyConsole", "HKeyToggleMute", "HKeyCheatsheet", "HKeyRetryLyrics",
     "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyToggleWaveform", "HKeyCycleSortMode",
-    "HKeyPlaylist",
+    "HKeyPlaylist", "HKeySearchPlaylist",
 };
-static constexpr int kRefRowCount = 31;
+static constexpr int kRefRowCount = 32;
 
 std::string* App::color_field_ptr(int row, int col) {
     switch (row) {
@@ -2977,7 +2991,7 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
         std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
         std::string padded = pad_right(truncate_str(content, inner), inner);
         if (sel) {
-            std::string cursor_ansi = ansi_for(settings_.list_cursor_color) + bg_ansi_for(settings_.list_cursor_bg_color);
+            std::string cursor_ansi = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
             out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
         } else if (is_playing_row) {
             std::string playing_ansi = ansi_for(settings_.list_playing_color) + bg_ansi_for(settings_.list_playing_bg_color);
@@ -3033,7 +3047,7 @@ std::vector<std::string> App::build_queue_panel(int total_width, int height) con
             }
             std::string padded = pad_right(truncate_str(content, inner), inner);
             std::string color_ansi;
-            if (is_row_hovering) color_ansi = ansi_for(settings_.queue_cursor_color) + bg_ansi_for(settings_.queue_cursor_bg_color);
+            if (is_row_hovering) color_ansi = cursor_sgr(settings_.queue_cursor_color, settings_.queue_cursor_bg_color);
             else if (is_row_playing) color_ansi = ansi_for(settings_.queue_playing_color, true) + bg_ansi_for(settings_.queue_playing_bg_color);
             else color_ansi = ansi_for(settings_.queue_color, false) + bg_ansi_for(settings_.queue_inactive_bg_color);
             out.push_back(bar + " " + color_ansi + padded + "\x1b[0m " + bar);
@@ -3078,6 +3092,7 @@ void App::playlist_open_editor() {
     playlist_status_.clear();
     playlist_edit_dirty_ = false;
     playlist_confirm_exit_ = false;
+    playlist_confirm_delete_ = false;
     playlist_refresh_lib_view();
     playlist_refresh_manage_view();
 }
@@ -3114,10 +3129,30 @@ void App::playlist_add_hovering_to_edit() {
 void App::playlist_remove_hovering_track() {
     if (playlist_edit_track_selected_ < 0
         || playlist_edit_track_selected_ >= static_cast<int>(playlist_edit_tracks_.size())) return;
+    const std::string removed_title = playlist_edit_tracks_[playlist_edit_track_selected_].title;
     playlist_edit_tracks_.erase(playlist_edit_tracks_.begin() + playlist_edit_track_selected_);
+    playlist_status_ = "removed \"" + removed_title + "\"";
     playlist_edit_track_selected_ = std::clamp(playlist_edit_track_selected_, 0,
         std::max(0, static_cast<int>(playlist_edit_tracks_.size()) - 1));
     playlist_edit_dirty_ = true;
+}
+
+// Tab 1's DEL, fired only after playlist_confirm_delete_ has been
+// confirmed with Y -- see handle_playlist_key().
+void App::playlist_delete_selected() {
+    if (playlist_manage_selected_ < 0
+        || playlist_manage_selected_ >= static_cast<int>(playlist_manage_view_.size())) return;
+    std::string name = playlist_manage_view_[playlist_manage_selected_].name;
+    std::string error;
+    if (!PlaylistManager::remove(playlists_dir(), name, &error)) {
+        playlist_status_ = "delete failed: " + error;
+        return;
+    }
+    playlist_status_ = "deleted \"" + name + "\"";
+    playlist_refresh_manage_view();
+    // Same reasoning as playlist_save_current(): keep the main UI's "/p:"
+    // browse view in sync if it's currently showing playlists.
+    if (list_source_ == ListSource::Playlist) playlist_view_ = filter_playlists(last_playlist_query_);
 }
 
 // HOME -- saves and exits back to Browse. Deliberately not a plain
@@ -3161,6 +3196,17 @@ void App::handle_playlist_key(int key) {
         return;
     }
 
+    // "Really delete this playlist?" prompt -- shown instead of the hint
+    // line when DEL is pressed on tab 1 (see below). Same swallow-every-
+    // other-key shape as playlist_confirm_exit_ above, so nothing on tab
+    // 1 can be triggered by accident while it's up.
+    if (playlist_confirm_delete_) {
+        if (key == 'y' || key == 'Y') { playlist_confirm_delete_ = false; playlist_delete_selected(); return; }
+        if (key == 'n' || key == 'N') { playlist_confirm_delete_ = false; return; }
+        if (key == 27) { playlist_confirm_delete_ = false; } // cancel the prompt
+        return;
+    }
+
     if (key == 27) { // ESC
         if (playlist_tab_ == 0 && playlist_edit_dirty_) { playlist_confirm_exit_ = true; return; }
         mode_ = Mode::Browse;
@@ -3191,6 +3237,10 @@ void App::handle_playlist_key(int key) {
             if (total > 0 && playlist_manage_selected_ < total) {
                 playlist_load_into_editor(playlist_manage_view_[playlist_manage_selected_].name);
             }
+            return;
+        }
+        if (key == kKeyDelete && total > 0 && playlist_manage_selected_ < total) {
+            playlist_confirm_delete_ = true;
             return;
         }
         return;
@@ -3252,10 +3302,10 @@ void App::handle_playlist_key(int key) {
             if (total > 0 && playlist_edit_track_selected_ < total - 1) ++playlist_edit_track_selected_;
             return;
         }
-        // Backspace or 'd' (lowercase only -- uppercase 'D' is the
+        // DEL, Backspace, or 'd' (lowercase only -- uppercase 'D' is the
         // globally-collapsed Left-arrow code, already intercepted above
         // for tab switching, so it never reaches here).
-        if (key == 127 || key == 8 || key == 'd') { playlist_remove_hovering_track(); return; }
+        if (key == kKeyDelete || key == 127 || key == 8 || key == 'd') { playlist_remove_hovering_track(); return; }
         return;
     }
 }
@@ -3296,7 +3346,7 @@ std::vector<std::string> App::build_playlist_library_panel(int total_width, int 
         bool sel = (playlist_edit_focus_ == 1) && (idx == playlist_edit_lib_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
         if (sel) {
-            std::string cursor_ansi = ansi_for(settings_.list_cursor_color) + bg_ansi_for(settings_.list_cursor_bg_color);
+            std::string cursor_ansi = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
             out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
         } else {
             std::string list_ansi = ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color);
@@ -3317,7 +3367,19 @@ std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int h
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     std::vector<std::string> out;
 
-    std::string label = "TRACKS (" + std::to_string(playlist_edit_tracks_.size()) + ")";
+    // When focused, also show WHICH row the cursor is on ("3/12"), so the
+    // selection is readable even on a terminal/colour scheme where the
+    // highlighted row is hard to see.
+    std::string sel_pos;
+    if (playlist_edit_focus_ == 2 && !playlist_edit_tracks_.empty()) {
+        sel_pos = "  " + std::to_string(playlist_edit_track_selected_ + 1) + "/"
+                + std::to_string(playlist_edit_tracks_.size());
+    }
+    std::string label = "TRACKS (" + std::to_string(playlist_edit_tracks_.size()) + ")" + sel_pos
+                       + (playlist_edit_focus_ == 2 ? " \u25c0" : ""); // filled triangle: focus indicator,
+                                                                        // same purpose as LIBRARY's "\u2588" text
+                                                                        // cursor but this panel has no text field
+                                                                        // of its own to blink a cursor in
     out.push_back(box_top(label, total_width, border_ansi));
 
     int total = static_cast<int>(playlist_edit_tracks_.size());
@@ -3331,8 +3393,16 @@ std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int h
                 content = std::string(left, ' ') + text;
             }
             std::string padded = pad_right(truncate_str(content, inner), inner);
-            std::string queue_ansi = ansi_for(settings_.queue_color, false);
-            out.push_back(bar + " " + queue_ansi + padded + "\x1b[0m " + bar);
+            // Highlighted even with nothing to select, same cursor-color
+            // treatment a real row gets below -- otherwise an empty,
+            // focused panel is visually identical to an unfocused one.
+            if (playlist_edit_focus_ == 2) {
+                std::string cursor_ansi = cursor_sgr(settings_.queue_cursor_color, settings_.queue_cursor_bg_color);
+                out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
+            } else {
+                std::string queue_ansi = ansi_for(settings_.queue_color, false);
+                out.push_back(bar + " " + queue_ansi + padded + "\x1b[0m " + bar);
+            }
         }
         out.push_back(box_bottom(total_width, "", border_ansi_bottom));
         return out;
@@ -3355,7 +3425,7 @@ std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int h
         bool sel = (playlist_edit_focus_ == 2) && (idx == playlist_edit_track_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
         if (sel) {
-            std::string cursor_ansi = ansi_for(settings_.queue_cursor_color) + bg_ansi_for(settings_.queue_cursor_bg_color);
+            std::string cursor_ansi = cursor_sgr(settings_.queue_cursor_color, settings_.queue_cursor_bg_color);
             out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
         } else {
             std::string queue_ansi = ansi_for(settings_.queue_color, false) + bg_ansi_for(settings_.queue_inactive_bg_color);
@@ -3414,7 +3484,7 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
         bool sel = (idx == playlist_manage_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
         if (sel) {
-            std::string cursor_ansi = ansi_for(settings_.list_cursor_color) + bg_ansi_for(settings_.list_cursor_bg_color);
+            std::string cursor_ansi = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
             out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
         } else {
             std::string list_ansi = ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color);
@@ -3474,9 +3544,10 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     // Deliberately NOT sized to fill whatever room player_view_height()
     // happens to have (that made the list feel oddly tall/short
     // depending on terminal size) -- clamped to a fixed, comfortable
-    // range instead so ~12-15 tracks are visible regardless of terminal
-    // height.
-    int panel_h = std::clamp(target_height - fixed_rows - 2, 8, 15); // -2: hint line + status line below
+    // range instead so up to 22 tracks are visible regardless of
+    // terminal height (fewer on a short terminal, down to the 8-row
+    // floor).
+    int panel_h = std::clamp(target_height - fixed_rows - 2, 8, 22); // -2: hint line + status line below
     if (playlist_tab_ == 0) {
         int left_w = W / 2;
         int right_w = W - left_w;
@@ -3501,9 +3572,16 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
                             + "\" before exiting?   [Y]es   [N]o   [ESC] cancel";
         frame << "\x1b[43;30m " << prompt << " \x1b[0m\n";
         frame << "\n";
+    } else if (playlist_confirm_delete_) {
+        std::string name = (playlist_manage_selected_ >= 0
+                          && playlist_manage_selected_ < static_cast<int>(playlist_manage_view_.size()))
+                          ? playlist_manage_view_[playlist_manage_selected_].name : std::string();
+        std::string prompt = "Delete playlist \"" + name + "\"? This can't be undone.   [Y]es   [N]o   [ESC] cancel";
+        frame << "\x1b[41;97m " << prompt << " \x1b[0m\n";
+        frame << "\n";
     } else {
         std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navigate | [ENTER] Add/Load | "
-                            "[DEL] Remove | [HOME] Save | [ESC] Exit";
+                            "[DEL] Remove selected | [HOME] Save | [ESC] Exit";
         frame << "\x1b[90m" << hint << "\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
@@ -3677,7 +3755,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                                                     "Refresh UI", "Console / Logs", "Toggle Mute", "Cheatsheet",
                                                     "Retry Lyrics", "Shuffle Next", "Toggle Lyrics",
                                                     "Queue Move Up", "Toggle Waveform", "Cycle Sort Mode",
-                                                    "Playlists"};
+                                                    "Playlists", "Search Playlists"};
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
         int display_count = kRefRowCount + 1 + static_cast<int>(letters.size()); // +1 for the divider row
@@ -3843,6 +3921,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyToggleWaveform",              "Toggle waveform style (raw/smooth)"},
         {"HKeyCycleSortMode",               "Cycle local list sort mode"},
         {"HKeyPlaylist",                    "Create/manage playlists"},
+        {"HKeySearchPlaylist",              "Search saved playlists (type /p:query)"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows

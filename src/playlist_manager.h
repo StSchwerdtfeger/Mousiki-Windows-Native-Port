@@ -68,6 +68,10 @@ public:
     // creating `dir` if needed. Returns false and sets *error on failure.
     static bool save(const fs::path& dir, const Playlist& pl, std::string* error = nullptr);
 
+    // Deletes dir/<sanitized name>.txt. Returns false and sets *error if
+    // the file doesn't exist or couldn't be removed.
+    static bool remove(const fs::path& dir, const std::string& name, std::string* error = nullptr);
+
     // Filesystem-safe version of a playlist name, for use as a filename
     // stem (strips path separators and other reserved characters).
     static std::string sanitize_name(const std::string& name);
