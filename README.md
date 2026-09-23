@@ -192,7 +192,7 @@ Every background `std::thread` (metadata sweep, decode, lyrics fetch, waveform p
 
 A few things added on top of the original design rather than required to run it at all:
 
-- **Playlist manager** - Via SHIFT + p a playlist menu can be entered and playlists from local files can be created, search via /p: and its titles added to the current queue.
+- **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
  <img width="2295" height="864" alt="grafik" src="https://github.com/user-attachments/assets/bc0c27fe-59c6-4af9-838a-a3d3bd2ffab6" />
 
