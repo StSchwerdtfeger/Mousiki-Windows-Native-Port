@@ -77,6 +77,15 @@ LyricsAnimation=word by word
 ## active line only , active word only
 
 ##-------------------------------------------
+##             EMOJI IN TITLES
+##-------------------------------------------
+
+ReplaceEmoji=true
+## true  = an emoji in a title is drawn as a single "?" so the box borders always stay aligned
+## false = draw the real emoji (alignment then depends on how your terminal measures emoji)
+
+
+##-------------------------------------------
 ##             CONSOLE / LOGGING
 ##-------------------------------------------
 
@@ -156,6 +165,12 @@ HKeySetting="s"
 LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=%USERPROFILE%\Music
 
+# Playlists folder (optional). By default, saved playlists live in
+# <first LocalMusicPath above>\playlists -- and if no LocalMusicPath is
+# set at all, that silently falls back to %USERPROFILE%\.cache\mousiki\
+# playlists. Uncomment and set this to pin them somewhere specific
+# instead:
+#PlaylistsPath=C:\Users\YOUR NAME!!!!!!\Music\playlists
 
 # Navigation
 HKeyNavigateUp="ARROW_KEY_UP"
@@ -191,6 +206,8 @@ HKeyToggleLyrics="+"
 HKeyQueueMoveUp="u"
 HKeyToggleWaveform="w"
 HKeyCycleSortMode="T"
+HKeySearchPlaylist="/p:"
+HKeyPlaylist="P"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
@@ -198,45 +215,24 @@ HKeyCycleSortMode="T"
 
 ClassTextAboutApp= {
 
-Devloper : ender
-Github   : itzender5820
-Email    : itz.ender5820@gmail.com
-Discord  : itx.ender
-Version  : orignal and final v1.0
-Licence  : Apache licence 2.0
-
-Windows port : Steffen Schwerdtfeger
-Github       : StSchwerdtfeger
-Adjusted to run on Windows, with the help of AI tools.
-
-
 Mousiki
-A terminal music player built for people who
-prefer control, simplicity, and a keyboard.
 
-Mousiki is designed around a fast, focused TUI
-with no unnecessary interface layers.
+A terminal music player built for people who prefer control.
+Zero external UI bloat: 100% native POSIX terminal runtime.
+
+Mousiki is designed around a fast, focused TUI with no 
+unnecessary interface layers. A terminal music player built 
+for people who prefer control.
 
 Everything is keyboard-driven.
 Everything is configurable.
 Everything stays in your terminal.
 
-Features
-- Local music playback
-- Search and filtering
-- Queue management
-- Online search and streaming
-- Lyrics with active-word highlighting
-- Shuffle and repeat
-- Fully configurable colors
-- Fully configurable hotkeys
+Devloper : ender                         Github   : itzender5820
+Email    : itz.ender5820@gmail.com
+Version  : orignal and final v1.0        Licence  : Apache licence 2.0
 
-Configuration
-Windows: %USERPROFILE%\.config\mousiki\config.txt
-Linux/macOS: $HOME/.config/mousiki/config.txt
-
-Mousiki is free software.
-Built with care for the terminal.
-
+Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
+Adjusted to run on Windows, added some features; done with the help of AI tools.
 
 };
