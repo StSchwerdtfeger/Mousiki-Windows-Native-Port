@@ -115,6 +115,7 @@ What's new: Shuffle next key and lyrics on/off key (when off, sphere visualisati
 | :--- | :--- | :--- |
 | **Local Search** | `/` | Filter and search local library |
 | **Online Stream Search** | `/s: <query>` | Search and stream music online |
+| **Online Stream Search** | `/p: <query>` | Search and stream local playlists |
 | **Download Stream** | `y` | Download currently streaming track |
 | **Play / Pause** | `p` (or `ENTER`) | Toggle playback |
 | **Next / Previous Track** | `n` / `b` | Skip between songs |
@@ -127,6 +128,8 @@ What's new: Shuffle next key and lyrics on/off key (when off, sphere visualisati
 ### Navigation & Queue
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
+| **Setting** |`s` |Enter Settings menu|
+| **Playlists** | `SHIFT+P` |Enter Playlist menu |
 | **Navigate** | `ARROW_UP` / `ARROW_DOWN` | Move selection |
 | **Switch Tabs/Cards** | `TAB` | Cycle between UI panels |
 | **Add to Queue** | `a` | Enqueue selected track |
