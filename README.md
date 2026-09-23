@@ -54,7 +54,7 @@ Again, add your Username in the path!
 
 ```powershell
 function lala {
-    & 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe' @args
+    & 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe'
 }
 ```
 Save your profile.ps1 via Ctrl + S and open a new terminal in order to be able to test your new function.
