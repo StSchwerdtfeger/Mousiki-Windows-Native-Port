@@ -1,11 +1,35 @@
-# Mousiki 🎵 (Windows port, tested on PowerShell 7.6.6)
+<div align="center">
+    
+# Mousiki Windows Port 🎵 
+
+</p>
+
+<p align="center">
+  <a href="https://opensource.org/" target="_blank">
+    <img src="https://i0.wp.com/opensource.org/wp-content/uploads/2023/03/cropped-OSI-horizontal-large.png?fit=640%2C229&quality=80&ssl=1" alt="OSI" height="52" /></a>
+&nbsp;
+  <a href="https://www.apache.org/" target="_blank">
+    <img src="https://www.apache.org/images/oakleaf.svg" alt="Apache" height="52" /></a>
+</p>
+
+
+> [!NOTE]
+> **Developer note:** Mousiki is released under the Apache License 2.0.
+> You are free to use, modify, fork, re-distribute, and sell the software,
+> subject to the terms of the license.
+
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/itzender5820/mousiki/blob/main/LICENSE)
+[![Language](https://img.shields.io/badge/Language-C++17-orange.svg)](https://github.com/itzender5820/mousiki)
+[![Platform](https://img.shields.io/badge/Platform-Linux_%7C_Android_%7C_MacOS-brightgreen.svg)](https://github.com/itzender5820/mousiki)
+
+</div>
 
 A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. Some additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible, see "Beyond the port" further below) and toggle the lyrics on/off (also via a key command). 
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
 - **Original:** [github.com/itzender5820/mousiki](https://github.com/itzender5820/mousiki) — ender ([itzender5820](https://github.com/itzender5820))
-- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly Sonett 5 set on medium). Therefore take the below with a grain of salt, since I am not a developer for applications like this. However, I liked this music player way too much to not want to use it on my Windows setup, so I went this path and vibe coded a port for Windows. *Huge shout out for the great work by itzender5820 for this beautiful music player.*  
+- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly Sonett 5 set on medium). Therefore take the below with a grain of salt, since I am not a developer for applications like this. However, I liked this music player way too much to not want to use it on my Windows setup, so I went this path and vibe coded a port for Windows. *Huge shout out for the great work by itzender5820 for this beautiful music player.* <3 
 - **License:** Apache 2.0 — see [LICENSE](LICENSE)
 
 ![preview](preview.gif)
