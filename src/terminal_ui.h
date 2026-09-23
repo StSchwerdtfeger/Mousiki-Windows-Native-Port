@@ -4,6 +4,16 @@
 
 namespace muisc {
 
+// Non-ASCII-range sentinel for the Home key (VT/xterm "\x1b[H", or
+// VK_HOME on Windows) -- returned by poll_key() same as any other key.
+// Deliberately outside 0-255 so it can never collide with a raw
+// (possibly UTF-8 continuation) byte value coming through the same
+// channel, unlike 'A'/'B'/'C'/'D' (the arrow keys), which *do* sit
+// inside the printable-ASCII range and so still have to be explicitly
+// filtered out of any text-entry field that doesn't want them typed
+// literally (see e.g. Mode::Search's and Mode::BulkAdd's key handling).
+constexpr int kKeyHome = 300;
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {
@@ -14,7 +24,8 @@ public:
     void restore();
 
     // Non-blocking single "logical" key read. Arrow keys (3-byte escape
-    // sequences) collapse to 'A'/'B'/'C'/'D' (up/down/right/left). A lone
+    // sequences) collapse to 'A'/'B'/'C'/'D' (up/down/right/left); Home
+    // (2- or 3-byte, terminal-dependent) collapses to kKeyHome. A lone
     // Escape key returns 27. Backspace returns 127. Returns 0 if nothing
     // is waiting. A non-ASCII keystroke (an umlaut, any other accented or
     // non-Latin character) arrives as its UTF-8 encoding, one byte per

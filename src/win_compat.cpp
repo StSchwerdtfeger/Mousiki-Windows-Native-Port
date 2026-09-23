@@ -1,4 +1,5 @@
 #include "win_compat.h"
+#include "terminal_ui.h" // kKeyHome
 
 #if defined(_WIN32)
 
@@ -366,6 +367,7 @@ int win_poll_key() {
         case VK_DOWN:  return 'B';
         case VK_RIGHT: return 'C';
         case VK_LEFT:  return 'D';
+        case VK_HOME:  return kKeyHome;
         default: break;
     }
 

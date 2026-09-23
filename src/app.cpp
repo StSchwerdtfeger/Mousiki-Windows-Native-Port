@@ -673,6 +673,19 @@ void App::update_live_search_preview() {
         return;
     }
 
+    // "p:" (playlist search) is local like a plain query -- no network
+    // call to defer -- so unlike "s:" above, it's fine to actually run
+    // the filter live on every keystroke rather than waiting for Enter.
+    if (buf.size() >= 2 && lower(buf.substr(0, 2)) == "p:") {
+        std::string q = buf.substr(2);
+        while (!q.empty() && q.front() == ' ') q.erase(q.begin());
+        list_source_ = ListSource::Playlist;
+        playlist_view_ = filter_playlists(q);
+        selected_ = 0;
+        scroll_ = 0;
+        return;
+    }
+
     list_source_ = ListSource::Local;
     local_view_ = filter_and_rank_local(buf);
     selected_ = 0;
@@ -695,11 +708,46 @@ void App::submit_search() {
             return;
         }
         launch_search_async(query.empty() ? "music" : query);
+    } else if (buf.size() >= 2 && lower(buf.substr(0, 2)) == "p:") {
+        std::string query = buf.substr(2);
+        while (!query.empty() && query.front() == ' ') query.erase(query.begin());
+        last_playlist_query_ = query;
+        list_source_ = ListSource::Playlist;
+        playlist_view_ = filter_playlists(query);
+        selected_ = 0;
+        scroll_ = 0;
     } else {
         last_local_query_ = buf;
         list_source_ = ListSource::Local;
         refresh_local_view();
     }
+}
+
+// Local, case-insensitive substring match on playlist name -- cheap
+// enough (just a directory scan) to re-run on every keystroke, same as
+// the "p:" live preview above does.
+std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) const {
+    auto all = PlaylistManager::list(playlists_dir());
+    if (query.empty()) return all;
+    std::vector<PlaylistSummary> out;
+    out.reserve(all.size());
+    for (auto& p : all) if (contains_ci(p.name, query)) out.push_back(p);
+    return out;
+}
+
+// settings_.local_music_paths[0]/playlists -- same "first configured
+// local path" fallback HKeyDownloadStream uses (~/Music if none
+// configured at all). Computed fresh every call, not cached, so it
+// always reflects whatever the user currently has set in Settings.
+fs::path App::playlists_dir() const {
+    std::string base;
+    if (!settings_.local_music_paths.empty()) {
+        base = settings_.local_music_paths[0];
+    } else {
+        const char* home = std::getenv("HOME");
+        base = home ? (std::string(home) + "/Music") : "./Music";
+    }
+    return path_from_utf8(base) / "playlists";
 }
 
 // ---------------------------------------------------------------------
@@ -1067,6 +1115,11 @@ void App::poll_pending_search() {
 }
 
 void App::play_selected() {
+    // Playlists aren't "played" directly -- there's no single track to
+    // start. Enter on a playlist row queues everything in it instead
+    // (see playlist_add_selected_to_queue()), same as the user pressing
+    // "a" on it would.
+    if (list_source_ == ListSource::Playlist) { playlist_add_selected_to_queue(); return; }
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0 || selected_ < 0 || selected_ >= static_cast<int>(list_len)) return;
     if (list_source_ == ListSource::Local) start_local_track(local_view_[selected_]);
@@ -1075,6 +1128,7 @@ void App::play_selected() {
 
 int App::current_track_list_index() const {
     if (!has_track_) return -1;
+    if (list_source_ == ListSource::Playlist) return -1; // no "now playing" identity in a list of playlist names
     if (list_source_ == ListSource::Local) {
         if (!current_is_local_) return -1; // playing an online track while browsing the local list
         for (size_t i = 0; i < local_view_.size(); ++i) {
@@ -1091,6 +1145,9 @@ int App::current_track_list_index() const {
 }
 
 void App::play_relative(int delta) {
+    // "next/previous track" has no meaning while browsing a list of
+    // playlist names rather than tracks.
+    if (list_source_ == ListSource::Playlist) return;
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0) return;
     // Relative to what's actually *playing*, not wherever the hover
@@ -1107,6 +1164,7 @@ void App::play_relative(int delta) {
 }
 
 void App::play_relative_random() {
+    if (list_source_ == ListSource::Playlist) return;
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0) return;
     if (list_len == 1) { selected_ = 0; play_selected(); return; }
@@ -1215,6 +1273,7 @@ char App::play_mode_letter() const {
 }
 
 void App::queue_add_selected() {
+    if (list_source_ == ListSource::Playlist) { playlist_add_selected_to_queue(); return; }
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0 || selected_ < 0 || selected_ >= static_cast<int>(list_len)) return;
     if (list_source_ == ListSource::Local) {
@@ -1225,6 +1284,27 @@ void App::queue_add_selected() {
         queue_.push_back({false, r.title, r.uploader, {}, r.video_id});
     }
     clamp_queue_selected();
+}
+
+// Main UI: Enter (or "a") on a playlist row while list_source_==Playlist.
+// Loads the playlist from disk and queues every track that's still
+// present on disk, skipping (and reporting) any that aren't.
+void App::playlist_add_selected_to_queue() {
+    if (playlist_view_.empty() || selected_ < 0 || selected_ >= static_cast<int>(playlist_view_.size())) return;
+    const auto& summary = playlist_view_[selected_];
+    auto pl = PlaylistManager::load(playlists_dir(), summary.name);
+    if (!pl) { status_line_ = "could not load \"" + summary.name + "\""; return; }
+
+    int added = 0, skipped = 0;
+    for (auto& t : pl->tracks) {
+        if (t.missing) { ++skipped; continue; }
+        queue_.push_back({true, t.title, t.artist, t.path, ""});
+        ++added;
+    }
+    clamp_queue_selected();
+    status_line_ = "queued " + std::to_string(added) + " track" + (added == 1 ? "" : "s")
+                 + " from \"" + summary.name + "\""
+                 + (skipped > 0 ? " (" + std::to_string(skipped) + " missing, skipped)" : "");
 }
 
 void App::queue_remove_last() {
@@ -1462,8 +1542,9 @@ static const char* kRefHotkeyNames[] = {
     "HKeyFilterForFolder", "HKeyClearFilter", "HKeyDownloadStream",
     "HKeyRefreshUi", "HKeyConsole", "HKeyToggleMute", "HKeyCheatsheet", "HKeyRetryLyrics",
     "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyToggleWaveform", "HKeyCycleSortMode",
+    "HKeyPlaylist",
 };
-static constexpr int kRefRowCount = 30;
+static constexpr int kRefRowCount = 31;
 
 std::string* App::color_field_ptr(int row, int col) {
     switch (row) {
@@ -1752,6 +1833,11 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::Playlist) {
+        handle_playlist_key(key);
+        return;
+    }
+
     if (mode_ == Mode::Cheatsheet) {
         if (key == 27 || key == '?') mode_ = Mode::Browse;
         return;
@@ -1896,7 +1982,11 @@ void App::handle_key(int key) {
             return;
         }
         if (key == 'B') { // down
-            size_t list_len = local_view_.size();
+            // While actively typing "p:...", the live preview below is
+            // already showing playlist_view_ (see update_live_search_preview())
+            // -- navigate that instead of local_view_ in that case, same
+            // as Enter/submit_search() would commit to.
+            size_t list_len = (list_source_ == ListSource::Playlist) ? playlist_view_.size() : local_view_.size();
             if (list_len > 0 && selected_ < static_cast<int>(list_len) - 1) ++selected_;
             if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
             return;
@@ -1918,7 +2008,9 @@ void App::handle_key(int key) {
     }
 
     // Mode::Browse
-    size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
+    size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size()
+                     : (list_source_ == ListSource::Online) ? online_view_.size()
+                     : playlist_view_.size();
 
     // Hotkeys are resolved to an action name via settings_.hotkeys /
     // resolve_hotkey_action() instead of switching on the raw key
@@ -1948,6 +2040,8 @@ void App::handle_key(int key) {
         settings_tab_ = 0;
         settings_row_ = 0;
         settings_col_ = 0;
+    } else if (action == "HKeyPlaylist") {
+        playlist_open_editor();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
         queue_focus_ = !queue_focus_;
     } else if (action == "HKeyNavigateUp") {
@@ -2740,13 +2834,17 @@ std::vector<std::string> App::build_progress_panel(int total_width) const {
     return out;
 }
 std::vector<std::string> App::build_search_bar(int total_width) const {
-    std::string label = (list_source_ == ListSource::Online) ? "SEARCH ONLINE" : "SEARCH LOCAL";
+    std::string label = (list_source_ == ListSource::Online) ? "SEARCH ONLINE"
+                       : (list_source_ == ListSource::Playlist) ? "SEARCH PLAYLISTS"
+                       : "SEARCH LOCAL";
 
     std::string content;
     if (mode_ == Mode::Search) {
         content = "/" + search_buffer_ + "\u2588"; // block cursor
     } else if (list_source_ == ListSource::Online) {
         content = "/s:" + last_online_query_;
+    } else if (list_source_ == ListSource::Playlist) {
+        content = "/p:" + last_playlist_query_;
     } else {
         content = "/l:" + last_local_query_;
     }
@@ -2769,9 +2867,11 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
 
 std::vector<std::string> App::build_list_panel(int total_width, int height) const {
     bool online = (list_source_ == ListSource::Online);
+    bool playlists_mode = (list_source_ == ListSource::Playlist);
     std::string label = online ? "ONLINE RESULTS"
-                                : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_)) + ")";
-    size_t total = online ? online_view_.size() : local_view_.size();
+                       : playlists_mode ? "SAVED PLAYLISTS (Enter: queue all)"
+                       : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_)) + ")";
+    size_t total = online ? online_view_.size() : playlists_mode ? playlist_view_.size() : local_view_.size();
     int inner = total_width - 4;
     std::string border_ansi = ansi_for(settings_.border_color, false);
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
@@ -2780,8 +2880,9 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
     // runs unconditionally (not just when the new row's title overflows)
     // so that hovering away and back to a long title always begins its
     // scroll from the start again, rather than resuming mid-scroll from
-    // whatever an earlier visit had reached.
-    if (!online && selected_ != marquee_row_idx_) {
+    // whatever an earlier visit had reached. Only meaningful for the
+    // local list's title column (see below), so only tracked there.
+    if (list_source_ == ListSource::Local && selected_ != marquee_row_idx_) {
         marquee_row_idx_ = selected_;
         marquee_since_ = std::chrono::steady_clock::now();
     }
@@ -2804,6 +2905,16 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                 content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
                         + pad_right(truncate_str(t_title, title_w), title_w) + settings_.list_separator + " "
                         + pad_right(truncate_str(t_uploader, uploader_w), uploader_w);
+            } else if (playlists_mode) {
+                const auto& p = playlist_view_[idx];
+                const int count_w = 10;
+                int name_w = std::max(5, inner - idx_w - 2 - 2 - count_w);
+                std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+                std::string t_name = apply_font_map(p.name, settings_.font_map);
+                std::string t_count = std::to_string(p.track_count) + (p.track_count == 1 ? " track" : " tracks");
+                content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                        + pad_right(truncate_str(t_name, name_w), name_w) + settings_.list_separator + " "
+                        + pad_right(t_count, count_w);
             } else {
                 const auto& t = local_view_[idx];
                 const int artist_w = 16;
@@ -2861,7 +2972,7 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
             }
         }
         bool sel = (idx == selected_) && idx < static_cast<int>(total);
-        bool is_playing_row = has_track_ && !online && idx < static_cast<int>(total)
+        bool is_playing_row = has_track_ && list_source_ == ListSource::Local && idx < static_cast<int>(total)
                                && local_view_[idx].path == current_path_;
         std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
         std::string padded = pad_right(truncate_str(content, inner), inner);
@@ -2931,6 +3042,472 @@ std::vector<std::string> App::build_queue_panel(int total_width, int height) con
 
     out.push_back(box_bottom(total_width, "", border_ansi_bottom));
     return out;
+}
+
+// ---------------------------------------------------------------------
+// Playlist editor overlay (Mode::Playlist, HKeyPlaylist)
+// ---------------------------------------------------------------------
+
+void App::playlist_refresh_lib_view() {
+    playlist_edit_lib_view_ = filter_and_rank_local(playlist_edit_lib_query_);
+    playlist_edit_lib_selected_ = std::clamp(playlist_edit_lib_selected_, 0,
+        std::max(0, static_cast<int>(playlist_edit_lib_view_.size()) - 1));
+}
+
+void App::playlist_refresh_manage_view() {
+    playlist_manage_view_ = PlaylistManager::list(playlists_dir());
+    playlist_manage_selected_ = std::clamp(playlist_manage_selected_, 0,
+        std::max(0, static_cast<int>(playlist_manage_view_.size()) - 1));
+}
+
+// HKeyPlaylist entry point -- always starts a fresh, blank playlist on
+// tab 0 (name field focused, ready to type). The only way to bring an
+// *existing* playlist back into the editor is explicit: tab 1, Enter on
+// it (see playlist_load_into_editor()) -- that way reopening this
+// overlay never silently discards an unsaved in-progress playlist by
+// accident.
+void App::playlist_open_editor() {
+    mode_ = Mode::Playlist;
+    playlist_tab_ = 0;
+    playlist_edit_focus_ = 0;
+    playlist_edit_name_.clear();
+    playlist_edit_tracks_.clear();
+    playlist_edit_lib_query_.clear();
+    playlist_edit_lib_selected_ = 0;
+    playlist_edit_track_selected_ = 0;
+    playlist_status_.clear();
+    playlist_edit_dirty_ = false;
+    playlist_confirm_exit_ = false;
+    playlist_refresh_lib_view();
+    playlist_refresh_manage_view();
+}
+
+void App::playlist_load_into_editor(const std::string& name) {
+    auto pl = PlaylistManager::load(playlists_dir(), name);
+    if (!pl) { playlist_status_ = "could not load \"" + name + "\""; return; }
+    playlist_edit_name_ = pl->name;
+    playlist_edit_tracks_ = pl->tracks;
+    playlist_edit_track_selected_ = 0;
+    playlist_tab_ = 0;
+    playlist_edit_focus_ = 1;
+    playlist_edit_dirty_ = false; // freshly loaded from disk -- matches what's saved, nothing to lose yet
+    playlist_status_ = "editing \"" + pl->name + "\" (" + std::to_string(pl->tracks.size()) + " tracks)";
+}
+
+void App::playlist_add_hovering_to_edit() {
+    if (playlist_edit_lib_selected_ < 0
+        || playlist_edit_lib_selected_ >= static_cast<int>(playlist_edit_lib_view_.size())) return;
+    const auto& t = playlist_edit_lib_view_[playlist_edit_lib_selected_];
+    for (auto& existing : playlist_edit_tracks_) {
+        if (existing.path == t.path) { playlist_status_ = "already in the playlist"; return; }
+    }
+    PlaylistTrack pt;
+    pt.title = t.title;
+    pt.artist = t.folder_artist;
+    pt.path = t.path;
+    pt.missing = false;
+    playlist_edit_tracks_.push_back(std::move(pt));
+    playlist_edit_dirty_ = true;
+    playlist_status_.clear();
+}
+
+void App::playlist_remove_hovering_track() {
+    if (playlist_edit_track_selected_ < 0
+        || playlist_edit_track_selected_ >= static_cast<int>(playlist_edit_tracks_.size())) return;
+    playlist_edit_tracks_.erase(playlist_edit_tracks_.begin() + playlist_edit_track_selected_);
+    playlist_edit_track_selected_ = std::clamp(playlist_edit_track_selected_, 0,
+        std::max(0, static_cast<int>(playlist_edit_tracks_.size()) - 1));
+    playlist_edit_dirty_ = true;
+}
+
+// HOME -- saves and exits back to Browse. Deliberately not a plain
+// letter (an earlier version used "S", which meant typing an "s" into
+// the name field or the library search saved and kicked you out
+// mid-keystroke); HOME can never appear inside typed text.
+void App::playlist_save_current() {
+    std::string name = playlist_edit_name_;
+    while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    if (name.empty()) {
+        playlist_status_ = "enter a name first";
+        playlist_edit_focus_ = 0;
+        return;
+    }
+    Playlist pl;
+    pl.name = name;
+    pl.tracks = playlist_edit_tracks_;
+    std::string error;
+    if (!PlaylistManager::save(playlists_dir(), pl, &error)) {
+        playlist_status_ = "save failed: " + error;
+        return;
+    }
+    status_line_ = "saved playlist \"" + name + "\" (" + std::to_string(pl.tracks.size()) + " tracks)";
+    // If the main UI is currently browsing "/p:" results, refresh them
+    // so a newly-saved (or renamed) playlist shows up immediately.
+    if (list_source_ == ListSource::Playlist) playlist_view_ = filter_playlists(last_playlist_query_);
+    playlist_edit_dirty_ = false;
+    mode_ = Mode::Browse;
+}
+
+void App::handle_playlist_key(int key) {
+    // "Save before exiting?" prompt -- shown instead of the hint line
+    // when ESC is pressed on tab 0 with unsaved changes (see below).
+    // Swallows every key except the three it cares about so nothing
+    // gets edited underneath it by accident.
+    if (playlist_confirm_exit_) {
+        if (key == 'y' || key == 'Y') { playlist_confirm_exit_ = false; playlist_save_current(); return; }
+        if (key == 'n' || key == 'N') { playlist_confirm_exit_ = false; mode_ = Mode::Browse; return; }
+        if (key == 27) { playlist_confirm_exit_ = false; } // cancel the prompt, keep editing
+        return;
+    }
+
+    if (key == 27) { // ESC
+        if (playlist_tab_ == 0 && playlist_edit_dirty_) { playlist_confirm_exit_ = true; return; }
+        mode_ = Mode::Browse;
+        return;
+    }
+    if (key == kKeyHome) {
+        if (playlist_tab_ == 0) playlist_save_current();
+        return;
+    }
+    if (key == 'C' || key == 'D') { // left/right arrow -- the only 2 top-level tabs, so either just toggles
+        playlist_tab_ = (playlist_tab_ + 1) % 2;
+        if (playlist_tab_ == 1) playlist_refresh_manage_view();
+        return;
+    }
+
+    if (playlist_tab_ == 1) {
+        // --- Tab 1: browse/manage saved playlists ---
+        int total = static_cast<int>(playlist_manage_view_.size());
+        if (key == 'A') { // up
+            if (playlist_manage_selected_ > 0) --playlist_manage_selected_;
+            return;
+        }
+        if (key == 'B') { // down
+            if (total > 0 && playlist_manage_selected_ < total - 1) ++playlist_manage_selected_;
+            return;
+        }
+        if (key == '\r' || key == '\n') {
+            if (total > 0 && playlist_manage_selected_ < total) {
+                playlist_load_into_editor(playlist_manage_view_[playlist_manage_selected_].name);
+            }
+            return;
+        }
+        return;
+    }
+
+    // --- Tab 0: create/edit ---
+    if (key == 9) { // Tab -- cycle focus: name field -> library picker -> track list -> ...
+        playlist_edit_focus_ = (playlist_edit_focus_ + 1) % 3;
+        return;
+    }
+
+    if (playlist_edit_focus_ == 0) { // name field
+        if (key == 127 || key == 8) { pop_utf8_char(playlist_edit_name_); playlist_edit_dirty_ = true; return; }
+        if (key == '\r' || key == '\n') { playlist_edit_focus_ = 1; return; } // confirm name, jump to picking tracks
+        // Up/Down arrows collapse to 'A'/'B', which sit inside the
+        // printable-ASCII range is_text_key() below accepts -- without
+        // this they'd get typed as literal "A"/"B" characters (the same
+        // reason Mode::Search and Mode::BulkAdd filter them out too).
+        if (key == 'A' || key == 'B') return;
+        if (is_text_key(key) && playlist_edit_name_.size() < 80) {
+            playlist_edit_name_ += static_cast<char>(key);
+            playlist_edit_dirty_ = true;
+        }
+        return;
+    }
+
+    if (playlist_edit_focus_ == 1) { // library picker -- typing filters live, same as the main search box
+        int total = static_cast<int>(playlist_edit_lib_view_.size());
+        if (key == 'A') {
+            if (playlist_edit_lib_selected_ > 0) --playlist_edit_lib_selected_;
+            return;
+        }
+        if (key == 'B') {
+            if (total > 0 && playlist_edit_lib_selected_ < total - 1) ++playlist_edit_lib_selected_;
+            return;
+        }
+        if (key == '\r' || key == '\n') { playlist_add_hovering_to_edit(); return; }
+        if (key == 127 || key == 8) {
+            pop_utf8_char(playlist_edit_lib_query_);
+            playlist_refresh_lib_view();
+            return;
+        }
+        if (is_text_key(key)) {
+            playlist_edit_lib_query_ += static_cast<char>(key);
+            playlist_refresh_lib_view();
+            return;
+        }
+        return;
+    }
+
+    // playlist_edit_focus_ == 2: the in-progress playlist's track list
+    {
+        int total = static_cast<int>(playlist_edit_tracks_.size());
+        if (key == 'A') {
+            if (playlist_edit_track_selected_ > 0) --playlist_edit_track_selected_;
+            return;
+        }
+        if (key == 'B') {
+            if (total > 0 && playlist_edit_track_selected_ < total - 1) ++playlist_edit_track_selected_;
+            return;
+        }
+        // Backspace or 'd' (lowercase only -- uppercase 'D' is the
+        // globally-collapsed Left-arrow code, already intercepted above
+        // for tab switching, so it never reaches here).
+        if (key == 127 || key == 8 || key == 'd') { playlist_remove_hovering_track(); return; }
+        return;
+    }
+}
+
+std::vector<std::string> App::build_playlist_library_panel(int total_width, int height) const {
+    int inner = total_width - 4;
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::vector<std::string> out;
+
+    std::string label = "LIBRARY  /" + playlist_edit_lib_query_ + (playlist_edit_focus_ == 1 ? "\u2588" : "");
+    out.push_back(box_top(label, total_width, border_ansi));
+
+    int total = static_cast<int>(playlist_edit_lib_view_.size());
+    int scroll = std::clamp(playlist_edit_lib_selected_ - height / 2, 0, std::max(0, total - height));
+    const int idx_w = 3;
+    for (int row = 0; row < height; ++row) {
+        int idx = scroll + row;
+        std::string content;
+        if (idx < total) {
+            const auto& t = playlist_edit_lib_view_[idx];
+            int title_w = std::max(5, inner - idx_w - 2);
+            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+            std::string t_title = apply_font_map(t.title, settings_.font_map);
+            // Every column padded to its own fixed width *before*
+            // concatenating (rather than truncating the assembled whole
+            // afterward) -- matches build_list_panel()'s row construction.
+            // A one-off outer truncate/pad on the joined string is more
+            // exposed to a single title's display_width() landing a
+            // column short (an under-measured character widens the
+            // padding that follows it), which visibly shifts every
+            // border to its right; padding each piece independently
+            // can't drift the same way.
+            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                    + pad_right(truncate_str(t_title, title_w), title_w);
+        }
+        bool sel = (playlist_edit_focus_ == 1) && (idx == playlist_edit_lib_selected_) && idx < total;
+        std::string padded = pad_right(truncate_str(content, inner), inner);
+        if (sel) {
+            std::string cursor_ansi = ansi_for(settings_.list_cursor_color) + bg_ansi_for(settings_.list_cursor_bg_color);
+            out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
+        } else {
+            std::string list_ansi = ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color);
+            out.push_back(bar + " " + list_ansi + padded + "\x1b[0m " + bar);
+        }
+    }
+    std::string footer;
+    int remaining = total - (scroll + height);
+    if (remaining > 0) footer = "( " + std::to_string(remaining) + " more )";
+    out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
+    return out;
+}
+
+std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int height) const {
+    int inner = total_width - 4;
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::vector<std::string> out;
+
+    std::string label = "TRACKS (" + std::to_string(playlist_edit_tracks_.size()) + ")";
+    out.push_back(box_top(label, total_width, border_ansi));
+
+    int total = static_cast<int>(playlist_edit_tracks_.size());
+    if (total == 0) {
+        int mid = height / 2;
+        for (int row = 0; row < height; ++row) {
+            std::string content;
+            if (row == mid) {
+                std::string text = apply_font_map("ENTER ON A LIBRARY TRACK TO ADD IT", settings_.font_map);
+                int left = std::max(0, (inner - display_width(text)) / 2);
+                content = std::string(left, ' ') + text;
+            }
+            std::string padded = pad_right(truncate_str(content, inner), inner);
+            std::string queue_ansi = ansi_for(settings_.queue_color, false);
+            out.push_back(bar + " " + queue_ansi + padded + "\x1b[0m " + bar);
+        }
+        out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+        return out;
+    }
+
+    int scroll = std::clamp(playlist_edit_track_selected_ - height / 2, 0, std::max(0, total - height));
+    const int idx_w = 3;
+    for (int row = 0; row < height; ++row) {
+        int idx = scroll + row;
+        std::string content;
+        if (idx < total) {
+            const auto& t = playlist_edit_tracks_[idx];
+            int title_w = std::max(5, inner - idx_w - 2);
+            std::string shown = t.missing ? (t.title + " [missing]") : t.title;
+            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+            std::string t_title = apply_font_map(shown, settings_.font_map);
+            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                    + pad_right(truncate_str(t_title, title_w), title_w);
+        }
+        bool sel = (playlist_edit_focus_ == 2) && (idx == playlist_edit_track_selected_) && idx < total;
+        std::string padded = pad_right(truncate_str(content, inner), inner);
+        if (sel) {
+            std::string cursor_ansi = ansi_for(settings_.queue_cursor_color) + bg_ansi_for(settings_.queue_cursor_bg_color);
+            out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
+        } else {
+            std::string queue_ansi = ansi_for(settings_.queue_color, false) + bg_ansi_for(settings_.queue_inactive_bg_color);
+            out.push_back(bar + " " + queue_ansi + padded + "\x1b[0m " + bar);
+        }
+    }
+    std::string footer;
+    int remaining = total - (scroll + height);
+    if (remaining > 0) footer = "( " + std::to_string(remaining) + " more )";
+    out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
+    return out;
+}
+
+std::vector<std::string> App::build_playlist_manage_panel(int total_width, int height) const {
+    int inner = total_width - 4;
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::vector<std::string> out;
+    out.push_back(box_top("SAVED PLAYLISTS", total_width, border_ansi));
+
+    int total = static_cast<int>(playlist_manage_view_.size());
+    if (total == 0) {
+        int mid = height / 2;
+        for (int row = 0; row < height; ++row) {
+            std::string content;
+            if (row == mid) {
+                std::string text = apply_font_map("NO SAVED PLAYLISTS YET", settings_.font_map);
+                int left = std::max(0, (inner - display_width(text)) / 2);
+                content = std::string(left, ' ') + text;
+            }
+            std::string padded = pad_right(truncate_str(content, inner), inner);
+            std::string list_ansi = ansi_for(settings_.list_color, false);
+            out.push_back(bar + " " + list_ansi + padded + "\x1b[0m " + bar);
+        }
+        out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+        return out;
+    }
+
+    int scroll = std::clamp(playlist_manage_selected_ - height / 2, 0, std::max(0, total - height));
+    const int idx_w = 3;
+    for (int row = 0; row < height; ++row) {
+        int idx = scroll + row;
+        std::string content;
+        if (idx < total) {
+            const auto& p = playlist_manage_view_[idx];
+            const int count_w = 10;
+            int name_w = std::max(5, inner - idx_w - 2 - 2 - count_w);
+            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+            std::string t_name = apply_font_map(p.name, settings_.font_map);
+            std::string t_count = std::to_string(p.track_count) + (p.track_count == 1 ? " track" : " tracks");
+            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                    + pad_right(truncate_str(t_name, name_w), name_w) + settings_.list_separator + " "
+                    + pad_right(t_count, count_w);
+        }
+        bool sel = (idx == playlist_manage_selected_) && idx < total;
+        std::string padded = pad_right(truncate_str(content, inner), inner);
+        if (sel) {
+            std::string cursor_ansi = ansi_for(settings_.list_cursor_color) + bg_ansi_for(settings_.list_cursor_bg_color);
+            out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
+        } else {
+            std::string list_ansi = ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color);
+            out.push_back(bar + " " + list_ansi + padded + "\x1b[0m " + bar);
+        }
+    }
+    std::string footer;
+    int remaining = total - (scroll + height);
+    if (remaining > 0) footer = "( " + std::to_string(remaining) + " more )";
+    out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
+    return out;
+}
+
+// Assembles the full-screen playlist editor overlay. Structured like the
+// Browse view's own stack of boxed panels (a header box, then side-by-
+// side boxed sub-panels, then a plain hint/status line) rather than
+// Settings' absolute-positioned single mega-box -- same box-drawing
+// vocabulary (box_top/box_line/box_bottom), simpler composition.
+void App::build_playlist_screen(std::ostringstream& frame, int W, int target_height) const {
+    if (W < 60) W = 60;
+    std::string border = ansi_for(settings_.border_color, false);
+    std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string HI = "\x1b[7m", R = "\x1b[0m";
+
+    frame << box_top("PLAYLISTS", W, border) << "\n";
+
+    // Tab strip -- built manually rather than via box_line(): box_line()
+    // measures/pads its content by (UTF-8-aware, but not ANSI-aware)
+    // display width, so embedding the reverse-video highlight before
+    // padding would miscount and corrupt the row. Same reasoning as
+    // build_list_panel()'s row construction: build plain text, measure
+    // that, then wrap the already-fixed-width segments in color.
+    {
+        std::string bar = border + settings_.box_vertical + R;
+        std::string plain0 = " 1: CREATE / EDIT ";
+        std::string plain1 = " 2: SAVED PLAYLISTS ";
+        std::string gap = "   ";
+        int inner = W - 4;
+        std::string plain_row = plain0 + gap + plain1;
+        std::string seg0 = (playlist_tab_ == 0) ? (HI + plain0 + R) : plain0;
+        std::string seg1 = (playlist_tab_ == 1) ? (HI + plain1 + R) : plain1;
+        std::string colored_row = seg0 + gap + seg1;
+        int pad_n = std::max(0, inner - display_width(plain_row));
+        frame << bar << " " << colored_row << std::string(pad_n, ' ') << " " << bar << "\n";
+    }
+
+    int fixed_rows = 3; // top border + tab strip + bottom border
+    if (playlist_tab_ == 0) {
+        std::string cursor = (playlist_edit_focus_ == 0) ? "\u2588" : "";
+        std::string name_display = playlist_edit_name_.empty() ? "(untitled)" : playlist_edit_name_;
+        std::string dirty_mark = playlist_edit_dirty_ ? " *" : "";
+        frame << box_line("Name: " + name_display + cursor + dirty_mark, W, border) << "\n";
+        fixed_rows += 1;
+    }
+    frame << box_bottom(W, "", border_bottom) << "\n";
+
+    // Deliberately NOT sized to fill whatever room player_view_height()
+    // happens to have (that made the list feel oddly tall/short
+    // depending on terminal size) -- clamped to a fixed, comfortable
+    // range instead so ~12-15 tracks are visible regardless of terminal
+    // height.
+    int panel_h = std::clamp(target_height - fixed_rows - 2, 8, 15); // -2: hint line + status line below
+    if (playlist_tab_ == 0) {
+        int left_w = W / 2;
+        int right_w = W - left_w;
+        auto left_lines = build_playlist_library_panel(left_w, panel_h);
+        auto right_lines = build_playlist_tracks_panel(right_w, panel_h);
+        size_t rows = std::max(left_lines.size(), right_lines.size());
+        for (size_t i = 0; i < rows; ++i) {
+            std::string l = (i < left_lines.size()) ? left_lines[i] : std::string(left_w, ' ');
+            std::string r = (i < right_lines.size()) ? right_lines[i] : std::string(right_w, ' ');
+            frame << l << r << "\n";
+        }
+    } else {
+        for (auto& l : build_playlist_manage_panel(W, panel_h)) frame << l << "\n";
+    }
+
+    // Footer: a full key legend (gray, "\x1b[90m") plus a status line
+    // (green, "\x1b[32m") below it -- exactly the colors and layout
+    // Settings' own footer uses (see build_settings_screen()'s
+    // "[TAB] Switch | ... " line and its status_line_ line just below).
+    if (playlist_confirm_exit_) {
+        std::string prompt = "Save changes to \"" + (playlist_edit_name_.empty() ? std::string("(untitled)") : playlist_edit_name_)
+                            + "\" before exiting?   [Y]es   [N]o   [ESC] cancel";
+        frame << "\x1b[43;30m " << prompt << " \x1b[0m\n";
+        frame << "\n";
+    } else {
+        std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navigate | [ENTER] Add/Load | "
+                            "[DEL] Remove | [HOME] Save | [ESC] Exit";
+        frame << "\x1b[90m" << hint << "\x1b[0m\n";
+        if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
+        else frame << "\n";
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -3099,7 +3676,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                                                     "Filter By Folder", "Clear Filter", "Download Stream",
                                                     "Refresh UI", "Console / Logs", "Toggle Mute", "Cheatsheet",
                                                     "Retry Lyrics", "Shuffle Next", "Toggle Lyrics",
-                                                    "Queue Move Up", "Toggle Waveform", "Cycle Sort Mode"};
+                                                    "Queue Move Up", "Toggle Waveform", "Cycle Sort Mode",
+                                                    "Playlists"};
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
         int display_count = kRefRowCount + 1 + static_cast<int>(letters.size()); // +1 for the divider row
@@ -3264,6 +3842,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyQueueMoveUp",                 "Move hovering queue item up"},
         {"HKeyToggleWaveform",              "Toggle waveform style (raw/smooth)"},
         {"HKeyCycleSortMode",               "Cycle local list sort mode"},
+        {"HKeyPlaylist",                    "Create/manage playlists"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
@@ -3653,6 +4232,7 @@ std::string App::render_frame(TerminalIO& term) {
             case Mode::Settings: case Mode::ColorEdit: return 1;
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
+            case Mode::Playlist: return 4;
         }
         return 0;
     };
@@ -3688,6 +4268,13 @@ std::string App::render_frame(TerminalIO& term) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_cheatsheet_screen(frame, W);
+        return clamp_output_rows(frame.str(), term_rows_);
+    }
+
+    if (mode_ == Mode::Playlist) {
+        std::ostringstream frame;
+        frame << "\x1b[2J\x1b[H\x1b[?25l";
+        build_playlist_screen(frame, W, player_view_height(W));
         return clamp_output_rows(frame.str(), term_rows_);
     }
 

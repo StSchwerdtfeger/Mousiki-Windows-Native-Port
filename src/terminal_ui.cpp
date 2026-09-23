@@ -117,6 +117,7 @@ int TerminalIO::poll_key() {
                 case 'B': return 'B';
                 case 'C': return 'C';
                 case 'D': return 'D';
+                case 'H': return kKeyHome; // most xterm-likes send ESC [ H for Home
             }
         }
         return 27;

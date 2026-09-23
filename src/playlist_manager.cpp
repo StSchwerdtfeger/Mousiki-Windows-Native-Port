@@ -1,0 +1,113 @@
+#include "playlist_manager.h"
+#include "path_utf8.h"
+#include <algorithm>
+#include <fstream>
+#include <system_error>
+
+namespace muisc {
+
+namespace {
+
+std::string ascii_lower(std::string s) {
+    for (char& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return s;
+}
+
+// Strips a trailing \r (files may have been saved/edited on Windows) and
+// \n (getline already consumes \n itself, but this stays defensive) from
+// one line read out of a playlist file.
+void strip_eol(std::string& line) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+}
+
+} // namespace
+
+std::string PlaylistManager::sanitize_name(const std::string& name) {
+    std::string safe = name;
+    for (char& c : safe) {
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' ||
+            c == '<' || c == '>' || c == '|') {
+            c = '_';
+        }
+    }
+    // Trailing dots/spaces are invalid/get silently stripped on Windows --
+    // strip them here too so the name we show matches the file we wrote.
+    while (!safe.empty() && (safe.back() == ' ' || safe.back() == '.')) safe.pop_back();
+    while (!safe.empty() && safe.front() == ' ') safe.erase(safe.begin());
+    if (safe.empty()) safe = "playlist";
+    return safe;
+}
+
+std::vector<PlaylistSummary> PlaylistManager::list(const fs::path& dir) {
+    std::vector<PlaylistSummary> out;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return out;
+
+    for (auto& entry : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        std::error_code fec;
+        if (!entry.is_regular_file(fec) || fec) continue;
+        fs::path p = entry.path();
+        if (ascii_lower(path_utf8(p.extension())) != ".txt") continue;
+
+        size_t count = 0;
+        std::ifstream in(p);
+        std::string line;
+        while (std::getline(in, line)) {
+            strip_eol(line);
+            if (line.empty() || line[0] == '#') continue;
+            ++count;
+        }
+        out.push_back(PlaylistSummary{path_utf8(p.stem()), count});
+    }
+
+    std::sort(out.begin(), out.end(), [](const PlaylistSummary& a, const PlaylistSummary& b) {
+        return ascii_lower(a.name) < ascii_lower(b.name);
+    });
+    return out;
+}
+
+std::optional<Playlist> PlaylistManager::load(const fs::path& dir, const std::string& name) {
+    fs::path file = dir / path_from_utf8(sanitize_name(name) + ".txt");
+    std::ifstream in(file);
+    if (!in.is_open()) return std::nullopt;
+
+    Playlist pl;
+    pl.name = name;
+    std::error_code ec;
+    std::string line;
+    while (std::getline(in, line)) {
+        strip_eol(line);
+        if (line.empty() || line[0] == '#') continue;
+        fs::path p = path_from_utf8(line);
+        PlaylistTrack t;
+        t.path = p;
+        t.title = path_utf8(p.stem());
+        t.artist = path_utf8(p.parent_path().filename());
+        t.missing = !fs::exists(p, ec);
+        pl.tracks.push_back(std::move(t));
+    }
+    return pl;
+}
+
+bool PlaylistManager::save(const fs::path& dir, const Playlist& pl, std::string* error) {
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        if (error) *error = ec.message();
+        return false;
+    }
+
+    fs::path file = dir / path_from_utf8(sanitize_name(pl.name) + ".txt");
+    std::ofstream out(file, std::ios::trunc);
+    if (!out.is_open()) {
+        if (error) *error = "could not open file for writing";
+        return false;
+    }
+
+    out << "# mousiki playlist: " << pl.name << "\n";
+    for (const auto& t : pl.tracks) out << path_utf8(t.path) << "\n";
+    return true;
+}
+
+} // namespace muisc

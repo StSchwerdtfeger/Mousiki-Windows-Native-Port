@@ -17,6 +17,7 @@
 #include "native_duration.h"
 #include "online_source.h"
 #include "player.h"
+#include "playlist_manager.h"
 #include "settings.h"
 #include "snapshot.h"
 #include "sphere_visualizer.h"
@@ -28,8 +29,8 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics };
-enum class ListSource { Local, Online };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist };
+enum class ListSource { Local, Online, Playlist };
 
 struct QueueItem {
     bool is_local;
@@ -119,6 +120,52 @@ private:
     int queue_selected_ = 0;   // cursor/"hovering" row, only meaningful once queue_focus_ has been used
     int queue_scroll_ = 0;
     bool queue_focus_ = false; // Tab toggles which panel Up/Down navigates
+
+    // --- playlists (local-files-only; see playlist_manager.h) -----------
+    // Main UI: results of a "/p:" search (list_source_==Playlist), i.e.
+    // browsing saved playlists the same way "/s:" browses online results.
+    // Selecting one and hitting Enter queues every (non-missing) track it
+    // contains -- see playlist_add_selected_to_queue().
+    std::vector<PlaylistSummary> playlist_view_;
+    std::string last_playlist_query_;
+    std::vector<PlaylistSummary> filter_playlists(const std::string& query) const;
+    fs::path playlists_dir() const; // local_music_paths[0]/playlists, same fallback HKeyDownloadStream uses
+    void playlist_add_selected_to_queue();
+
+    // --- playlist editor overlay (Mode::Playlist, HKeyPlaylist) ----------
+    // Two tabs: 0 = create/edit (name field + a local-library picker to
+    // fuzzy-search/add from + the in-progress track list), 1 = browse
+    // saved playlists (Enter loads one into tab 0 for re-editing).
+    // HOME saves (deliberately not a plain letter -- "s" collided with
+    // typing an "s" into the name/search fields). ESC exits; if tab 0 has
+    // unsaved changes it asks first (playlist_confirm_exit_) rather than
+    // silently discarding them.
+    int playlist_tab_ = 0;
+    int playlist_edit_focus_ = 0; // 0=name field, 1=library picker, 2=playlist-tracks list -- cycled with Tab
+    std::string playlist_edit_name_;
+    std::vector<PlaylistTrack> playlist_edit_tracks_;
+    std::string playlist_edit_lib_query_;
+    std::vector<LocalTrack> playlist_edit_lib_view_;   // filter_and_rank_local(playlist_edit_lib_query_)
+    int playlist_edit_lib_selected_ = 0;
+    int playlist_edit_track_selected_ = 0;
+    bool playlist_edit_dirty_ = false;    // true once tab 0 has unsaved changes -- see ESC's confirm prompt below
+    bool playlist_confirm_exit_ = false;  // "save before exiting?" Y/N prompt, shown in place of the hint line
+    std::vector<PlaylistSummary> playlist_manage_view_; // tab 1's list
+    int playlist_manage_selected_ = 0;
+    std::string playlist_status_; // shown at the bottom of the overlay; cleared on (re)entry
+
+    void playlist_refresh_lib_view();
+    void playlist_refresh_manage_view();
+    void playlist_open_editor();  // HKeyPlaylist entry point -- resets to a blank new playlist on tab 0
+    void playlist_load_into_editor(const std::string& name);
+    void playlist_add_hovering_to_edit();
+    void playlist_remove_hovering_track();
+    void playlist_save_current();
+    void handle_playlist_key(int key);
+    void build_playlist_screen(std::ostringstream& frame, int W, int player_h) const;
+    std::vector<std::string> build_playlist_library_panel(int width, int height) const;
+    std::vector<std::string> build_playlist_tracks_panel(int width, int height) const;
+    std::vector<std::string> build_playlist_manage_panel(int width, int height) const;
 
     // --- now playing ---
     bool has_track_ = false;
