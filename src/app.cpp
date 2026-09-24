@@ -1548,23 +1548,103 @@ void App::commit_bulk_add(bool all) {
 }
 
 // Tab layout: 0=Colors, 1=On/Off, 2=Animation, 3=Reference, 4=About App.
-// Reference-tab rows map to specific well-known hotkey action keys in
-// settings_.hotkeys (a plain string->string map already), so they don't
-// need their own struct fields the way Colors/On-Off/Animation do.
-static const char* kRefHotkeyNames[] = {
-    "HKeySetting", "HKeyNavigateUp", "HKeyNavigateDown", "HKeyPlay", "HKeyPlayNextSong",
-    "HKeyPlayPreviousSong", "HKeyCyclePlayMode", "HKeySearch",
-    "HKeySearchOnline", "HKeyQuit",
-    // Appended so the newer default hotkeys are editable/rebindable from
-    // the Settings > Reference tab too, not just settable via config.txt.
-    "HKeySeekForward", "HKeySeekBackward", "HKeyIncreaseVolume", "HKeyDecreaseVolume",
-    "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
-    "HKeyFilterForFolder", "HKeyClearFilter", "HKeyDownloadStream",
-    "HKeyRefreshUi", "HKeyConsole", "HKeyToggleMute", "HKeyCheatsheet", "HKeyRetryLyrics",
-    "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyQueueMoveDown", "HKeyToggleWaveform", "HKeyCycleSortMode",
-    "HKeyPlaylist", "HKeySearchPlaylist", "HKeyToggleNormalize",
+//
+// The Reference tab lists every rebindable hotkey (kRefRows), grouped into
+// categories via the optional `header` field -- set only on a category's
+// first row, and rendered as a section title above it -- followed by a
+// read-only "HARDCODED / NOT REBINDABLE" section (kRefHardcoded) for key
+// commands that are NOT wired through settings_.hotkeys at all (fixed
+// literal key codes checked directly in the various handle_*_key()
+// functions), and finally the read-only font-mapping table loaded from
+// config.txt. All three sections scroll together as one list; see
+// ref_display_row() below for how a selectable row (settings_row_) maps
+// to the row it's actually drawn on, once the section headers/dividers
+// are accounted for.
+//
+// IMPORTANT: kRefRows[row].action is looked up in settings_.hotkeys (a
+// plain string->string map), so reordering/recategorizing rows here is
+// always safe -- rebinding still keys off the action name, never off the
+// row's position.
+struct RefHotkeyRow { const char* header; const char* action; const char* label; };
+static const RefHotkeyRow kRefRows[] = {
+    // --- Playback ---
+    {"PLAYBACK", "HKeyPlay", "Play Selected"},
+    {nullptr, "HKeyTogglePlayPause", "Toggle Play / Pause"}, // was missing from this tab entirely
+    {nullptr, "HKeyPlayNextSong", "Next Track"},
+    {nullptr, "HKeyPlayPreviousSong", "Prev Track"},
+    {nullptr, "HKeyShuffleNext", "Shuffle Next"},
+    {nullptr, "HKeyCyclePlayMode", "Cycle Play Mode"},
+    {nullptr, "HKeySeekForward", "Seek Forward"},
+    {nullptr, "HKeySeekBackward", "Seek Backward"},
+    {nullptr, "HKeyIncreaseVolume", "Volume Up"},
+    {nullptr, "HKeyDecreaseVolume", "Volume Down"},
+    {nullptr, "HKeyToggleMute", "Toggle Mute"},
+    {nullptr, "HKeyToggleNormalize", "Toggle Normalize"},
+    // --- Navigation & View ---
+    {"NAVIGATION & VIEW", "HKeyNavigateUp", "Navigate Up"},
+    {nullptr, "HKeyNavigateDown", "Navigate Down"},
+    {nullptr, "HKeySwitchBetweenCards", "Switch Cards"},
+    {nullptr, "HKeyFilterForFolder", "Filter By Folder"},
+    {nullptr, "HKeyClearFilter", "Clear Filter"},
+    {nullptr, "HKeyCycleSortMode", "Cycle Sort Mode"},
+    {nullptr, "HKeyRefreshUi", "Refresh UI"},
+    {nullptr, "HKeyToggleWaveform", "Toggle Waveform"},
+    {nullptr, "HKeyToggleLyrics", "Toggle Lyrics"},
+    {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
+    // --- Search ---
+    {"SEARCH", "HKeySearch", "Search Local"},
+    {nullptr, "HKeySearchOnline", "Search Online"},
+    {nullptr, "HKeySearchPlaylist", "Search Playlists"},
+    // --- Queue ---
+    {"QUEUE", "HKeyAddHoveringSongToQueue", "Add To Queue"},
+    {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove From Queue"},
+    {nullptr, "HKeyQueueMoveUp", "Queue Move Up"},
+    {nullptr, "HKeyQueueMoveDown", "Queue Move Down"},
+    // --- Playlists ---
+    {"PLAYLISTS", "HKeyPlaylist", "Open Playlist Editor"}, // opens the playlist create/manage screen
+    // --- Downloads ---
+    {"DOWNLOADS", "HKeyDownloadStream", "Download Stream"},
+    // --- System ---
+    {"SYSTEM", "HKeySetting", "Open Settings"},
+    {nullptr, "HKeyConsole", "Console / Logs"},
+    {nullptr, "HKeyCheatsheet", "Cheatsheet"},
+    {nullptr, "HKeyQuit", "Quit Application"},
 };
-static constexpr int kRefRowCount = 33;
+static constexpr int kRefRowCount = sizeof(kRefRows) / sizeof(kRefRows[0]);
+
+// Key commands that are NOT in settings_.hotkeys -- fixed literal key
+// codes checked directly in handle_*_key(), so rebinding a similarly-
+// named action above (if any) does NOT affect these. Read-only in the UI;
+// listed here purely for reference. See e.g. handle_settings_key() (Enter/
+// Esc/S), the Playlist-editor track-list handler (4/5, D/DEL/Backspace),
+// and the Bulk-Add results handler (A, Space) for where each is checked.
+struct RefHardcodedRow { const char* keys; const char* label; };
+static const RefHardcodedRow kRefHardcoded[] = {
+    {"ESC", "Close Setting"},
+    {"S", "Save and Quit Settings"},
+    {"ENTER", "Confirm / Select"},
+    {"ARROW KEYS", "Navigate"},
+    {"Y / N", "Confirm Or Cancel"},
+    {"4 / 5", "Move Track Up/Down"},
+    {"D / DEL / BACKSPACE", "Removal commands"},
+};
+static constexpr int kRefHardcodedCount = sizeof(kRefHardcoded) / sizeof(kRefHardcoded[0]);
+
+// Maps a selectable row index -- 0..kRefRowCount-1 for hotkeys,
+// kRefRowCount..+kRefHardcodedCount-1 for the hardcoded rows, then the
+// font-map letters -- to the row it's actually drawn on, once the section
+// header/divider lines inserted along the way (one above each hotkey
+// category, one above the hardcoded section, one above the font map) are
+// accounted for. Used by both the render block and the ColorEdit cursor
+// placement below, so the two always agree on where a given row lands.
+static int ref_display_row(int selectable_row) {
+    int headers = 0;
+    for (int i = 0; i <= selectable_row; ++i) {
+        if (i < kRefRowCount) { if (kRefRows[i].header) headers += 2; }
+        else if (i == kRefRowCount || i == kRefRowCount + kRefHardcodedCount) headers += 2;
+    }
+    return selectable_row + headers;
+}
 
 std::string* App::color_field_ptr(int row, int col) {
     switch (row) {
@@ -1598,7 +1678,7 @@ int App::settings_max_row() const {
         case 3: {
             int letters = 0;
             for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) ++letters;
-            return kRefRowCount + letters - 1; // 11 hotkeys + N font-map rows
+            return kRefRowCount + kRefHardcodedCount + letters - 1; // rebindable hotkeys + hardcoded rows + N font-map rows
         }
         case 4: {
             int MAX_Y = std::max(term_rows_ - 2, 10);
@@ -1651,7 +1731,7 @@ std::string App::settings_get_value(int row, int col) const {
         }
     }
     if (settings_tab_ == 3 && row >= 0 && row < kRefRowCount) {
-        auto it = settings_.hotkeys.find(kRefHotkeyNames[row]);
+        auto it = settings_.hotkeys.find(kRefRows[row].action);
         return it != settings_.hotkeys.end() ? it->second : "";
     }
     return "";
@@ -1725,7 +1805,7 @@ void App::settings_commit_edit() {
                 break;
         }
     } else if (settings_tab_ == 3 && settings_row_ >= 0 && settings_row_ < kRefRowCount) {
-        settings_.hotkeys[kRefHotkeyNames[settings_row_]] = buf;
+        settings_.hotkeys[kRefRows[settings_row_].action] = buf;
     }
 }
 
@@ -1759,7 +1839,7 @@ void App::handle_settings_key(int key) {
         if (key == 27) { mode_ = Mode::Settings; return; } // cancel, discard buffer
         if (key == '\r' || key == '\n') {
             std::string key_name = (settings_tab_ == 3 && settings_row_ >= 0 && settings_row_ < kRefRowCount)
-                                  ? kRefHotkeyNames[settings_row_] : "";
+                                  ? kRefRows[settings_row_].action : "";
             // Hotkey overlap fix: if this is a Reference-tab hotkey being
             // rebound and the typed key is already owned by a different
             // action, reject the commit instead of silently creating a
@@ -1815,7 +1895,7 @@ void App::handle_settings_key(int key) {
     }
 
     if (key == '\r' || key == '\n') {
-        if (settings_tab_ == 3 && settings_row_ >= kRefRowCount) return; // font-map rows are read-only display
+        if (settings_tab_ == 3 && settings_row_ >= kRefRowCount) return; // hardcoded/font-map rows are read-only display
         color_edit_buffer_ = settings_get_value(settings_row_, settings_col_);
         mode_ = Mode::ColorEdit;
         return;
@@ -2303,10 +2383,10 @@ void App::handle_key(int key) {
         // ESC -- back to the home view: full local library, no filter,
         // from the top. Same destination regardless of how buried you
         // are (mid search results, viewing online results, scrolled
-        // deep into the list). Not in settings_.hotkeys / kRefHotkeyNames
-        // at all, on purpose: this mirrors the original, which likewise
-        // has no HKeyEsc entry -- ESC is a fixed shortcut, not something
-        // meant to be rebound.
+        // deep into the list). Not in settings_.hotkeys / kRefRows at all,
+        // on purpose: this mirrors the original, which likewise has no
+        // HKeyEsc entry -- ESC is a fixed shortcut, not something meant
+        // to be rebound (see kRefHardcoded in the Reference tab).
         list_source_ = ListSource::Local;
         last_local_query_.clear();
         folder_filter_.clear();
@@ -3793,56 +3873,88 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 3) {
-        // Reference tab: the 11 editable hotkeys, then a blank divider,
-        // then a read-only display of the font-mapping table (section 4
-        // of the config, "A={A,a}" style) loaded from config.txt -- as
-        // "A = A, a" rows. Combined they're usually taller than the
-        // player view, so this scrolls as one list (viewport follows
-        // settings_row_, centered) rather than ever growing the panel
-        // past player_h.
-        static const char* ref_l[kRefRowCount] = {"Open Settings", "Navigate Up", "Navigate Down", "Play / Pause",
-                                                    "Next Track", "Prev Track", "Cycle Play Mode",
-                                                    "Search Local", "Search Online", "Quit Application",
-                                                    "Seek Forward", "Seek Backward", "Volume Up", "Volume Down",
-                                                    "Add To Queue", "Remove From Queue", "Switch Cards",
-                                                    "Filter By Folder", "Clear Filter", "Download Stream",
-                                                    "Refresh UI", "Console / Logs", "Toggle Mute", "Cheatsheet",
-                                                    "Retry Lyrics", "Shuffle Next", "Toggle Lyrics",
-                                                    "Queue Move Up", "Toggle Waveform", "Cycle Sort Mode",
-                                                    "Playlists", "Search Playlists", "Toggle Normalize"};
+        // Reference tab: the rebindable hotkeys grouped under category
+        // headers (kRefRows), then a read-only "HARDCODED / NOT
+        // REBINDABLE" section (kRefHardcoded), then a read-only display
+        // of the font-mapping table (section 4 of the config, "A={A,a}"
+        // style) loaded from config.txt -- as "A = A, a" rows. Combined
+        // they're usually taller than the player view, so this scrolls as
+        // one list (viewport follows settings_row_, centered) rather than
+        // ever growing the panel past player_h. See ref_display_row() for
+        // how a selectable row maps to the row it's drawn on.
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-        int display_count = kRefRowCount + 1 + static_cast<int>(letters.size()); // +1 for the divider row
+        int total_selectable = kRefRowCount + kRefHardcodedCount + static_cast<int>(letters.size());
+        int display_count = ref_display_row(total_selectable - 1) + 1;
         int visible = std::max(1, MAX_Y - 3);
-        auto to_display_row = [&](int selectable_row) {
-            return (selectable_row < kRefRowCount) ? selectable_row : selectable_row + 1;
-        };
-        int cur_display = to_display_row(settings_row_);
+        int cur_display = ref_display_row(settings_row_);
         int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
 
-        for (int r = 0; r < visible; ++r) {
-            int disp = scroll + r;
-            if (disp >= display_count) break;
-            pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-            if (disp == kRefRowCount) { y++; continue; } // blank divider row
-            if (disp < kRefRowCount) {
-                int i = disp;
-                pos(y, 6, pad(ref_l[i], 25)); pos(y, 32, ":");
+        // Walk every display line (headers + rows) in order, only
+        // actually drawing (and advancing y) once we're inside the
+        // visible scroll window -- same "disp/scroll/visible" shape the
+        // rest of this file's scrolling panels use.
+        int disp = 0;
+        auto in_view = [&]() { return disp >= scroll && y < MAX_Y; };
+        auto draw_header = [&](const char* text) {
+            // empty spacer row (just the side borders)
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                y++;
+            }
+            disp++;
+
+            // the header itself, in color 10 of the 256-color palette + bold
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, "\x1b[1;38;5;10m" + std::string(text) + R);
+                y++;
+            }
+            disp++;
+        };
+        auto draw_hotkey_row = [&](int i) {
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, pad(kRefRows[i].label, 25)); pos(y, 32, ":");
                 bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
                 bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
                 std::string v = ed ? pad(color_edit_buffer_, 20) : pad(settings_get_value(i, 0), 20);
                 pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
-            } else {
-                int li = disp - kRefRowCount - 1;
-                char c = letters[li];
+                y++;
+            }
+            disp++;
+        };
+        auto draw_hardcoded_row = [&](int i, int selectable_row) {
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, pad(kRefHardcoded[i].label, 25)); pos(y, 32, ":");
+                bool sel = (selectable_row == settings_row_);
+                pos(y, 35, (sel ? HI : "") + pad(kRefHardcoded[i].keys, 20) + R);
+                y++;
+            }
+            disp++;
+        };
+        auto draw_font_row = [&](char c, int selectable_row) {
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
                 const auto& pair = settings_.font_map.at(c);
-                int selectable_row = kRefRowCount + li;
                 bool sel = (selectable_row == settings_row_);
                 std::string line = std::string(1, c) + " = " + pair.first + ", " + pair.second;
                 pos(y, 6, (sel ? HI : "") + line + R);
+                y++;
             }
-            y++;
+            disp++;
+        };
+
+        for (int i = 0; i < kRefRowCount && y < MAX_Y; ++i) {
+            if (kRefRows[i].header) draw_header(kRefRows[i].header);
+            if (y < MAX_Y) draw_hotkey_row(i);
         }
+        if (y < MAX_Y) draw_header("HARDCODED / NOT REBINDABLE");
+        for (int i = 0; i < kRefHardcodedCount && y < MAX_Y; ++i) draw_hardcoded_row(i, kRefRowCount + i);
+        if (y < MAX_Y) draw_header("FONT / CHARACTER MAP");
+        for (size_t li = 0; li < letters.size() && y < MAX_Y; ++li)
+            draw_font_row(letters[li], kRefRowCount + kRefHardcodedCount + static_cast<int>(li));
     } else if (settings_tab_ == 4) {
         // About App: shows settings_.about_app_lines (loaded verbatim
         // from config.txt's trailing ClassTextAboutApp={...}; block, not
@@ -3885,20 +3997,22 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             int cy = 3 + settings_row_;
             if (settings_tab_ == 3) {
                 // Reference tab scrolls once its row list exceeds the
-                // visible window -- now the common case, since it holds
-                // 26 hotkey rows plus any font-map rows. Recompute the
-                // same scroll offset used when rendering (see the
-                // settings_tab_==3 branch above) so the text cursor
-                // lands on the row actually drawn there instead of one
-                // that's already scrolled off-screen.
+                // visible window -- the common case, since it holds every
+                // rebindable hotkey plus the hardcoded-keys section and
+                // any font-map rows. Recompute the same scroll offset
+                // used when rendering (see the settings_tab_==3 branch
+                // above, and ref_display_row()) so the text cursor lands
+                // on the row actually drawn there instead of one that's
+                // already scrolled off-screen. Only ever reached with
+                // settings_row_ < kRefRowCount: the Enter handler blocks
+                // entering ColorEdit for the read-only hardcoded/font-map
+                // rows below that.
                 int visible = std::max(1, MAX_Y - 3);
-                auto to_display_row = [](int selectable_row) {
-                    return (selectable_row < kRefRowCount) ? selectable_row : selectable_row + 1;
-                };
-                int cur_display = to_display_row(settings_row_);
+                int cur_display = ref_display_row(settings_row_);
                 std::vector<char> letters;
                 for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-                int display_count = kRefRowCount + 1 + static_cast<int>(letters.size());
+                int total_selectable = kRefRowCount + kRefHardcodedCount + static_cast<int>(letters.size());
+                int display_count = ref_display_row(total_selectable - 1) + 1;
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);
             }
