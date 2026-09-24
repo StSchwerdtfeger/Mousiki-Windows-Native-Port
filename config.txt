@@ -231,6 +231,9 @@ HKeyPlaylist="P"
 # Turns loudness normalization on/off (see NormalizeVolume below) -- handy for
 # comparing a track with and without it.
 HKeyToggleNormalize="v"
+# Move track in queue/playlist up/down:
+HKeyQueueMoveUp="4"
+HKeyQueueMoveDown="5"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
