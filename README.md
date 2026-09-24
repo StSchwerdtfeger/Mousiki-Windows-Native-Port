@@ -24,7 +24,7 @@
 
 </div>
 
-A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. Some additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible, see "Beyond the port" further below) and toggle the lyrics on/off (also via a key command). 
+A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. Some additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible) a menu to create playlists from local (or downloaded) tracks, toggle the lyrics on/off (also via a key command).... See section [beyond the port](#Beyond-the-port) further below for details.  
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
