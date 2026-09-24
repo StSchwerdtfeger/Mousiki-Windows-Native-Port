@@ -40,9 +40,9 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
 
-## Current Status of the Port and Modification
+## Current Status of the Port and Modification (Release v1.2.0)
 
-For now Mousiki includes everything I at least wanted so there might be no further major releases that add new features. I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... 
+For now the Mousiki port works well and also includes everything I at least wanted, so there might be no further major releases that add new features. I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... 
 
 ## Quick start (for PowerShell 7.6.6, not tested with other shells or older versions of PWSH)
 
