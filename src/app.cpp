@@ -3714,8 +3714,8 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         frame << "\x1b[41;97m " << prompt << " \x1b[0m\n";
         frame << "\n";
     } else {
-        std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navigate | [ENTER] Add/Load | "
-                            "[DEL] Remove selected | [4/5] Move track | [HOME] Save | [ESC] Exit";
+        std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
+                            "[DEL] Remove  | [4/5] Move \u2191\u2193 | [HOME] Save | [ESC] Exit";
         frame << "\x1b[90m" << hint << "\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
