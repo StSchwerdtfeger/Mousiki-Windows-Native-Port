@@ -252,11 +252,14 @@ Everything is keyboard-driven.
 Everything is configurable.
 Everything stays in your terminal.
 
+
 Devloper : ender                         Github   : itzender5820
 Email    : itz.ender5820@gmail.com
 Version  : orignal and final v1.0        Licence  : Apache licence 2.0
 
 Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
 Adjusted to run on Windows, added some features; done with the help of AI tools.
+Added playlist menu, several new hot keys... See Readme.md for full list of
+additions and changes along the win native port. 
 
 };
