@@ -84,6 +84,17 @@ ReplaceEmoji=true
 ## true  = an emoji in a title is drawn as a single "?" so the box borders always stay aligned
 ## false = draw the real emoji (alignment then depends on how your terminal measures emoji)
 
+##-------------------------------------------
+##             LOUDNESS NORMALIZATION
+##-------------------------------------------
+
+NormalizeVolume=true
+NormalizeTargetLufs=-16
+NormalizeMaxBoostDb=9
+## Each track is measured (LUFS) while it decodes and played at NormalizeTargetLufs.
+## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.
+## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.
+
 
 ##-------------------------------------------
 ##             CONSOLE / LOGGING
@@ -208,6 +219,9 @@ HKeyToggleWaveform="w"
 HKeyCycleSortMode="T"
 HKeySearchPlaylist="/p:"
 HKeyPlaylist="P"
+# Turns loudness normalization on/off (see NormalizeVolume below) -- handy for
+# comparing a track with and without it.
+HKeyToggleNormalize="v"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
