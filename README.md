@@ -1,6 +1,6 @@
 <div align="center">
     
-# Mousiki Windows Port 🎵 
+# Mousiki Windows Native Port 🎵 
 
 </p>
 
@@ -24,7 +24,7 @@
 
 </div>
 
-A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. Some additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible) a menu to create playlists from local (or downloaded) tracks, toggle the lyrics on/off (also via a key command).... See section [beyond the port](#Beyond-the-port) further below for details.  
+A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. Some additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command).... See section [beyond the port](#Beyond-the-port) further below for details.  
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
@@ -139,18 +139,21 @@ There's no in-app UI for adding a folder — that isn't a Windows-port limitatio
 Configurable in `C:\Users\USER\.config\mousiki\config.txt`.
 
 What's new: Shuffle next key and lyrics on/off key (when off, sphere visualisation is shown). 
+References with in settings is now categorized. Some keys are not rebindable!
 
 ### Search & Playback
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
-| **Local Search** | `/` | Filter and search local library |
+| **Local Search** | `/` | Filter and search local library 
 | **Online Stream Search** | `/s: <query>` | Search and stream music online |
-| **Online Stream Search** | `/p: <query>` | Search and stream local playlists |
+| **Search Playlists** | `/p: <query>` | Search and stream local playlists |
+| **Open Playlist** | `SHIFT` / `p` | Open Playlist Creator/Editor |
 | **Download Stream** | `y` | Download currently streaming track |
 | **Play / Pause** | `p` (or `ENTER`) | Toggle playback |
 | **Next / Previous Track** | `n` / `b` | Skip between songs |
 | **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
 | **Volume** | `1` / `2` | Decrease / Increase volume |
+| **Stereo** | `v` | Toggle Stereo/Mono mode |
 | **Shuffle / Repeat** | `m` / `r` | Toggle shuffle or repeat mode |
 | **Shuffle Next** | `#` | Shuffle to next song |
 | **Toggle Lyrics** | `+` | Turn Lyrics on/off |
@@ -159,11 +162,15 @@ What's new: Shuffle next key and lyrics on/off key (when off, sphere visualisati
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
 | **Setting** |`s` |Enter Settings menu|
+| **Exit Setting** |`ESC` |Exit Settings menu|
+| **Exit + Save Setting** |`s` |Exit + Save again via `s`|    
 | **Playlists** | `SHIFT+P` |Enter Playlist menu |
 | **Navigate** | `ARROW_UP` / `ARROW_DOWN` | Move selection |
 | **Switch Tabs/Cards** | `TAB` | Cycle between UI panels |
 | **Add to Queue** | `a` | Enqueue selected track |
 | **Remove from Queue** | `d` | Dequeue selected track |
+| **Move Track Up** | ``4` | Move up in Queue/Playlist |
+| **Move Track down** | `5` | Move down in Queue/Playlist |
 | **Filter by Folder** | `f` | Apply folder filter |
 | **Clear Filter** | `c` | Reset active search/filters |
 | **Quit** | `q` | Exit application |
