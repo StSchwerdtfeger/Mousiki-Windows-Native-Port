@@ -219,8 +219,6 @@ HKeyConsole="t"
 HKeyToggleMute="x"
 HKeyCheatsheet="?"
 HKeyRetryLyrics="l"
-# Added in the Windows fork -- all five are remappable like every hotkey
-# above (see "Hotkey remapping" in README.md).
 HKeyShuffleNext="#"
 HKeyToggleLyrics="+"
 HKeyQueueMoveUp="u"
