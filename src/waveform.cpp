@@ -232,9 +232,11 @@ void stream_decode_ffmpeg(const fs::path& file_path, StreamingPcm& pcm,
     if (stream_decode_miniaudio(file_path, pcm, on_chunk)) {
         pcm.decode_done.store(true);
         if (pcm.available.load() == 0) pcm.decode_failed.store(true);
+        pcm.finalize_loudness();
         return;
     }
     stream_decode_ffmpeg_fallback(file_path, pcm, on_chunk);
+    pcm.finalize_loudness();
 }
 
 } // namespace muisc

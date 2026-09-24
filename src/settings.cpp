@@ -329,6 +329,7 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyCycleSortMode",               "T"},
             {"HKeyPlaylist",                    "P"},
             {"HKeySearchPlaylist",              "/p:"},
+            {"HKeyToggleNormalize",             "v"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -685,6 +686,11 @@ static Settings load_from_config(const fs::path& path) {
         // --- Emoji handling ---------------------------------------------
         if (key == "ReplaceEmoji") { s.replace_emoji = parse_bool(value); continue; }
 
+        // --- Loudness normalisation -------------------------------------
+        if (key == "NormalizeVolume") { s.normalize = parse_bool(value); continue; }
+        if (key == "NormalizeTargetLufs") { try { s.normalize_target_lufs = std::clamp(std::stod(value), -40.0, 0.0); } catch (...) {} continue; }
+        if (key == "NormalizeMaxBoostDb") { try { s.normalize_max_boost_db = std::clamp(std::stod(value), 0.0, 24.0); } catch (...) {} continue; }
+
         // --- Autosave / session snapshot --------------------------------
         if (key == "AutoSave") { s.autosave_enabled = parse_bool(value); continue; }
         if (key == "AutoSaveIndicator") { s.autosave_indicator = parse_bool(value); continue; }
@@ -955,6 +961,17 @@ void save_settings(const Settings& s) {
     out << "ReplaceEmoji=" << (s.replace_emoji ? "true" : "false") << "\n";
     out << "## true  = an emoji in a title is drawn as a single \"?\" so the box borders always stay aligned\n";
     out << "## false = draw the real emoji (alignment then depends on how your terminal measures emoji)\n";
+    out << "\n";
+
+    out << "##-------------------------------------------\n";
+    out << "##             LOUDNESS NORMALIZATION\n";
+    out << "##-------------------------------------------\n\n";
+    out << "NormalizeVolume=" << (s.normalize ? "true" : "false") << "\n";
+    out << "NormalizeTargetLufs=" << s.normalize_target_lufs << "\n";
+    out << "NormalizeMaxBoostDb=" << s.normalize_max_boost_db << "\n";
+    out << "## Each track is measured (LUFS) while it decodes and played at NormalizeTargetLufs.\n";
+    out << "## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.\n";
+    out << "## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.\n";
     out << "\n";
 
     out << "##-------------------------------------------\n";

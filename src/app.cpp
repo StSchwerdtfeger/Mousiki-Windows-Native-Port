@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -479,6 +480,9 @@ fs::path find_fast_search_script() { return find_scripts_file("fast_yt_search.py
 App::App() {
     settings_ = load_settings();
     set_emoji_replacement(settings_.replace_emoji);
+    player_.set_normalization(settings_.normalize,
+                              static_cast<float>(settings_.normalize_target_lufs),
+                              static_cast<float>(settings_.normalize_max_boost_db));
     lyrics_script_ = find_lyrics_script();
     fast_search_script_ = find_fast_search_script();
 
@@ -1556,9 +1560,9 @@ static const char* kRefHotkeyNames[] = {
     "HKeyFilterForFolder", "HKeyClearFilter", "HKeyDownloadStream",
     "HKeyRefreshUi", "HKeyConsole", "HKeyToggleMute", "HKeyCheatsheet", "HKeyRetryLyrics",
     "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyToggleWaveform", "HKeyCycleSortMode",
-    "HKeyPlaylist", "HKeySearchPlaylist",
+    "HKeyPlaylist", "HKeySearchPlaylist", "HKeyToggleNormalize",
 };
-static constexpr int kRefRowCount = 32;
+static constexpr int kRefRowCount = 33;
 
 std::string* App::color_field_ptr(int row, int col) {
     switch (row) {
@@ -2178,6 +2182,22 @@ void App::handle_key(int key) {
         log_event("ui refreshed");
     } else if (action == "HKeyConsole") {
         mode_ = Mode::Console;
+    } else if (action == "HKeyToggleNormalize") { // loudness normalisation on/off, for A/B-ing it by ear
+        settings_.normalize = !settings_.normalize;
+        player_.set_normalization(settings_.normalize,
+                                  static_cast<float>(settings_.normalize_target_lufs),
+                                  static_cast<float>(settings_.normalize_max_boost_db));
+        std::string msg = settings_.normalize ? "normalize: on" : "normalize: off";
+        const float lufs = player_.track_lufs();
+        if (settings_.normalize && has_track_ && !std::isnan(lufs)) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, " (track %.1f LUFS -> target %.0f, %+.1f dB)",
+                          lufs, settings_.normalize_target_lufs,
+                          static_cast<double>(settings_.normalize_target_lufs) - lufs);
+            msg += buf;
+        }
+        status_line_ = msg;
+        log_event(msg);
     } else if (action == "HKeyToggleMute") { // force volume to 0 without touching pause state
         if (!muted_) {
             pre_mute_volume_ = player_.volume();
@@ -3755,7 +3775,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                                                     "Refresh UI", "Console / Logs", "Toggle Mute", "Cheatsheet",
                                                     "Retry Lyrics", "Shuffle Next", "Toggle Lyrics",
                                                     "Queue Move Up", "Toggle Waveform", "Cycle Sort Mode",
-                                                    "Playlists", "Search Playlists"};
+                                                    "Playlists", "Search Playlists", "Toggle Normalize"};
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
         int display_count = kRefRowCount + 1 + static_cast<int>(letters.size()); // +1 for the divider row
@@ -3922,6 +3942,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyCycleSortMode",               "Cycle local list sort mode"},
         {"HKeyPlaylist",                    "Create/manage playlists"},
         {"HKeySearchPlaylist",              "Search saved playlists (type /p:query)"},
+        {"HKeyToggleNormalize",             "Toggle loudness normalization"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows

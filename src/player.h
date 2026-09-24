@@ -1,5 +1,7 @@
 #pragma once
 #include <atomic>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include "miniaudio.h"
@@ -50,6 +52,18 @@ public:
     void seek_relative(double delta_sec);
     void set_volume(int volume_pct);
     int volume() const;
+
+    // Loudness normalisation (see loudness_meter.h). Every track is measured
+    // in LUFS while it decodes and played with a gain that brings it to
+    // `target_lufs`, so a quiet recording and a heavily compressed one end up
+    // at the same perceived level. The gain is capped at `max_boost_db` so
+    // very quiet files aren't blown up into noise, and a soft limiter keeps
+    // boosted peaks from clipping. Atomics only -- callable from any thread,
+    // takes effect within about a second (the gain glides, it never jumps).
+    void set_normalization(bool enabled, float target_lufs, float max_boost_db);
+    bool normalization_enabled() const { return norm_enabled_.load(); }
+    float normalization_gain_db() const { return norm_gain_db_.load(); }   // gain currently being applied
+    float track_lufs() const { return track_lufs_.load(); }                // NaN until measured
 
     double poll_elapsed() const;
     bool finished() const { return finished_.load(); }
@@ -107,6 +121,13 @@ private:
     std::atomic<float> gain_{0.7f};
     std::atomic<bool> paused_{false};
     std::atomic<int> volume_pct_{70};
+
+    std::atomic<bool> norm_enabled_{false};
+    std::atomic<float> norm_target_lufs_{-16.0f};
+    std::atomic<float> norm_max_boost_db_{9.0f};
+    std::atomic<float> norm_gain_db_{0.0f};
+    std::atomic<float> track_lufs_{std::numeric_limits<float>::quiet_NaN()};
+    float norm_cur_ = -1.0f; // smoothed linear normalisation gain; audio thread only (-1 = not started)
 
     static void data_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count);
 };

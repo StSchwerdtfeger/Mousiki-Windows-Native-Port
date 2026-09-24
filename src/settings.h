@@ -135,6 +135,14 @@ struct Settings {
     // false = draw real emoji (alignment then depends on the terminal).
     bool replace_emoji = true;
 
+    // --- loudness normalisation (config.txt: NormalizeVolume & co.) --------
+    // Every track is measured in LUFS while it decodes and played back with
+    // a gain that brings it to normalize_target_lufs, so quiet and
+    // heavily-compressed recordings sit at the same perceived level.
+    bool   normalize = true;
+    double normalize_target_lufs = -16.0;   // -14 = YouTube/Spotify reference, -16 = a bit more headroom
+    double normalize_max_boost_db = 9.0;    // never amplify a quiet track by more than this
+
     // --- autosave / session snapshot (config.txt: AutoSave*) -----------
     bool autosave_enabled = true;
     bool autosave_indicator = true;

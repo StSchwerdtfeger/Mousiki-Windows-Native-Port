@@ -2,9 +2,27 @@
 #include "audio_backend.h"
 #include "console_log.h"
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstring>
+#include <thread>
 
 namespace muisc {
+
+namespace {
+
+// Transparent below the knee, then eases into +/-1.0 with a continuous
+// slope instead of hard-clipping. Only used while normalisation is on, where
+// boosting a quiet track could otherwise push its peaks over full scale.
+inline float soft_limit(float x) {
+    constexpr float kKnee = 0.891f; // -1 dBFS
+    const float a = std::fabs(x);
+    if (a <= kKnee) return x;
+    const float y = kKnee + (1.0f - kKnee) * std::tanh((a - kKnee) / (1.0f - kKnee));
+    return x < 0.0f ? -y : y;
+}
+
+} // namespace
 
 Player::Player() = default;
 Player::~Player() { stop(); }
@@ -21,6 +39,25 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     StreamingPcm& pcm = *self->pcm_;
     long long cur = self->cursor_frames_.load();
     float gain = self->gain_.load();
+
+    // Loudness normalisation: target gain from this track's measured LUFS.
+    // Until the measurement exists (or with normalisation off) the target is
+    // unity. The applied gain follows the target with a ~1 s time constant,
+    // so toggling it, or the estimate being refined as decoding proceeds,
+    // never produces a click or a sudden jump.
+    const bool norm_on = self->norm_enabled_.load();
+    const float lufs = pcm.loudness_lufs.load(std::memory_order_relaxed);
+    float norm_target = 1.0f;
+    float norm_db = 0.0f;
+    if (norm_on && !std::isnan(lufs)) {
+        norm_db = std::clamp(self->norm_target_lufs_.load() - lufs, -30.0f, self->norm_max_boost_db_.load());
+        norm_target = std::pow(10.0f, norm_db / 20.0f);
+    }
+    self->track_lufs_.store(lufs);
+    self->norm_gain_db_.store(norm_db);
+    float norm_cur = self->norm_cur_ < 0.0f ? norm_target : self->norm_cur_;
+    const int sr_now = std::max(1, self->sample_rate_.load());
+    const float norm_alpha = 1.0f - std::exp(-1.0f / (1.0f * static_cast<float>(sr_now)));
     // Acquire-load: pairs with the release-store in StreamingPcm::append(),
     // guaranteeing every index below `avail` was fully written by the
     // decode thread before we read it here.
@@ -28,8 +65,11 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
 
     for (ma_uint32 i = 0; i < frame_count; ++i) {
         long long idx = cur + static_cast<long long>(i);
-        out[i] = (idx >= 0 && static_cast<size_t>(idx) < avail) ? pcm.data[static_cast<size_t>(idx)] * gain : 0.0f;
+        norm_cur += (norm_target - norm_cur) * norm_alpha;
+        float s = (idx >= 0 && static_cast<size_t>(idx) < avail) ? pcm.data[static_cast<size_t>(idx)] * norm_cur * gain : 0.0f;
+        out[i] = (norm_on || norm_cur > 1.001f) ? soft_limit(s) : s;
     }
+    self->norm_cur_ = norm_cur;
 
     if (self->fft_sink_) self->fft_sink_->push_samples(out, frame_count, self->sample_rate_.load());
 
@@ -46,6 +86,21 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
 
 bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volume_pct,
                    FftVisualizer* fft_sink) {
+    // Give the loudness measurement a moment to exist so the track starts at
+    // its final level instead of gliding into it. Decoding runs far faster
+    // than real time, so this normally returns immediately; capped so a slow
+    // source can't delay playback noticeably. Done BEFORE taking mutex_ so
+    // the main thread's stop() is never held up behind it.
+    if (pcm && norm_enabled_.load()) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+        while (std::isnan(pcm->loudness_lufs.load(std::memory_order_relaxed)) &&
+               !pcm->loudness_final.load(std::memory_order_acquire) &&
+               !pcm->decode_failed.load() &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
     std::lock_guard<std::mutex> lk(mutex_);
     stop_locked();
     if (!pcm) return false;
@@ -63,6 +118,9 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
     gain_.store(volume_pct_.load() / 100.0f);
     finished_.store(false);
     paused_.store(false);
+    norm_cur_ = -1.0f; // audio device isn't running yet: safe to reset; first callback snaps to the target gain
+    track_lufs_.store(std::numeric_limits<float>::quiet_NaN());
+    norm_gain_db_.store(0.0f);
     cursor_frames_.store(static_cast<long long>(std::max(0.0, start_sec) * sample_rate_.load()));
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
@@ -120,6 +178,12 @@ void Player::seek_relative(double delta_sec) {
     long long next = std::clamp<long long>(cur + delta_frames, 0, cap);
     cursor_frames_.store(next);
     if (next < cap) finished_.store(false);
+}
+
+void Player::set_normalization(bool enabled, float target_lufs, float max_boost_db) {
+    norm_target_lufs_.store(std::clamp(target_lufs, -40.0f, 0.0f));
+    norm_max_boost_db_.store(std::clamp(max_boost_db, 0.0f, 24.0f));
+    norm_enabled_.store(enabled);
 }
 
 void Player::set_volume(int volume_pct) {
