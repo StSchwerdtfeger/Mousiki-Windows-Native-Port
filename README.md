@@ -24,7 +24,9 @@
 
 </div>
 
-A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. Some additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command).... See section [beyond the port](#Beyond-the-port) further below for details.  
+A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. 
+
+Some minor and major additions where made, e.g. a key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command).... See section [beyond the port](#Beyond-the-port) further below for details.  
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
@@ -38,6 +40,9 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
 
+## Current Status of the Port and Modification
+
+For now Mousiki includes everything I at least wanted so there might be no further major releases that add new features. I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... 
 
 ## Quick start (for PowerShell 7.6.6, not tested with other shells or older versions of PWSH)
 
