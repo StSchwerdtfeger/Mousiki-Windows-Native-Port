@@ -85,6 +85,15 @@ ReplaceEmoji=true
 ## false = draw the real emoji (alignment then depends on how your terminal measures emoji)
 
 ##-------------------------------------------
+##             STEREO
+##-------------------------------------------
+
+StereoPlayback=true
+## true  = play tracks in stereo (uses about twice the memory per loaded track)
+## false = mono: left and right are folded together, as in earlier versions
+## Turning it off takes effect immediately; turning it on applies from the next track.
+
+##-------------------------------------------
 ##             LOUDNESS NORMALIZATION
 ##-------------------------------------------
 
