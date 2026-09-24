@@ -161,6 +161,7 @@ private:
     void playlist_load_into_editor(const std::string& name);
     void playlist_add_hovering_to_edit();
     void playlist_remove_hovering_track();
+    void playlist_move_hovering_track(int dir); // dir=-1 up, +1 down -- keys 4/5, mirrors queue_move_hovering
     void playlist_delete_selected(); // tab 1's DEL, after playlist_confirm_delete_ confirms
     void playlist_save_current();
     void handle_playlist_key(int key);

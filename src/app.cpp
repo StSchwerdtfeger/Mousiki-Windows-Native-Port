@@ -1561,7 +1561,7 @@ static const char* kRefHotkeyNames[] = {
     "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
     "HKeyFilterForFolder", "HKeyClearFilter", "HKeyDownloadStream",
     "HKeyRefreshUi", "HKeyConsole", "HKeyToggleMute", "HKeyCheatsheet", "HKeyRetryLyrics",
-    "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyToggleWaveform", "HKeyCycleSortMode",
+    "HKeyShuffleNext", "HKeyToggleLyrics", "HKeyQueueMoveUp", "HKeyQueueMoveDown", "HKeyToggleWaveform", "HKeyCycleSortMode",
     "HKeyPlaylist", "HKeySearchPlaylist", "HKeyToggleNormalize",
 };
 static constexpr int kRefRowCount = 33;
@@ -2100,16 +2100,11 @@ void App::handle_key(int key) {
     } else if (action == "HKeySeekForward") {
         if (has_track_) player_.seek_relative(5.0);
     } else if (action == "HKeySeekBackward") {
-        // Doubles as "move the hovering queue item down" while queue-
-        // focused -- Left-arrow and Shift+D are indistinguishable at the
-        // terminal-input layer (see TerminalIO::poll_key), so reusing
-        // this action for reordering means seeking is unavailable while
-        // queue-focused. Acceptable trade: you're not usually seeking
-        // while reordering a queue anyway.
-        if (queue_focus_) queue_move_hovering(1);
-        else if (has_track_) player_.seek_relative(-5.0);
+        if (has_track_) player_.seek_relative(-5.0);
     } else if (action == "HKeyQueueMoveUp") { // move the hovering queue item up (only meaningful once you've Tab'd into the queue)
         queue_move_hovering(-1);
+    } else if (action == "HKeyQueueMoveDown") { // move the hovering queue item down (only meaningful once you've Tab'd into the queue)
+        queue_move_hovering(1);
     } else if (action == "HKeyTogglePlayPause") {
         if (has_track_) { if (player_.is_paused()) player_.resume(); else player_.pause(); }
     } else if (action == "HKeyIncreaseVolume") {
@@ -3175,6 +3170,19 @@ void App::playlist_remove_hovering_track() {
     playlist_edit_dirty_ = true;
 }
 
+// Keys 4/5 in the track list (tab 0, playlist_edit_focus_==2) -- same
+// swap-with-neighbor approach as queue_move_hovering(), just against
+// playlist_edit_tracks_ instead of queue_. Reordering counts as a
+// change like add/remove, so it sets the dirty flag too.
+void App::playlist_move_hovering_track(int dir) {
+    if (playlist_edit_tracks_.empty()) return;
+    int target = playlist_edit_track_selected_ + dir;
+    if (target < 0 || target >= static_cast<int>(playlist_edit_tracks_.size())) return; // already at an edge
+    std::swap(playlist_edit_tracks_[playlist_edit_track_selected_], playlist_edit_tracks_[target]);
+    playlist_edit_track_selected_ = target;
+    playlist_edit_dirty_ = true;
+}
+
 // Tab 1's DEL, fired only after playlist_confirm_delete_ has been
 // confirmed with Y -- see handle_playlist_key().
 void App::playlist_delete_selected() {
@@ -3344,6 +3352,14 @@ void App::handle_playlist_key(int key) {
         // globally-collapsed Left-arrow code, already intercepted above
         // for tab switching, so it never reaches here).
         if (key == kKeyDelete || key == 127 || key == 8 || key == 'd') { playlist_remove_hovering_track(); return; }
+        // 4/5 move the hovering track up/down -- same keys as the main
+        // queue's HKeyQueueMoveUp/Down, kept as literal codes (like the
+        // rest of this function) rather than routed through
+        // resolve_hotkey_action() since this whole handler already
+        // works in raw arrow-collapsed key codes, not configurable
+        // hotkeys.
+        if (key == '4') { playlist_move_hovering_track(-1); return; }
+        if (key == '5') { playlist_move_hovering_track(1); return; }
         return;
     }
 }
@@ -3619,7 +3635,7 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         frame << "\n";
     } else {
         std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navigate | [ENTER] Add/Load | "
-                            "[DEL] Remove selected | [HOME] Save | [ESC] Exit";
+                            "[DEL] Remove selected | [4/5] Move track | [HOME] Save | [ESC] Exit";
         frame << "\x1b[90m" << hint << "\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
@@ -3956,6 +3972,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyShuffleNext",                 "Shuffle to a random next track"},
         {"HKeyToggleLyrics",                "Toggle lyrics on/off"},
         {"HKeyQueueMoveUp",                 "Move hovering queue item up"},
+        {"HKeyQueueMoveDown",               "Move hovering queue item down"},
         {"HKeyToggleWaveform",              "Toggle waveform style (raw/smooth)"},
         {"HKeyCycleSortMode",               "Cycle local list sort mode"},
         {"HKeyPlaylist",                    "Create/manage playlists"},
