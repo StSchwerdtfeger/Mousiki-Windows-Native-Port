@@ -686,6 +686,9 @@ static Settings load_from_config(const fs::path& path) {
         // --- Emoji handling ---------------------------------------------
         if (key == "ReplaceEmoji") { s.replace_emoji = parse_bool(value); continue; }
 
+        // --- Stereo ------------------------------------------------------
+        if (key == "StereoPlayback") { s.stereo = parse_bool(value); continue; }
+
         // --- Loudness normalisation -------------------------------------
         if (key == "NormalizeVolume") { s.normalize = parse_bool(value); continue; }
         if (key == "NormalizeTargetLufs") { try { s.normalize_target_lufs = std::clamp(std::stod(value), -40.0, 0.0); } catch (...) {} continue; }
@@ -961,6 +964,15 @@ void save_settings(const Settings& s) {
     out << "ReplaceEmoji=" << (s.replace_emoji ? "true" : "false") << "\n";
     out << "## true  = an emoji in a title is drawn as a single \"?\" so the box borders always stay aligned\n";
     out << "## false = draw the real emoji (alignment then depends on how your terminal measures emoji)\n";
+    out << "\n";
+
+    out << "##-------------------------------------------\n";
+    out << "##             STEREO\n";
+    out << "##-------------------------------------------\n\n";
+    out << "StereoPlayback=" << (s.stereo ? "true" : "false") << "\n";
+    out << "## true  = play tracks in stereo (uses about twice the memory per loaded track)\n";
+    out << "## false = mono: left and right are folded together, as in earlier versions\n";
+    out << "## Turning it off takes effect immediately; turning it on applies from the next track.\n";
     out << "\n";
 
     out << "##-------------------------------------------\n";

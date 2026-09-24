@@ -480,6 +480,7 @@ fs::path find_fast_search_script() { return find_scripts_file("fast_yt_search.py
 App::App() {
     settings_ = load_settings();
     set_emoji_replacement(settings_.replace_emoji);
+    player_.set_stereo(settings_.stereo);
     player_.set_normalization(settings_.normalize,
                               static_cast<float>(settings_.normalize_target_lufs),
                               static_cast<float>(settings_.normalize_max_boost_db));
@@ -811,7 +812,8 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
     // will join()) is never blocked waiting on decode — that's what
     // makes it safe to join from launch_load_async without risking a
     // freeze if the user switches tracks again quickly.
-    load_thread_ = std::thread([this, local_path, title, artist, location_label, is_local, video_id]() {
+    const bool want_stereo = settings_.stereo; // read here, on the calling thread, rather than from inside the load thread
+    load_thread_ = std::thread([this, local_path, title, artist, location_label, is_local, video_id, want_stereo]() {
       run_guarded("track load", [&] {
         using clock = std::chrono::steady_clock;
         auto t_start = clock::now();
@@ -868,7 +870,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
         pl.total_sec = duration > 0 ? static_cast<size_t>(duration) : 0;
 
         pl.pcm = std::make_shared<StreamingPcm>();
-        pl.pcm->reserve_for_seconds(duration > 0 ? duration : 300.0, 44100);
+        pl.pcm->reserve_for_seconds(duration > 0 ? duration : 300.0, 44100, want_stereo ? 2 : 1);
         pl.success = true;
 
         write_load_timing_log(pl.title, is_local, t_resolve, t_probe, elapsed_s(t_start), "");
@@ -905,7 +907,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
                 // biggest reason the waveform appeared so late after
                 // playback started, because it doubled the working-set
                 // size and stalled the RMS pass behind a large memcpy.
-                auto envelope = WaveformQuantizer::generate_high_res_envelope(pcm->data, 4096, waveform_smooth);
+                auto envelope = WaveformQuantizer::generate_high_res_envelope(pcm->data, 4096, waveform_smooth, pcm->channels);
                 std::lock_guard<std::mutex> lk(waveform_mutex_);
                 pending_waveform_envelope_ = std::move(envelope);
                 waveform_pending_ready_ = true;
@@ -1591,7 +1593,7 @@ int App::settings_max_row() const {
     // track the actual font_map/about_app_lines content).
     switch (settings_tab_) {
         case 0: return 13; // COLOR_SCHEMA: 14 rows
-        case 1: return 6;  // ONOFF_SCHEMA: 7 rows
+        case 1: return 7;  // ONOFF_SCHEMA: 8 rows
         case 2: return 7;  // ANIM_SCHEMA: 8 rows
         case 3: {
             int letters = 0;
@@ -1626,6 +1628,7 @@ std::string App::settings_get_value(int row, int col) const {
             case 4: v = settings_.element_lyrics; break;
             case 5: v = settings_.element_lyrics_placeholder_ball; break;
             case 6: v = settings_.element_visualizer; break;
+            case 7: v = settings_.stereo; break;
         }
         return v ? "true" : "false";
     }
@@ -1697,6 +1700,10 @@ void App::settings_commit_edit() {
             case 4: settings_.element_lyrics = is_true; break;
             case 5: settings_.element_lyrics_placeholder_ball = is_true; break;
             case 6: settings_.element_visualizer = is_true; break;
+            case 7:
+                settings_.stereo = is_true;
+                player_.set_stereo(is_true); // audible immediately for a stereo-decoded track
+                break;
         }
     } else if (settings_tab_ == 2) {
         std::string v = to_lower(buf);
@@ -1736,6 +1743,15 @@ void App::settings_cycle(int dir) {
     settings_commit_edit();
     status_line_ = "TOGGLED -> " + opts[idx];
     if (settings_tab_ == 2 && settings_row_ == 1) recompute_waveform_for_current_track();
+    if (settings_tab_ == 1 && settings_row_ == 7) {
+        // A track that was decoded as mono can't become stereo without being
+        // decoded again, so switching stereo ON only applies from the next
+        // track. Switching it OFF is immediate.
+        if (settings_.stereo && has_track_ && current_pcm_ && current_pcm_->channels == 1)
+            status_line_ = "stereo: on -- applies from the next track";
+        else
+            status_line_ = settings_.stereo ? "stereo: on" : "stereo: off";
+    }
 }
 
 void App::handle_settings_key(int key) {
@@ -2368,8 +2384,10 @@ void App::recompute_waveform_for_current_track() {
     std::thread([this, pcm, smooth, my_epoch]() { run_guarded("waveform pass", [&] {
         size_t n = pcm->available.load(std::memory_order_acquire);
         if (n == 0) return;
-        std::vector<float> snapshot(pcm->data.begin(), pcm->data.begin() + static_cast<long>(n));
-        auto envelope = WaveformQuantizer::generate_high_res_envelope(snapshot, 4096, smooth);
+        // `n` counts frames; the buffer is interleaved, so copy n * channels floats.
+        std::vector<float> snapshot(pcm->data.begin(),
+                                    pcm->data.begin() + static_cast<long>(n * static_cast<size_t>(pcm->channels)));
+        auto envelope = WaveformQuantizer::generate_high_res_envelope(snapshot, 4096, smooth, pcm->channels);
         std::lock_guard<std::mutex> lk(waveform_mutex_);
         if (my_epoch != waveform_epoch_.load()) return; // superseded — discard
         pending_waveform_envelope_ = std::move(envelope);
@@ -3740,11 +3758,11 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 1 || settings_tab_ == 2) {
-        static const char* onoff_l[7] = {"Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
-                                          "Lyrics Engine", "Lyric Ball", "Visualizer"};
+        static const char* onoff_l[8] = {"Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
+                                          "Lyrics Engine", "Lyric Ball", "Visualizer", "Stereo Sound"};
         static const char* anim_l[8] = {"Vis. Fluidity", "Waveform Style", "Disk Speed", "Playback Mode",
                                          "Vis. Degradation", "Vis. Viscosity", "Lyrics Alignment", "Lyrics Animation"};
-        int count = (settings_tab_ == 1) ? 7 : 8;
+        int count = 8; // both tabs have 8 rows now
         const char* const* labels = (settings_tab_ == 1) ? onoff_l : anim_l;
         for (int i = 0; i < count; ++i) {
             pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);

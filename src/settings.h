@@ -135,6 +135,12 @@ struct Settings {
     // false = draw real emoji (alignment then depends on the terminal).
     bool replace_emoji = true;
 
+    // --- stereo playback (config.txt: StereoPlayback) -----------------------
+    // true  = tracks are decoded and played in stereo (2x the memory per
+    //         loaded track: about 106 MB for a 5-minute track instead of 53 MB).
+    // false = mono, as before: left and right are folded together.
+    bool stereo = true;
+
     // --- loudness normalisation (config.txt: NormalizeVolume & co.) --------
     // Every track is measured in LUFS while it decodes and played back with
     // a gain that brings it to normalize_target_lufs, so quiet and

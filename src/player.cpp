@@ -29,10 +29,10 @@ Player::~Player() { stop(); }
 
 void Player::data_callback(ma_device* device, void* output, const void* /*input*/, ma_uint32 frame_count) {
     Player* self = static_cast<Player*>(device->pUserData);
-    float* out = static_cast<float*>(output);
+    float* out = static_cast<float*>(output); // interleaved stereo: frame_count * 2 floats
 
     if (!self || !self->pcm_ || self->paused_.load()) {
-        std::memset(out, 0, frame_count * sizeof(float));
+        std::memset(out, 0, static_cast<size_t>(frame_count) * 2 * sizeof(float));
         return;
     }
 
@@ -40,13 +40,22 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     long long cur = self->cursor_frames_.load();
     float gain = self->gain_.load();
 
+    // Channel handling. The device is always stereo. A stereo buffer plays as
+    // stereo when the option is on, otherwise it is folded to mono; a mono
+    // buffer is just duplicated.
+    const int pcm_ch = pcm.channels >= 2 ? 2 : 1;
+    const bool play_stereo = pcm_ch == 2 && self->stereo_enabled_.load();
+    const bool fold_to_mono = pcm_ch == 2 && !play_stereo;
+
     // Loudness normalisation: target gain from this track's measured LUFS.
     // Until the measurement exists (or with normalisation off) the target is
     // unity. The applied gain follows the target with a ~1 s time constant,
     // so toggling it, or the estimate being refined as decoding proceeds,
-    // never produces a click or a sudden jump.
+    // never produces a click or a sudden jump. When a stereo buffer is being
+    // folded to mono the mono-mix figure is the one that applies, since that
+    // is what actually reaches the speakers.
     const bool norm_on = self->norm_enabled_.load();
-    const float lufs = pcm.loudness_lufs.load(std::memory_order_relaxed);
+    const float lufs = (fold_to_mono ? pcm.loudness_mono_lufs : pcm.loudness_lufs).load(std::memory_order_relaxed);
     float norm_target = 1.0f;
     float norm_db = 0.0f;
     if (norm_on && !std::isnan(lufs)) {
@@ -58,20 +67,45 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     float norm_cur = self->norm_cur_ < 0.0f ? norm_target : self->norm_cur_;
     const int sr_now = std::max(1, self->sample_rate_.load());
     const float norm_alpha = 1.0f - std::exp(-1.0f / (1.0f * static_cast<float>(sr_now)));
+
     // Acquire-load: pairs with the release-store in StreamingPcm::append(),
-    // guaranteeing every index below `avail` was fully written by the
+    // guaranteeing every frame below `avail` was fully written by the
     // decode thread before we read it here.
     size_t avail = pcm.available.load(std::memory_order_acquire);
+    const float* src = pcm.data.data();
+
+    const bool feed_fft = self->fft_sink_ && self->fft_mono_.size() >= frame_count;
+    float* mono_out = feed_fft ? self->fft_mono_.data() : nullptr;
 
     for (ma_uint32 i = 0; i < frame_count; ++i) {
         long long idx = cur + static_cast<long long>(i);
         norm_cur += (norm_target - norm_cur) * norm_alpha;
-        float s = (idx >= 0 && static_cast<size_t>(idx) < avail) ? pcm.data[static_cast<size_t>(idx)] * norm_cur * gain : 0.0f;
-        out[i] = (norm_on || norm_cur > 1.001f) ? soft_limit(s) : s;
+        float l = 0.0f, r = 0.0f;
+        if (idx >= 0 && static_cast<size_t>(idx) < avail) {
+            const size_t k = static_cast<size_t>(idx);
+            if (pcm_ch == 1) {
+                l = r = src[k];
+            } else if (play_stereo) {
+                l = src[2 * k];
+                r = src[2 * k + 1];
+            } else {
+                l = r = 0.5f * (src[2 * k] + src[2 * k + 1]);
+            }
+            const float g = norm_cur * gain;
+            l *= g;
+            r *= g;
+        }
+        if (norm_on || norm_cur > 1.001f) { l = soft_limit(l); r = soft_limit(r); }
+        out[2 * i]     = l;
+        out[2 * i + 1] = r;
+        if (mono_out) mono_out[i] = 0.5f * (l + r);
     }
     self->norm_cur_ = norm_cur;
 
-    if (self->fft_sink_) self->fft_sink_->push_samples(out, frame_count, self->sample_rate_.load());
+    // The visualizer wants one channel: feed it the mono mix of what was
+    // actually played (the buffer is pre-sized in play(); a callback larger
+    // than that just skips the feed rather than allocating on the audio thread).
+    if (feed_fft) self->fft_sink_->push_samples(mono_out, frame_count, self->sample_rate_.load());
 
     long long new_cur = cur + static_cast<long long>(frame_count);
     // Only truly "finished" once decode is done AND playback has caught
@@ -113,6 +147,7 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
 
     pcm_ = std::move(pcm);
     fft_sink_ = fft_sink;
+    fft_mono_.assign(16384, 0.0f); // > any realistic device period (16384 frames = 370 ms at 44.1 kHz)
     sample_rate_.store(pcm_->sample_rate > 0 ? pcm_->sample_rate : 44100);
     volume_pct_.store(std::clamp(volume_pct, 0, 100));
     gain_.store(volume_pct_.load() / 100.0f);
@@ -125,7 +160,7 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format = ma_format_f32;
-    cfg.playback.channels = 1;
+    cfg.playback.channels = 2; // always stereo; mono buffers are duplicated in the callback
     cfg.sampleRate = static_cast<ma_uint32>(sample_rate_.load());
     cfg.dataCallback = data_callback;
     cfg.pUserData = this;
@@ -174,7 +209,7 @@ void Player::seek_relative(double delta_sec) {
     // Clamp against reserved capacity (the eventual max), not the
     // currently-decoded amount — seeking a bit ahead of what's decoded
     // so far is fine, it just plays silence until decode catches up.
-    long long cap = static_cast<long long>(pcm_->data.capacity());
+    long long cap = static_cast<long long>(pcm_->capacity_frames());
     long long next = std::clamp<long long>(cur + delta_frames, 0, cap);
     cursor_frames_.store(next);
     if (next < cap) finished_.store(false);

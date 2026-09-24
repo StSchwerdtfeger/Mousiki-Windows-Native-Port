@@ -21,23 +21,26 @@ namespace muisc {
 //      blocks more than 10 LU below the average of what's left are
 //      ignored too (quiet passages/intros shouldn't drag the result down).
 //
-// Feed it mono samples with push(); read integrated_lufs() at any time --
-// it is the value for everything pushed so far, so it converges as more of
-// a track is decoded. Not thread-safe: use it from the decode thread only
-// and publish the result through an atomic (see StreamingPcm).
+// Feed it interleaved frames with push(); read integrated_lufs() at any
+// time -- it is the value for everything pushed so far, so it converges as
+// more of a track is decoded. Not thread-safe: use it from the decode thread
+// only and publish the result through an atomic (see StreamingPcm).
 //
-// Mousiki plays a mono buffer that the audio device then duplicates into
-// both stereo channels (miniaudio copies mono -> each output channel), which
-// is 2x the energy of one channel, i.e. +3.01 LU. kChannelEnergy accounts
-// for that so the reported LUFS is what the speakers actually emit and
-// lines up with the usual -14/-16/-23 LUFS reference levels.
+// Channels: 1 or 2. Per BS.1770 the channels' K-weighted energies are simply
+// added (front L/R both have weight 1.0). A mono signal is played through
+// both speakers (the device duplicates it), which is twice the energy of one
+// channel, i.e. +3.01 LU; kMonoEnergy accounts for that so the reported LUFS
+// is what the speakers actually emit and lines up with the usual
+// -14/-16/-23 LUFS reference levels.
 class LoudnessMeter {
 public:
-    static constexpr double kChannelEnergy = 2.0;
+    static constexpr double kMonoEnergy = 2.0;
 
-    explicit LoudnessMeter(int sample_rate = 44100) { reset(sample_rate); }
+    explicit LoudnessMeter(int sample_rate = 44100, int channels = 1) { reset(sample_rate, channels); }
 
-    void reset(int sample_rate) {
+    void reset(int sample_rate, int channels = 1) {
+        channels_ = channels >= 2 ? 2 : 1;
+        energy_scale_ = channels_ == 1 ? kMonoEnergy : 1.0;
         sample_rate_ = sample_rate > 0 ? sample_rate : 44100;
         sub_len_ = std::max(1, static_cast<int>(std::lround(sample_rate_ * 0.1)));
         design_filters();
@@ -54,22 +57,26 @@ public:
         updated_ = false;
     }
 
-    void push(const float* samples, size_t n) {
-        for (size_t i = 0; i < n; ++i) {
-            const double x = static_cast<double>(samples[i]);
-            // Stage 1: high-shelf. Direct form II transposed.
-            double y = b1_[0] * x + s1_[0];
-            s1_[0] = b1_[1] * x - a1_[1] * y + s1_[1];
-            s1_[1] = b1_[2] * x - a1_[2] * y;
-            // Stage 2: RLB high-pass.
-            double z = b2_[0] * y + s2_[0];
-            s2_[0] = b2_[1] * y - a2_[1] * z + s2_[1];
-            s2_[1] = b2_[2] * y - a2_[2] * z;
-
-            sub_sum_ += z * z;
+    // `frames` interleaved frames (channels_ floats each).
+    void push(const float* samples, size_t frames) {
+        for (size_t i = 0; i < frames; ++i) {
+            for (int c = 0; c < channels_; ++c) {
+                const double x = static_cast<double>(samples[i * channels_ + c]);
+                auto& s1 = s1_[c];
+                auto& s2 = s2_[c];
+                // Stage 1: high-shelf. Direct form II transposed.
+                double y = b1_[0] * x + s1[0];
+                s1[0] = b1_[1] * x - a1_[1] * y + s1[1];
+                s1[1] = b1_[2] * x - a1_[2] * y;
+                // Stage 2: RLB high-pass.
+                double z = b2_[0] * y + s2[0];
+                s2[0] = b2_[1] * y - a2_[1] * z + s2[1];
+                s2[1] = b2_[2] * y - a2_[2] * z;
+                sub_sum_ += z * z;
+            }
             if (++sub_fill_ == sub_len_) finish_subblock();
         }
-        total_samples_ += n;
+        total_samples_ += frames;
     }
 
     // Seconds of audio measured so far.
@@ -152,7 +159,7 @@ private:
         if (subblocks_ < 4) return; // need a full 400 ms window
 
         const double mean_sq = (ring_[0] + ring_[1] + ring_[2] + ring_[3]) / (4.0 * sub_len_);
-        const double energy = mean_sq * kChannelEnergy;
+        const double energy = mean_sq * energy_scale_;
         if (energy <= 0.0) return;
         const double lufs = to_lufs(energy);
         if (lufs < kMinLufs) return; // absolute gate
@@ -165,7 +172,9 @@ private:
     int sample_rate_ = 44100;
     int sub_len_ = 4410;
     std::array<double, 3> b1_{}, a1_{}, b2_{}, a2_{};
-    std::array<double, 2> s1_{}, s2_{};
+    std::array<std::array<double, 2>, 2> s1_{}, s2_{}; // [channel][state]
+    int channels_ = 1;
+    double energy_scale_ = kMonoEnergy;
     double sub_sum_ = 0.0;
     int sub_fill_ = 0;
     std::array<double, 4> ring_{};

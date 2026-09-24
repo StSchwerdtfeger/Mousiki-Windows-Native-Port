@@ -24,11 +24,15 @@ BrailleColumn WaveformQuantizer::get_column(int level) {
 }
 
 std::vector<float> WaveformQuantizer::generate_high_res_envelope(const std::vector<float>& pcm_data,
-                                                                   int resolution, bool smooth) {
+                                                                   int resolution, bool smooth, int channels) {
     std::vector<float> high_res(resolution, 0.0f);
     if (pcm_data.empty() || resolution <= 0) return high_res;
 
-    size_t chunk_size = pcm_data.size() / static_cast<size_t>(resolution);
+    const size_t ch = channels >= 2 ? 2 : 1;
+    const size_t total_frames = pcm_data.size() / ch;
+    if (total_frames == 0) return high_res;
+
+    size_t chunk_size = total_frames / static_cast<size_t>(resolution);
     if (chunk_size == 0) chunk_size = 1;
 
     std::vector<float> raw_rms(resolution, 0.0f);
@@ -40,11 +44,18 @@ std::vector<float> WaveformQuantizer::generate_high_res_envelope(const std::vect
         // quantized to 0-5 anyway).
         float sum_sq = 0.0f;
         size_t start = static_cast<size_t>(i) * chunk_size;
-        size_t end = std::min(start + chunk_size, pcm_data.size());
-        size_t count = end - start;
+        size_t end = std::min(start + chunk_size, total_frames);
+        size_t count = end > start ? end - start : 0;
         if (count > 0) {
-            for (size_t j = start; j < end; ++j) {
-                sum_sq += pcm_data[j] * pcm_data[j];
+            if (ch == 1) {
+                for (size_t j = start; j < end; ++j) {
+                    sum_sq += pcm_data[j] * pcm_data[j];
+                }
+            } else {
+                for (size_t j = start; j < end; ++j) {
+                    const float m = 0.5f * (pcm_data[2 * j] + pcm_data[2 * j + 1]);
+                    sum_sq += m * m;
+                }
             }
             raw_rms[i] = std::sqrt(sum_sq / static_cast<float>(count));
         }
@@ -129,7 +140,8 @@ std::vector<int> WaveformQuantizer::resample_for_ui(const std::vector<float>& hi
 static bool stream_decode_miniaudio(const fs::path& file_path, StreamingPcm& pcm,
                                      const std::function<void(const float*, size_t)>& on_chunk) {
     ma_decoder decoder;
-    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, 44100);
+    const int channels = pcm.channels >= 2 ? 2 : 1;
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, static_cast<ma_uint32>(channels), 44100);
     // ma_decoder_init_file() takes a narrow path, which Windows resolves
     // through the ANSI code page -- so a track whose name contains anything
     // that code page can't express simply fails to open, and every such file
@@ -147,7 +159,7 @@ static bool stream_decode_miniaudio(const fs::path& file_path, StreamingPcm& pcm
         return false; // let the caller fall back to the ffmpeg path (e.g. Opus, which this can't touch)
     }
 
-    float buf[4096];
+    float buf[4096 * 2]; // 4096 frames, up to 2 channels
     ma_uint64 frames_read = 0;
     for (;;) {
         ma_result result = ma_decoder_read_pcm_frames(&decoder, buf, 4096, &frames_read);
@@ -175,8 +187,9 @@ static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPc
     // -nostdin: tells ffmpeg outright not to expect interactive keyboard
     // input. Belt-and-suspenders -- the real fix is the stdin redirect in
     // spawn_capture(), but this makes the intent explicit and costs nothing.
+    const int channels = pcm.channels >= 2 ? 2 : 1;
     std::string cmd = "ffmpeg -nostdin -v error -i " + shell_quote(path_utf8(file_path))
-                     + " -f f32le -ac 1 -ar 44100 -";
+                     + " -f f32le -ac " + std::to_string(channels) + " -ar 44100 -";
 
     std::unique_ptr<ChildProcess> child = spawn_capture(cmd, /*merge_stderr=*/false);
     if (!child) {
@@ -185,11 +198,15 @@ static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPc
         return;
     }
 
-    // At most sizeof(float)-1 = 3 bytes can ever be left over between reads,
-    // so a fixed carry buffer is enough; the old std::vector::erase approach
-    // was an O(N) shift per chunk across the whole decode.
+    // Two levels of leftovers: at most sizeof(float)-1 = 3 BYTES between reads
+    // (a float split across two pipe reads), and at most channels-1 FLOATS
+    // (a stereo frame split across two chunks) held in `pending` until the
+    // rest of the frame arrives. The old std::vector::erase approach was an
+    // O(N) shift per chunk across the whole decode; this only ever moves a
+    // handful of values.
     char carry[sizeof(float) - 1];
     size_t carry_len = 0;
+    std::vector<float> pending;
     std::array<char, 65536> buf{};
     std::ptrdiff_t n;
     while ((n = child->read(buf.data(), buf.size())) > 0) {
@@ -198,16 +215,23 @@ static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPc
         size_t whole_bytes  = whole_floats * sizeof(float);
 
         if (whole_floats > 0) {
-            std::vector<float> chunk(whole_floats);
+            const size_t old_pending = pending.size();
+            pending.resize(old_pending + whole_floats);
+            char* dst = reinterpret_cast<char*>(pending.data() + old_pending);
             size_t out_byte = 0;
             for (size_t i = 0; i < carry_len && out_byte < whole_bytes; ++i, ++out_byte)
-                reinterpret_cast<char*>(chunk.data())[out_byte] = carry[i];
+                dst[out_byte] = carry[i];
             size_t from_buf = whole_bytes - carry_len;
-            std::memcpy(reinterpret_cast<char*>(chunk.data()) + carry_len,
-                        buf.data(), from_buf);
+            std::memcpy(dst + carry_len, buf.data(), from_buf);
 
-            pcm.append(chunk.data(), chunk.size());
-            if (on_chunk) on_chunk(chunk.data(), chunk.size());
+            const size_t frames = pending.size() / static_cast<size_t>(channels);
+            if (frames > 0) {
+                pcm.append(pending.data(), frames);
+                if (on_chunk) on_chunk(pending.data(), frames);
+                const size_t used = frames * static_cast<size_t>(channels);
+                std::copy(pending.begin() + static_cast<std::ptrdiff_t>(used), pending.end(), pending.begin());
+                pending.resize(pending.size() - used);
+            }
 
             size_t leftover_start = from_buf;
             carry_len = static_cast<size_t>(n) - from_buf;

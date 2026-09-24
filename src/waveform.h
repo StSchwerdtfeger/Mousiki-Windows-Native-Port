@@ -31,8 +31,13 @@ public:
     // normalized values in [0,1]; NOT yet quantized to braille levels —
     // that happens per-column in resample_for_ui, since the noise gate
     // needs to see the post-decimation peak, not each raw high-res bin.
+    //
+    // `pcm_data` is interleaved with `channels` (1 or 2) samples per frame;
+    // stereo is folded to mono (L+R)/2 per frame first, so the waveform looks
+    // the same whether or not stereo playback is on.
     static std::vector<float> generate_high_res_envelope(const std::vector<float>& pcm_data,
-                                                           int resolution = 4096, bool smooth = true);
+                                                           int resolution = 4096, bool smooth = true,
+                                                           int channels = 1);
 
     // "Frontend" pass — cheap enough to run every frame (or at least on
     // every resize): resamples the fixed high-res envelope down to

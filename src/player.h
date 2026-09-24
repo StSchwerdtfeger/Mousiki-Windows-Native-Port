@@ -4,13 +4,14 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <vector>
 #include "miniaudio.h"
 #include "streaming_pcm.h"
 #include "fft_visualizer.h"
 
 namespace muisc {
 
-// Plays back a StreamingPcm buffer through a real audio device via
+// Plays back a StreamingPcm buffer (mono or stereo) through a real audio device via
 // miniaudio, using the backend pinned in audio_backend.h
 // (PulseAudio/ALSA -> PipeWire on Linux, WASAPI on Windows, OpenSL ES on
 // Android).
@@ -52,6 +53,15 @@ public:
     void seek_relative(double delta_sec);
     void set_volume(int volume_pct);
     int volume() const;
+
+    // Stereo on/off. The device is always opened with two channels; a stereo
+    // buffer plays as-is when this is on and is folded down to mono (L+R)/2
+    // when it is off; a mono buffer plays identically either way (duplicated
+    // to both speakers). Atomic, takes effect immediately. Note the buffer's
+    // channel count is fixed when the track is decoded: turning stereo ON
+    // while a mono-decoded track is playing only affects the next track.
+    void set_stereo(bool enabled) { stereo_enabled_.store(enabled); }
+    bool stereo_enabled() const { return stereo_enabled_.load(); }
 
     // Loudness normalisation (see loudness_meter.h). Every track is measured
     // in LUFS while it decodes and played with a gain that brings it to
@@ -121,6 +131,9 @@ private:
     std::atomic<float> gain_{0.7f};
     std::atomic<bool> paused_{false};
     std::atomic<int> volume_pct_{70};
+
+    std::atomic<bool> stereo_enabled_{true};
+    std::vector<float> fft_mono_;   // scratch for the visualizer's mono feed; sized in play(), never in the callback
 
     std::atomic<bool> norm_enabled_{false};
     std::atomic<float> norm_target_lufs_{-16.0f};
