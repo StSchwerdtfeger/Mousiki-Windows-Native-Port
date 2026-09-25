@@ -94,6 +94,29 @@ bool contains_ci(const std::string& hay, const std::string& needle) {
     return lower(hay).find(lower(needle)) != std::string::npos;
 }
 
+// Lowercases AND folds common word-separator punctuation (hyphen,
+// underscore, dot, slash) down to plain spaces. Used only for search
+// matching (fuzzy_score below), never for display.
+//
+// Without this, a tag/filename like "X-Files" is one glued-together
+// token "x-files" as far as matching is concerned, while a query typed
+// as "X Files" is two separate words ["x", "files"]. Tier 1 (exact
+// substring) fails because "x-files" never contains the literal text
+// "x files". Tier 2 (per-word fuzzy) also fails: comparing whole word
+// "x" against whole word "x-files" gives a huge edit distance (adding
+// "-files"), well below the 0.55 quality floor -- even though every
+// individual word the user typed is actually present. Folding the
+// separator to a space first turns "x-files" into "x files" so both
+// tiers line up with "X Files" the same way they already would for a
+// title that happens to use a plain space.
+std::string normalize_for_search(std::string s) {
+    s = lower(std::move(s));
+    for (char& c : s) {
+        if (c == '-' || c == '_' || c == '.' || c == '/') c = ' ';
+    }
+    return s;
+}
+
 std::vector<std::string> split_words(const std::string& s) {
     std::vector<std::string> words;
     std::string cur;
@@ -139,7 +162,7 @@ int levenshtein(const std::string& a, const std::string& b) {
 // entirely (neither "anogher" nor "lobe" appears anywhere in "another
 // love" as literal text).
 double fuzzy_score(const std::string& query, const std::string& target) {
-    std::string q = lower(query), t = lower(target);
+    std::string q = normalize_for_search(query), t = normalize_for_search(target);
     if (q.empty()) return 0.0;
 
     size_t pos = t.find(q);
@@ -581,11 +604,15 @@ void App::log_event(const std::string& msg) {
 // as a tiebreak, so the best match always sits at the top regardless of
 // where it happened to fall alphabetically/by-folder.
 //
-// Matches against both title AND artist -- using the real probed artist
-// tag (row_meta_cache_) where it's already been resolved for that row,
-// falling back to the cheap parent-folder guess otherwise. This is why
-// "search by artist name" gets more accurate the more of the library
-// you've scrolled past (each visible row lazily resolves its real tag).
+// Matches against filename-derived title, real artist tag, embedded
+// title tag, and album tag -- using whatever's already been resolved
+// for that row in row_meta_cache_, falling back to the cheap
+// parent-folder guess for artist where the tag hasn't been probed yet.
+// This is why matching against embedded metadata gets more complete the
+// more of the library you've scrolled past / the longer the one-time
+// background sweep (launch_row_meta_resolver) has had to run: each row's
+// real tags only become searchable once resolved. A file whose tags
+// haven't resolved yet is still findable by filename in the meantime.
 std::vector<LocalTrack> App::filter_and_rank_local(const std::string& query) const {
     if (query.empty()) {
         auto result = all_local_tracks_;
@@ -597,14 +624,20 @@ std::vector<LocalTrack> App::filter_and_rank_local(const std::string& query) con
     scored.reserve(all_local_tracks_.size());
     for (const auto& t : all_local_tracks_) {
         std::string artist = t.folder_artist;
+        std::string tag_title, album;
         {
             std::lock_guard<std::mutex> lk(row_meta_mutex_);
             auto it = row_meta_cache_.find(path_utf8(t.path));
-            if (it != row_meta_cache_.end() && !it->second.artist.empty()) artist = it->second.artist;
+            if (it != row_meta_cache_.end()) {
+                if (!it->second.artist.empty()) artist = it->second.artist;
+                tag_title = it->second.title;
+                album = it->second.album;
+            }
         }
-        double title_score = fuzzy_score(query, t.title);
-        double artist_score = fuzzy_score(query, artist);
-        double score = std::max(title_score, artist_score);
+        double score = fuzzy_score(query, t.title);
+        score = std::max(score, fuzzy_score(query, artist));
+        if (!tag_title.empty()) score = std::max(score, fuzzy_score(query, tag_title));
+        if (!album.empty()) score = std::max(score, fuzzy_score(query, album));
         if (score > 0.0) scored.emplace_back(score, &t);
     }
     std::stable_sort(scored.begin(), scored.end(),
@@ -2409,6 +2442,38 @@ void App::handle_key(int key) {
 // Lazy metadata probing for whatever's currently visible in the list
 // ---------------------------------------------------------------------
 
+// Tries to fully resolve a row -- duration AND tags -- using nothing but
+// in-process header parsing (native_duration.h): no subprocess, safe to
+// call from the render thread. For an MP3 with a plain, well-formed ID3v2
+// tag (the common case) this is a complete answer on its own. For anything
+// this can't handle (a non-MP3 format's tags, or an MP3 tag laid out in a
+// way probe_id3v2_native() declines to guess at), it comes back with
+// whatever duration native parsing found, tags_resolved left false --
+// callers fall back to ffprobe for tags in that case.
+//
+// This is what turns "resolving an 800-track library's metadata" from
+// hundreds of ffprobe subprocess spawns (the actual bottleneck -- each one
+// costs tens to hundreds of milliseconds, worse under antivirus real-time
+// scanning on Windows) into a few pread() syscalls per file for the
+// overwhelming majority of a typical MP3 library.
+RowMeta try_native_row_meta(const fs::path& path) {
+    RowMeta rm;
+    uint32_t dur = probe_duration_native(path);
+    if (dur > 0) rm.duration_sec = static_cast<double>(dur);
+
+    std::string ext = lower(path_utf8(path.extension()));
+    if (ext == ".mp3") {
+        NativeId3Tags tags = probe_id3v2_native(path);
+        if (tags.resolved) {
+            rm.title = tags.title;
+            rm.artist = tags.artist;
+            rm.album = tags.album;
+            rm.tags_resolved = true; // fully resolved without ffprobe
+        }
+    }
+    return rm;
+}
+
 // This used to call probe_row_meta() here directly — which spawns a real
 // ffprobe SUBPROCESS, synchronously, on the render thread, once per
 // newly-visible row, every single frame a new row scrolled into view.
@@ -2420,12 +2485,13 @@ void App::handle_key(int key) {
 //
 // Fix: use the native in-process binary-header parser (native_duration.h
 // — pure pread() syscalls, no subprocess, effectively can't hang) for
-// duration here, directly on the render thread — genuinely safe now.
-// Anything that parser can't handle (unsupported format, corrupt file)
-// gets picked up by a ONE-TIME background sweep (launch_row_meta_resolver,
-// started once after the initial scan) that walks the whole library
-// sequentially and falls back to ffprobe there — off the main thread
-// entirely, never gating rendering or input.
+// duration AND (for MP3) tags here, directly on the render thread —
+// genuinely safe now. Anything that parser can't handle (unsupported
+// format, corrupt file, a tag layout probe_id3v2_native() declines) gets
+// picked up by the background sweep (launch_row_meta_resolver, started
+// once after the initial scan) that walks the whole library and falls
+// back to ffprobe there — off the main thread entirely, never gating
+// rendering or input.
 void App::ensure_visible_row_meta() {
     if (list_source_ != ListSource::Local) return;
     for (int i = scroll_; i < std::min<int>(local_view_.size(), scroll_ + list_visible_rows_); ++i) {
@@ -2435,17 +2501,31 @@ void App::ensure_visible_row_meta() {
             std::lock_guard<std::mutex> lk(row_meta_mutex_);
             if (row_meta_cache_.count(key)) continue; // already resolved (native path or background sweep)
         }
-        uint32_t dur = probe_duration_native(t.path);
-        if (dur > 0) {
-            RowMeta rm;
-            rm.duration_sec = static_cast<double>(dur);
+        RowMeta rm = try_native_row_meta(t.path);
+        if (rm.duration_sec > 0 || rm.tags_resolved) {
             std::lock_guard<std::mutex> lk(row_meta_mutex_);
             // BUG FIX #1: cap the cache so it can't grow proportionally
             // to an arbitrarily large library (a 50k-track collection
             // would otherwise accumulate tens of MB that are never freed).
-            if (row_meta_cache_.size() < 4096)
+            // BUG FIX #4: the cap must only ever block a brand-new key --
+            // `size()` doesn't change when overwriting a key already in the
+            // map, so once the map filled up to exactly the cap, the old
+            // "size() < cap" check also silently blocked ever promoting an
+            // existing duration-only entry to include real tags, for any
+            // file whose key already happened to be present. That made
+            // metadata search permanently stop updating past whatever
+            // point the cache first filled up.
+            if (row_meta_cache_.count(key) || row_meta_cache_.size() < 4096)
                 row_meta_cache_[key] = rm;
         }
+        // A visible row whose tags resolved right here (native, no ffprobe
+        // needed) still needs the version bump: this row scrolling into
+        // view generally happens well before the background sweep ever
+        // gets to it, so without this the same "search doesn't notice
+        // metadata that arrived after the filter ran" gap would just
+        // reappear for the fast native path instead of the slow ffprobe
+        // one. See poll_pending_row_meta_tags().
+        if (rm.tags_resolved) row_meta_tags_version_.fetch_add(1, std::memory_order_relaxed);
         // else: leave unresolved — native parsing is cheap enough to just
         // retry next frame, and the background sweep will fill it in via
         // ffprobe regardless, so there's no real cost to not caching a miss.
@@ -2482,28 +2562,144 @@ void App::recompute_waveform_for_current_track() {
 
 void App::launch_row_meta_resolver() {
     if (row_meta_resolver_started_.exchange(true)) return; // only ever runs once per app session
-    std::vector<fs::path> paths;
-    paths.reserve(all_local_tracks_.size());
-    for (auto& t : all_local_tracks_) paths.push_back(t.path);
+    auto paths = std::make_shared<std::vector<fs::path>>();
+    paths->reserve(all_local_tracks_.size());
+    for (auto& t : all_local_tracks_) paths->push_back(t.path);
 
-    // Detached, not tracked-and-joined: a whole-library ffprobe sweep
-    // could take a while on a big collection, and joining it at shutdown
-    // would just trade one flavor of "blocked and can't do anything" for
-    // another. Same tradeoff already accepted for decode threads —
-    // worst case on quit is one orphaned ffprobe call, not a crash.
-    std::thread([this, paths]() { run_guarded("library metadata sweep", [&] {
-        for (auto& p : paths) {
-            std::string key = path_utf8(p);
-            {
-                std::lock_guard<std::mutex> lk(row_meta_mutex_);
-                if (row_meta_cache_.count(key)) continue; // native parse (or an earlier pass) already got it
+    // BUG FIX #5: this used to be a single thread working through the
+    // whole library one ffprobe subprocess at a time. Each call is a real
+    // process spawn -- slow, and especially so on Windows (process
+    // creation there routinely runs tens of milliseconds even before
+    // antivirus real-time scanning gets a look at ffprobe.exe, which adds
+    // more on top). Sequentially, that means a library of even a few
+    // hundred tracks can take a long time to fully resolve, and a file
+    // that only happens to sit later in scan order is simply unresolved
+    // -- and therefore not yet findable by its tags -- for that entire
+    // stretch. A small fixed pool of worker threads pulling from a shared
+    // index lets several ffprobe calls be in flight at once (this is
+    // I/O/process-spawn-bound work, not CPU-bound, so a handful of
+    // threads is a real speedup and not just contention), cutting the
+    // time-to-fully-searchable by roughly the pool size with no change to
+    // per-file behavior.
+    constexpr int kResolverWorkers = 4;
+    auto next_index = std::make_shared<std::atomic<size_t>>(0);
+
+    for (int worker = 0; worker < kResolverWorkers; ++worker) {
+        std::thread([this, paths, next_index]() { run_guarded("library metadata sweep", [&] {
+            for (;;) {
+                size_t i = next_index->fetch_add(1, std::memory_order_relaxed);
+                if (i >= paths->size()) return;
+                const fs::path& p = (*paths)[i];
+                std::string key = path_utf8(p);
+                {
+                    std::lock_guard<std::mutex> lk(row_meta_mutex_);
+                    auto it = row_meta_cache_.find(key);
+                    // BUG FIX #2: a cache hit here used to be treated as "this
+                    // file is done", which was true back when the cache only
+                    // ever held a duration. Now ensure_visible_row_meta() can
+                    // populate an entry with JUST duration_sec (from the cheap
+                    // native header parser, no tags) before this sweep ever
+                    // reaches the file -- for any file with a well-formed
+                    // MP3/FLAC/etc. header, that's the common case, since the
+                    // render thread visits it first. Skipping here on presence
+                    // alone meant that entry's artist/title/album tags -- the
+                    // ones search actually needs -- never got fetched, because
+                    // this is the only place that runs the ffprobe tag lookup.
+                    // Only a real prior probe_row_meta() result (tags_resolved)
+                    // means there's genuinely nothing left to fetch.
+                    if (it != row_meta_cache_.end() && it->second.tags_resolved) continue;
+                }
+                RowMeta rm = try_native_row_meta(p);
+                // BUG FIX #6 / perf: try the native, no-subprocess ID3v2
+                // reader first. For a well-formed MP3 tag -- the common
+                // case in any real library -- this resolves the file with
+                // a few pread() calls instead of a whole ffprobe process
+                // spawn, which is what actually made an 800-track library
+                // take minutes: ffprobe's per-call overhead (worse under
+                // Windows antivirus real-time scanning) dominates
+                // completely once you're spawning hundreds of them. Only
+                // fall back to ffprobe for whatever native declined --
+                // a non-MP3 format, or an MP3 tag laid out in a way the
+                // lightweight reader won't guess at (see native_duration.h).
+                if (!rm.tags_resolved) {
+                    RowMeta ff = probe_row_meta(p);
+                    if (rm.duration_sec <= 0) rm.duration_sec = ff.duration_sec; // keep native's duration if we already had it
+                    rm.title = ff.title;
+                    rm.artist = ff.artist;
+                    rm.album = ff.album;
+                    rm.tags_resolved = ff.tags_resolved;
+                }
+                {
+                    std::lock_guard<std::mutex> lk(row_meta_mutex_);
+                    // BUG FIX #4: only a brand-new key is subject to the cap --
+                    // overwriting a key already present doesn't grow the map,
+                    // so it must never be blocked by "already at the cap", or
+                    // no file already in the cache could ever be promoted from
+                    // a duration-only entry to one with real tags once the
+                    // cache first filled up.
+                    if (row_meta_cache_.count(key) || row_meta_cache_.size() < 4096) // BUG FIX #1
+                        row_meta_cache_[key] = rm;
+                }
+                // BUG FIX #3: tell the main thread real tags for a file just
+                // landed. Without this, a search typed (or already showing)
+                // before this sweep reached the file stays frozen on whatever
+                // it found at the time -- the file becomes searchable by its
+                // metadata from this point on, but nothing ever re-runs the
+                // filter to notice, so it looks like metadata search "doesn't
+                // work" for exactly the files whose tags resolve after the
+                // fact. poll_pending_row_meta_tags() (called every frame,
+                // same as the other poll_pending_* functions) picks this up.
+                if (rm.tags_resolved) row_meta_tags_version_.fetch_add(1, std::memory_order_relaxed);
             }
-            RowMeta rm = probe_row_meta(p); // ffprobe fallback — slow, but background-thread-only now
-            std::lock_guard<std::mutex> lk(row_meta_mutex_);
-            if (row_meta_cache_.size() < 4096) // BUG FIX #1: same cap as ensure_visible_row_meta
-                row_meta_cache_[key] = rm;
+        }); }).detach();
+    }
+}
+
+// Every frame's counterpart to launch_row_meta_resolver(): re-filters the
+// currently-shown local list once new tags have arrived in the background,
+// so a metadata match (like an artist tag) shows up on its own instead of
+// requiring the user to retype the query after the sweep happens to catch
+// up. A no-op the vast majority of frames (the version check is a single
+// relaxed atomic load), so this is cheap to call unconditionally.
+void App::poll_pending_row_meta_tags() {
+    uint64_t v = row_meta_tags_version_.load(std::memory_order_relaxed);
+    if (v == row_meta_tags_seen_) return;
+    row_meta_tags_seen_ = v;
+
+    if (list_source_ != ListSource::Local) return; // nothing local is even on screen right now
+
+    // Mirror update_live_search_preview()'s "which query is live right now"
+    // logic: mid-typing uses search_buffer_, otherwise the last committed
+    // query. Either way, leave "s:"/"p:" alone -- those aren't local
+    // filters and don't read row_meta_cache_ at all.
+    std::string q = (mode_ == Mode::Search) ? search_buffer_ : last_local_query_;
+    while (!q.empty() && q.front() == ' ') q.erase(q.begin());
+    while (!q.empty() && q.back() == ' ') q.pop_back();
+    if (q.size() >= 2) {
+        std::string prefix = lower(q.substr(0, 2));
+        if (prefix == "s:" || prefix == "p:") return;
+    }
+
+    // Re-filtering can reorder/shrink the list (a track that just became a
+    // metadata match can appear anywhere by rank), so re-anchor on the
+    // previously-selected track's identity rather than leaving `selected_`
+    // pointing at whatever index now happens to sit there.
+    fs::path prev_selected_path;
+    bool had_selection = selected_ >= 0 && selected_ < static_cast<int>(local_view_.size());
+    if (had_selection) prev_selected_path = local_view_[static_cast<size_t>(selected_)].path;
+
+    local_view_ = filter_and_rank_local(q);
+
+    if (had_selection) {
+        selected_ = 0;
+        for (size_t i = 0; i < local_view_.size(); ++i) {
+            if (local_view_[i].path == prev_selected_path) { selected_ = static_cast<int>(i); break; }
         }
-    }); }).detach();
+    }
+    if (local_view_.empty()) selected_ = 0;
+    else if (selected_ >= static_cast<int>(local_view_.size())) selected_ = static_cast<int>(local_view_.size()) - 1;
+    if (scroll_ > selected_) scroll_ = selected_;
+    if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
 }
 
 // ---------------------------------------------------------------------
@@ -4719,6 +4915,7 @@ int App::run() {
         poll_pending_load();
         poll_pending_waveform();
         poll_pending_bulk_add();
+        poll_pending_row_meta_tags();
         maybe_autosave();
 
         auto now = std::chrono::steady_clock::now();

@@ -28,9 +28,18 @@ double probe_duration_seconds(const fs::path& file) {
 
 RowMeta probe_row_meta(const fs::path& file) {
     RowMeta rm;
-    std::string cmd = "ffprobe -v error -show_entries format=duration:format_tags=artist "
+    // Pulls title/album alongside artist now (still one ffprobe call, so
+    // no extra subprocess cost) so the library-wide search can match
+    // against embedded tags, not just the artist column and the
+    // filename-derived title.
+    std::string cmd = "ffprobe -v error -show_entries format=duration:format_tags=artist,title,album "
                        "-of default=noprint_wrappers=1 " + shell_quote(path_utf8(file));
     ProcResult r = run_capture(cmd);
+    // A real probe attempt happened either way -- mark it resolved even on
+    // an empty/failed result so callers don't keep retrying an untagged or
+    // unreadable file forever. Only the fields actually parsed below get
+    // filled in; everything else stays at its default (empty/-1).
+    rm.tags_resolved = true;
     if (r.out.empty()) return rm;
 
     std::istringstream stream(r.out);
@@ -47,6 +56,10 @@ RowMeta probe_row_meta(const fs::path& file) {
             try { rm.duration_sec = std::stod(val); } catch (...) {}
         } else if (key == "TAG:artist") {
             rm.artist = val;
+        } else if (key == "TAG:title") {
+            rm.title = val;
+        } else if (key == "TAG:album") {
+            rm.album = val;
         }
     }
     return rm;

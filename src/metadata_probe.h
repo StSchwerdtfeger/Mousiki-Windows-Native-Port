@@ -26,12 +26,21 @@ struct TrackMetadata {
 // Returns -1 on failure.
 double probe_duration_seconds(const fs::path& file);
 
-// One ffprobe call for both duration and the real artist tag — used to
-// populate the file list's Artist column properly instead of guessing
-// from the parent folder name.
+// One ffprobe call for duration plus the real artist/title/album tags —
+// used to populate the file list's Artist column properly instead of
+// guessing from the parent folder name, and to let search match against
+// actual embedded metadata rather than just the filename.
 struct RowMeta {
     std::string artist; // empty if untagged
+    std::string title;  // embedded title tag, empty if untagged/absent
+    std::string album;  // embedded album tag, empty if untagged/absent
     double duration_sec = -1.0;
+    // True once a real probe_row_meta() (ffprobe) call has actually run for
+    // this file, as opposed to a cache entry that only holds a duration
+    // filled in by the cheap native header parser. Search needs this to
+    // tell "genuinely untagged" apart from "tags not fetched yet" -- see
+    // the callers in app.cpp for why that distinction matters.
+    bool tags_resolved = false;
 };
 RowMeta probe_row_meta(const fs::path& file);
 

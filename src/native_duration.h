@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
+#include <string>
 
 namespace muisc {
 
@@ -16,5 +17,39 @@ namespace fs = std::filesystem;
 // be parsed (corrupt/unusual file) — callers should treat 0 as "unknown,
 // fall back to something else" rather than a real zero-length track.
 uint32_t probe_duration_native(const fs::path& path);
+
+// Result of a native (no-subprocess) ID3v2 tag read — see
+// probe_id3v2_native() below.
+struct NativeId3Tags {
+    // True only when a well-formed ID3v2.3/2.4 tag was actually walked
+    // frame-by-frame to completion. An untagged-but-otherwise-fine MP3 (no
+    // "ID3" magic at offset 0 at all) is NOT "resolved" here -- some
+    // untagged-by-ID3v2 files still carry an ID3v1 trailer or other tag
+    // this lightweight reader doesn't look at, so callers should fall back
+    // to ffprobe in that case rather than assume the file has no metadata.
+    // `resolved == true` with every field empty means "a real ID3v2 tag
+    // was fully parsed and genuinely has none of these three frames" --
+    // that IS a final answer, no fallback needed.
+    bool resolved = false;
+    std::string title;
+    std::string artist;
+    std::string album;
+};
+
+// Reads TIT2/TPE1/TALB straight out of an MP3's ID3v2 header -- no `ffprobe`
+// subprocess at all, just the same handful of pread() calls
+// probe_duration_native() already does for MP3 duration. This is what lets
+// an 800-track library's metadata become fully searchable in well under a
+// second instead of however long it takes to spawn that many subprocesses.
+//
+// Deliberately conservative: bails out (resolved=false) rather than guess
+// on anything this simple frame walker doesn't fully understand --
+// per-tag or per-frame unsynchronisation, an extended header, compressed or
+// encrypted frames, or a tag_size that doesn't fit the file. Every one of
+// those is rare in practice (most taggers -- Mp3tag, kid3, iTunes, foobar2000
+// -- don't produce them), and callers fall back to ffprobe for exactly
+// those files, so correctness never depends on this parser being complete,
+// only fast for the common case.
+NativeId3Tags probe_id3v2_native(const fs::path& path);
 
 } // namespace muisc

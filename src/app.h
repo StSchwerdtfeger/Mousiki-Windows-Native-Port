@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -114,6 +115,16 @@ private:
     std::unordered_map<std::string, RowMeta> row_meta_cache_;
     std::atomic<bool> row_meta_resolver_started_{false};
     void launch_row_meta_resolver();
+    // Bumped by launch_row_meta_resolver()'s background thread every time it
+    // resolves a new file's real tags (artist/title/album), so a search view
+    // computed BEFORE that file's tags arrived can be told "something
+    // changed, re-filter" instead of sitting stale until the user retypes
+    // their query. See poll_pending_row_meta_tags() -- same
+    // background-thread-finished-do-something-on-the-main-thread pattern as
+    // poll_pending_waveform()/poll_pending_search() just below it.
+    std::atomic<uint64_t> row_meta_tags_version_{0};
+    uint64_t row_meta_tags_seen_ = 0; // main-thread only, no atomic needed
+    void poll_pending_row_meta_tags();
 
     // --- queue ---
     std::vector<QueueItem> queue_;
