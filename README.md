@@ -26,7 +26,7 @@
 
 A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. 
 
-Some minor and major additions where made, e.g. a general key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command).... See section [added features beyond the port](#added-features-beyond the-port) further below for details.  
+Some minor and major additions where made, e.g. a general key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command), optimized search engine for windows (searching metadata was very slow, only available after 2-3 min. after starting app) and added fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without dash) .... See section [added features beyond the port](#added-features-beyond the-port) further below for details.  
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
@@ -244,10 +244,11 @@ A few things added on top of the original design rather than required to run it 
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à etc.
 - **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v`.
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
+- **Search Engine Optimization** - Added fuzzy search ("X-Files" didn't show up when searched "X Files", i.e. without dash) and optimized speed for also searching through meta data (not only file titlea), which in Windows took >2-3 min. after the app was started to be available (cache cap was also an issue and a bunch of subprocess handling via ffprobe (which remains as a fallback in case the newly included ID3v2.3/2.4 frame-walker that reads TIT2/TPE1/TALB directly out can't handle the tag layout of a file for some reason...).  
 - **Hotkey remapping actually works (see above)** — as much as I understood a bug fix rather than a feature, but it's new behavior either way.
 - **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
 - **Categorized** Key commands in Reference tab within the Settings. The color is coded within app.cpp; a change color feature could be added...
-- 
+ 
   <img width="2294" height="1080" alt="grafik" src="https://github.com/user-attachments/assets/e060895e-e6fa-4132-a9c9-67e2d0ea2167" />
 
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
