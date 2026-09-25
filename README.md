@@ -24,14 +24,14 @@
 
 </div>
 
-A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player built for people who prefer control, simplicity, and a keyboard. All credit for the design, feature set, and the vast majority of the code goes to the original author. 
+A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player for macOS/Linux built for people who prefer control, simplicity, and a keyboard. All credits for the design, main feature set, and the vast majority of the code goes to the original author. 
 
-Some minor and major additions where made, e.g. a general key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command), optimized search engine for windows (searching metadata was very slow, only available after 2-3 min. after starting app) and added fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without dash) .... See section [added features beyond the port](#added-features-beyond-the-port) further below for details.  
+Some minor and major additions where made too, e.g. a general key to shuffle to a next title (before only next title in the list was possible) a **menu to create playlists from local (or downloaded) tracks**, toggle the lyrics on/off (also via a key command), optimized search engine for windows (searching metadata was very slow, only available after 2-3 min. after starting app) and added fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without dash) .... See section [added features beyond the port](#added-features-beyond-the-port) further below for details.  
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
 - **Original:** [github.com/itzender5820/mousiki](https://github.com/itzender5820/mousiki) — ender ([itzender5820](https://github.com/itzender5820))
-- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly Sonett 5 set on medium). Therefore take the below with a grain of salt, since I am not a developer for applications like this. However, I liked this music player way too much to not want to use it on my Windows setup, so I went this path and vibe coded a port for Windows. *Huge shout out for the great work by itzender5820 for this beautiful music player.* <3 It's the best and most fun music player I ever found. Makes me want to listen to music all te time :D 
+- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly Sonett 5 set on medium). Therefore take the below with a grain of salt, since I am not a developer for applications like this. However, I liked this music player way too much to not want to use it on my Windows setup, so I went this path and vibe coded a lot to create a port for Windows. *Huge shout out for the great work by itzender5820 for this beautiful music player.* <3 It's the best and most fun music player I ever found. Makes me want to listen to music all the time :D 
 - **License:** Apache 2.0 — see [LICENSE](LICENSE)
 
 ![preview](preview.gif)
@@ -71,7 +71,7 @@ See original repo by itzender5820 for an introduction on how to use Mousiki.
 ```powershell
 & 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe'
 ```
-Personally, I recommend writing a function in your Powershell profile.ps1 in order to be able to run the app via a command (in my case I set the command to be "lala"):
+Personally, I recommend writing a function in your PowerShell profile.ps1 in order to be able to run the app via a command (in my case I set the command to be "lala"):
 To do so, open your profile file via:
 
 ```powershell
