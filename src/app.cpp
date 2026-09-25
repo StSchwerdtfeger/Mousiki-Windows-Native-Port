@@ -1673,7 +1673,7 @@ int App::settings_max_row() const {
     // track the actual font_map/about_app_lines content).
     switch (settings_tab_) {
         case 0: return 13; // COLOR_SCHEMA: 14 rows
-        case 1: return 7;  // ONOFF_SCHEMA: 8 rows
+        case 1: return 8;  // ONOFF_SCHEMA: 9 rows
         case 2: return 7;  // ANIM_SCHEMA: 8 rows
         case 3: {
             int letters = 0;
@@ -1709,6 +1709,7 @@ std::string App::settings_get_value(int row, int col) const {
             case 5: v = settings_.element_lyrics_placeholder_ball; break;
             case 6: v = settings_.element_visualizer; break;
             case 7: v = settings_.stereo; break;
+            case 8: v = settings_.normalize; break;
         }
         return v ? "true" : "false";
     }
@@ -1784,6 +1785,12 @@ void App::settings_commit_edit() {
                 settings_.stereo = is_true;
                 player_.set_stereo(is_true); // audible immediately for a stereo-decoded track
                 break;
+            case 8:
+                settings_.normalize = is_true;
+                player_.set_normalization(settings_.normalize,
+                                          static_cast<float>(settings_.normalize_target_lufs),
+                                          static_cast<float>(settings_.normalize_max_boost_db));
+                break;
         }
     } else if (settings_tab_ == 2) {
         std::string v = to_lower(buf);
@@ -1831,6 +1838,9 @@ void App::settings_cycle(int dir) {
             status_line_ = "stereo: on -- applies from the next track";
         else
             status_line_ = settings_.stereo ? "stereo: on" : "stereo: off";
+    }
+    if (settings_tab_ == 1 && settings_row_ == 8) {
+        status_line_ = settings_.normalize ? "normalize: on" : "normalize: off";
     }
 }
 
@@ -3854,11 +3864,12 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 1 || settings_tab_ == 2) {
-        static const char* onoff_l[8] = {"Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
-                                          "Lyrics Engine", "Lyric Ball", "Visualizer", "Stereo Sound"};
+        static const char* onoff_l[9] = {"Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
+                                          "Lyrics Engine", "Lyric Ball", "Visualizer", "Stereo Sound",
+                                          "Normalize Volume"};
         static const char* anim_l[8] = {"Vis. Fluidity", "Waveform Style", "Disk Speed", "Playback Mode",
                                          "Vis. Degradation", "Vis. Viscosity", "Lyrics Alignment", "Lyrics Animation"};
-        int count = 8; // both tabs have 8 rows now
+        int count = (settings_tab_ == 1) ? 9 : 8; // ON/OFF now has 9 rows, ANIMATION still 8
         const char* const* labels = (settings_tab_ == 1) ? onoff_l : anim_l;
         for (int i = 0; i < count; ++i) {
             pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
