@@ -233,10 +233,8 @@ HKeyToggleWaveform="w"
 HKeyCycleSortMode="T"
 HKeySearchPlaylist="/p:"
 HKeyPlaylist="P"
-# Turns loudness normalization on/off (see NormalizeVolume below) -- handy for
-# comparing a track with and without it.
+HKeyToggleMetaOnly="N"
 HKeyToggleNormalize="v"
-# Move track in queue/playlist up/down:
 HKeyQueueMoveUp="4"
 HKeyQueueMoveDown="5"
 
