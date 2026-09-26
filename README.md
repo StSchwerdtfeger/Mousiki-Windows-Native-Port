@@ -271,6 +271,7 @@ I will not implement all of them; the goal is to keep it simple and not change t
 - ~~Key toggle and "On/Off" Settings menu tab toggle to show either file or metadata in the (search-)list via `SHIFT-N`~~ — **done** (`SHIFT+N`, "Show meta data only" in ON/OFF, see above)
 - Menu to change filename and meta data inside the app via `SHIFT-R`
 - ~~Optionally adding folder paths via TUI instead of config.txt only~~ — **done** (LOCAL PATH / PLAYLIST PATH lists with `(+ new path)` in ON/OFF)
+- add feature to paste a path into the New path field, currently Ctrl+v loads switches back to main ui and extracts into search field
 - making loudness normalization adjustable in the app via extra menu (`SHIFT + G`)
 
 **Major New Features:**
