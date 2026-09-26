@@ -40,9 +40,10 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
 
-## Current Status of the Port and Modification (Release v1.2.0)
+## Current Status of the Port and Modification (Release v1.2.1)
 
 For now the Mousiki port works well and also includes everything I at least wanted, so there might be no further major releases that add new features. I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... 
+Below you find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications).
 
 ## Quick start (for PowerShell 7.6.6, not tested with other shells or older versions of PWSH)
 
@@ -255,7 +256,8 @@ A few things added on top of the original design rather than required to run it 
 - **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
 - **A Lyrics Engine toggle that actually gates fetching**, not just the panel's visibility (`+` to toggle, or Settings → On/Off) — previously the fetch ran and hit the network every single track regardless of whether the panel was shown. Toggling it off now shows the sphere visualization in that space instead of leaving it blank.
 
-## Current Ideas on Features and Modifications (I will not implement all of them; the goal is to keep it simple and not change the TUI and the keyboard philosophy in its essentials):
+## Current Ideas on Features and Modifications 
+I will not implement all of them; the goal is to keep it simple and not change the TUI and the keyboard philosophy in its essentials):
 
 **Basic Features (that will definitely be implemented soon):**
 
