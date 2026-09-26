@@ -19,8 +19,8 @@
 > subject to the terms of the license.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/itzender5820/mousiki/blob/main/LICENSE)
-[![Language](https://img.shields.io/badge/Language-C++17-orange.svg)](https://github.com/itzender5820/mousiki)
-[![Platform](https://img.shields.io/badge/Platform-Linux_%7C_Android_%7C_MacOS-brightgreen.svg)](https://github.com/itzender5820/mousiki)
+[![Language](https://img.shields.io/badge/Language-C++17-orange.svg)]([https://github.com/itzender5820/mousiki](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main))
+[![Windows](https://img.shields.io/badge/Windows-Supported-0078D4.svg?logo=windows&logoColor=white)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main)
 
 </div>
 
