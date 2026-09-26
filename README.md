@@ -153,10 +153,11 @@ References with in settings is now categorized. Some keys are not rebindable!
 | **Local Search** | `/` | Filter and search local library 
 | **Online Stream Search** | `/s: <query>` | Search and stream music online |
 | **Search Playlists** | `/p: <query>` | Search and stream local playlists |
-| **Open Playlist** | `SHIFT` / `p` | Open Playlist Creator/Editor |
+| **Open Playlist** | `SHIFT + p` | Open Playlist Creator/Editor |
 | **Download Stream** | `y` | Download currently streaming track |
 | **Play / Pause** | `p` (or `ENTER`) | Toggle playback |
 | **Next / Previous Track** | `n` / `b` | Skip between songs |
+| **Filename / Meta Data** | `SHIFT + n` | Turn on to show meta data only in lists |
 | **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
 | **Volume** | `1` / `2` | Decrease / Increase volume |
 | **Stereo** | `v` | Toggle Stereo/Mono mode |
@@ -267,9 +268,9 @@ I will not implement all of them; the goal is to keep it simple and not change t
 
 **Basic Features (that will definitely be implemented soon):**
 
-- Key toggle and "On/Off" Settings menu tab toggle to show either file or metadata in the (search-)list via `SHIFT-N` 
+- ~~Key toggle and "On/Off" Settings menu tab toggle to show either file or metadata in the (search-)list via `SHIFT-N`~~ — **done** (`SHIFT+N`, "Show meta data only" in ON/OFF, see above)
 - Menu to change filename and meta data inside the app via `SHIFT-R`
-- Optionally adding folder paths via TUI instead of config.txt only
+- ~~Optionally adding folder paths via TUI instead of config.txt only~~ — **done** (LOCAL PATH / PLAYLIST PATH lists with `(+ new path)` in ON/OFF)
 - making loudness normalization adjustable in the app via extra menu (`SHIFT + G`)
 
 **Major New Features:**
