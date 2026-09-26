@@ -52,4 +52,14 @@ struct NativeId3Tags {
 // only fast for the common case.
 NativeId3Tags probe_id3v2_native(const fs::path& path);
 
+// Same idea as probe_id3v2_native(), for the other formats native duration
+// parsing already understands. Each is equally conservative: any tag
+// layout it doesn't fully recognize (an oversized/truncated comment list,
+// an unrecognized codec inside an Ogg container, a non-standard MP4 tag
+// location) comes back as resolved=false so the caller falls back to
+// ffprobe rather than risk a wrong or incomplete answer.
+NativeId3Tags probe_flac_native(const fs::path& path);   // FLAC: Vorbis comment metadata block
+NativeId3Tags probe_ogg_native(const fs::path& path);    // Ogg Vorbis or Opus: Vorbis-comment packet
+NativeId3Tags probe_mp4_native(const fs::path& path);    // M4A/MP4/AAC: moov/udta/meta/ilst atoms
+
 } // namespace muisc

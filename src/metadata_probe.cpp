@@ -31,8 +31,16 @@ RowMeta probe_row_meta(const fs::path& file) {
     // Pulls title/album alongside artist now (still one ffprobe call, so
     // no extra subprocess cost) so the library-wide search can match
     // against embedded tags, not just the artist column and the
-    // filename-derived title.
-    std::string cmd = "ffprobe -v error -show_entries format=duration:format_tags=artist,title,album "
+    // filename-derived title. stream_tags is also requested: ffmpeg's
+    // Ogg Vorbis/Opus muxers expose title/artist/album as TAGS ON THE
+    // AUDIO STREAM rather than on the container ("format") -- format_tags
+    // alone comes back completely empty for those two formats even
+    // though the file plainly has metadata (confirmed against real
+    // ffmpeg-muxed .ogg/.opus files: format_tags is empty, stream_tags
+    // has everything). Keeping format_tags too covers everything else
+    // (MP3, FLAC, M4A, ...), where it's the one that's populated.
+    std::string cmd = "ffprobe -v error "
+                       "-show_entries format=duration:format_tags=artist,title,album:stream_tags=artist,title,album "
                        "-of default=noprint_wrappers=1 " + shell_quote(path_utf8(file));
     ProcResult r = run_capture(cmd);
     // A real probe attempt happened either way -- mark it resolved even on
@@ -55,11 +63,17 @@ RowMeta probe_row_meta(const fs::path& file) {
         if (key == "duration") {
             try { rm.duration_sec = std::stod(val); } catch (...) {}
         } else if (key == "TAG:artist") {
-            rm.artist = val;
+            // First-wins: with stream_tags also requested, a file with
+            // several streams (e.g. an attached-picture "video" stream
+            // alongside the audio) can print more than one TAG:artist
+            // line. format_tags is listed first and is the authoritative
+            // one when present; don't let a later, possibly-blank or
+            // irrelevant stream's tags clobber it.
+            if (rm.artist.empty()) rm.artist = val;
         } else if (key == "TAG:title") {
-            rm.title = val;
+            if (rm.title.empty()) rm.title = val;
         } else if (key == "TAG:album") {
-            rm.album = val;
+            if (rm.album.empty()) rm.album = val;
         }
     }
     return rm;

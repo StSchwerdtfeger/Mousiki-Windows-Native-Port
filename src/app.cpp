@@ -2444,32 +2444,37 @@ void App::handle_key(int key) {
 
 // Tries to fully resolve a row -- duration AND tags -- using nothing but
 // in-process header parsing (native_duration.h): no subprocess, safe to
-// call from the render thread. For an MP3 with a plain, well-formed ID3v2
-// tag (the common case) this is a complete answer on its own. For anything
-// this can't handle (a non-MP3 format's tags, or an MP3 tag laid out in a
-// way probe_id3v2_native() declines to guess at), it comes back with
-// whatever duration native parsing found, tags_resolved left false --
-// callers fall back to ffprobe for tags in that case.
+// call from the render thread. For a well-formed tag in a format this
+// covers (MP3/ID3v2, FLAC/Ogg/Opus's Vorbis comments, or M4A/MP4/AAC's
+// iTunes-style atoms -- covers every format probe_duration_native()
+// already parses for duration) this is a complete answer on its own. For
+// anything it can't handle (an unsupported/unusual tag layout, or a
+// container this doesn't recognize at all), it comes back with whatever
+// duration native parsing found, tags_resolved left false -- callers fall
+// back to ffprobe for tags in that case.
 //
 // This is what turns "resolving an 800-track library's metadata" from
 // hundreds of ffprobe subprocess spawns (the actual bottleneck -- each one
 // costs tens to hundreds of milliseconds, worse under antivirus real-time
 // scanning on Windows) into a few pread() syscalls per file for the
-// overwhelming majority of a typical MP3 library.
+// overwhelming majority of a typical library, whatever mix of formats it's in.
 RowMeta try_native_row_meta(const fs::path& path) {
     RowMeta rm;
     uint32_t dur = probe_duration_native(path);
     if (dur > 0) rm.duration_sec = static_cast<double>(dur);
 
     std::string ext = lower(path_utf8(path.extension()));
-    if (ext == ".mp3") {
-        NativeId3Tags tags = probe_id3v2_native(path);
-        if (tags.resolved) {
-            rm.title = tags.title;
-            rm.artist = tags.artist;
-            rm.album = tags.album;
-            rm.tags_resolved = true; // fully resolved without ffprobe
-        }
+    NativeId3Tags tags;
+    if (ext == ".mp3") tags = probe_id3v2_native(path);
+    else if (ext == ".flac") tags = probe_flac_native(path);
+    else if (ext == ".ogg" || ext == ".opus") tags = probe_ogg_native(path);
+    else if (ext == ".m4a" || ext == ".mp4" || ext == ".aac") tags = probe_mp4_native(path);
+
+    if (tags.resolved) {
+        rm.title = tags.title;
+        rm.artist = tags.artist;
+        rm.album = tags.album;
+        rm.tags_resolved = true; // fully resolved without ffprobe
     }
     return rm;
 }

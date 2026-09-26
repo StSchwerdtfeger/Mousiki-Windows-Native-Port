@@ -387,6 +387,285 @@ NativeId3Tags probe_id3v2_native(const fs::path& path) {
     return result;
 }
 
+// ---------------------------------------------------------------------
+// FLAC / Ogg Vorbis / Opus: shared "Vorbis comment" list format --
+// vendor_length(4 LE) + vendor string + comment_count(4 LE), then that
+// many length-prefixed "KEY=value" (UTF-8) entries. Returns false on any
+// truncation (including one caused by a caller-side read cap) rather than
+// report a partial answer that might be missing exactly the field being
+// looked for.
+// ---------------------------------------------------------------------
+namespace {
+bool parse_vorbis_comment_list(const uint8_t* data, size_t len, NativeId3Tags& out) {
+    if (len < 4) return false;
+    size_t off = 0;
+    uint32_t vendor_len = read_le32(data + off); off += 4;
+    if (off + vendor_len > len) return false;
+    off += vendor_len;
+    if (off + 4 > len) return false;
+    uint32_t count = read_le32(data + off); off += 4;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (off + 4 > len) return false;
+        uint32_t clen = read_le32(data + off); off += 4;
+        if (off + clen > len) return false;
+        const char* p = reinterpret_cast<const char*>(data + off);
+        size_t eq = 0;
+        while (eq < clen && p[eq] != '=') ++eq;
+        if (eq < clen) {
+            std::string key(p, eq);
+            for (char& c : key) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            std::string val(p + eq + 1, clen - eq - 1);
+            if (key == "TITLE" && out.title.empty()) out.title = val;
+            else if (key == "ARTIST" && out.artist.empty()) out.artist = val;
+            else if (key == "ALBUM" && out.album.empty()) out.album = val;
+        }
+        off += clen;
+    }
+    return true; // fully parsed, whether or not any of the three keys were present
+}
+
+} // namespace
+
+NativeId3Tags probe_flac_native(const fs::path& path) {
+    NativeId3Tags result;
+    int fd = open_for_probe(path);
+    if (fd < 0) return result;
+
+    uint8_t magic[4];
+    if (pread_at(fd, magic, 4, 0) != 4 || std::memcmp(magic, "fLaC", 4) != 0) {
+        close_probe(fd);
+        return result;
+    }
+    // Text tags are always written well before any embedded cover art in
+    // practice; capping here keeps this fast without needing to actually
+    // read a multi-megabyte PICTURE block that might follow.
+    constexpr uint32_t kReadCap = 2 * 1024 * 1024;
+    long long offset = 4;
+    for (int guard = 0; guard < 64; ++guard) { // sane bound on metadata block count
+        uint8_t bhdr[4];
+        if (pread_at(fd, bhdr, 4, offset) != 4) { close_probe(fd); return result; } // truncated/corrupt
+        bool is_last = (bhdr[0] & 0x80) != 0;
+        uint8_t block_type = bhdr[0] & 0x7F;
+        uint32_t block_len = (uint32_t(bhdr[1]) << 16) | (uint32_t(bhdr[2]) << 8) | uint32_t(bhdr[3]);
+        offset += 4;
+        if (block_type == 4) { // VORBIS_COMMENT
+            uint32_t to_read = std::min(block_len, kReadCap);
+            std::vector<uint8_t> buf(to_read);
+            if (to_read > 0 && pread_at(fd, buf.data(), to_read, offset) != static_cast<long long>(to_read)) {
+                close_probe(fd);
+                return result;
+            }
+            close_probe(fd);
+            if (to_read < block_len) return result; // capped -- bail rather than risk a missed field
+            if (!parse_vorbis_comment_list(buf.data(), buf.size(), result)) return result;
+            result.resolved = true;
+            return result;
+        }
+        offset += block_len;
+        if (is_last) break;
+    }
+    close_probe(fd);
+    result.resolved = true; // walked every metadata block, genuinely no VORBIS_COMMENT block present
+    return result;
+}
+
+namespace {
+
+// Reassembles the first two logical packets (identification header, then
+// comment header) out of an Ogg bitstream's pages, following the lacing
+// values in each page's segment table so a packet that spans multiple
+// pages (large embedded cover art pushing the comment packet past one
+// page) is still reconstructed correctly rather than truncated at a page
+// boundary. Returns false (bail to ffprobe) on anything that doesn't look
+// like a well-formed Ogg stream, or if two full packets aren't available
+// within the read cap.
+bool collect_first_two_ogg_packets(int fd, long long file_size,
+                                    std::vector<uint8_t>& packet0, std::vector<uint8_t>& packet1) {
+    constexpr long long kCap = 2 * 1024 * 1024;
+    long long offset = 0;
+    int packet_index = 0;
+    std::vector<uint8_t> current;
+    while (offset + 27 <= file_size && offset < kCap) {
+        uint8_t page_hdr[27];
+        if (pread_at(fd, page_hdr, 27, offset) != 27) return false;
+        if (std::memcmp(page_hdr, "OggS", 4) != 0) return false;
+        uint8_t num_segments = page_hdr[26];
+        std::vector<uint8_t> seg_table(num_segments);
+        if (num_segments > 0 && pread_at(fd, seg_table.data(), num_segments, offset + 27) != num_segments)
+            return false;
+        long long pos = offset + 27 + num_segments;
+
+        size_t i = 0;
+        while (i < seg_table.size()) {
+            long long packet_start = pos;
+            long long packet_len = 0;
+            bool terminated = false;
+            while (i < seg_table.size()) {
+                uint8_t seg = seg_table[i++];
+                packet_len += seg;
+                pos += seg;
+                if (seg < 255) { terminated = true; break; }
+            }
+            if (packet_len > 0) {
+                size_t old_size = current.size();
+                current.resize(old_size + static_cast<size_t>(packet_len));
+                if (pread_at(fd, current.data() + old_size, static_cast<size_t>(packet_len), packet_start) != packet_len)
+                    return false;
+            }
+            if (terminated) {
+                if (packet_index == 0) { packet0 = std::move(current); current.clear(); packet_index = 1; }
+                else if (packet_index == 1) { packet1 = std::move(current); return true; }
+            }
+            // else: packet continues on the next page -- keep accumulating into `current`
+        }
+        offset = pos; // next page begins right after this page's segment data
+    }
+    return false; // ran out of pages/cap before completing two packets
+}
+
+} // namespace
+
+NativeId3Tags probe_ogg_native(const fs::path& path) {
+    NativeId3Tags result;
+    int fd = open_for_probe(path);
+    if (fd < 0) return result;
+    long long file_size = file_size_of(fd);
+    if (file_size <= 0) { close_probe(fd); return result; }
+
+    std::vector<uint8_t> packet0, packet1;
+    bool ok = collect_first_two_ogg_packets(fd, file_size, packet0, packet1);
+    close_probe(fd);
+    if (!ok) return result;
+
+    if (packet0.size() >= 8 && std::memcmp(packet0.data(), "OpusHead", 8) == 0) {
+        if (packet1.size() < 8 || std::memcmp(packet1.data(), "OpusTags", 8) != 0) return result;
+        if (!parse_vorbis_comment_list(packet1.data() + 8, packet1.size() - 8, result)) return result;
+        result.resolved = true;
+        return result;
+    }
+    if (packet0.size() >= 7 && packet0[0] == 0x01 && std::memcmp(packet0.data() + 1, "vorbis", 6) == 0) {
+        if (packet1.size() < 7 || packet1[0] != 0x03 || std::memcmp(packet1.data() + 1, "vorbis", 6) != 0)
+            return result;
+        if (!parse_vorbis_comment_list(packet1.data() + 7, packet1.size() - 7, result)) return result;
+        result.resolved = true;
+        return result;
+    }
+    return result; // some other codec in an Ogg container (Theora, FLAC-in-Ogg, Speex, ...) -- fall back
+}
+
+namespace {
+
+// One "box"/atom's content region, referencing into an already-read buffer
+// -- never owns memory, never copies.
+struct AtomRef {
+    const uint8_t* data = nullptr;
+    uint64_t size = 0;
+};
+
+// Finds a direct child atom by 4-character code within [buf, buf+len).
+// Handles the 64-bit "extended size" header (size field == 1) and the
+// "extends to end of parent" convention (size field == 0); anything that
+// doesn't fit within the given range stops the walk rather than read past
+// it.
+AtomRef find_atom(const uint8_t* buf, uint64_t len, const char name[4]) {
+    uint64_t off = 0;
+    while (off + 8 <= len) {
+        uint32_t sz32 = read_be32(buf + off);
+        uint64_t hdr_size = 8;
+        uint64_t atom_size;
+        if (sz32 == 1) {
+            if (off + 16 > len) break;
+            atom_size = read_be64(buf + off + 8);
+            hdr_size = 16;
+        } else if (sz32 == 0) {
+            atom_size = len - off;
+        } else {
+            atom_size = sz32;
+        }
+        if (atom_size < hdr_size || off + atom_size > len) break;
+        if (std::memcmp(buf + off + 4, name, 4) == 0) return { buf + off + hdr_size, atom_size - hdr_size };
+        off += atom_size;
+    }
+    return {};
+}
+
+} // namespace
+
+NativeId3Tags probe_mp4_native(const fs::path& path) {
+    NativeId3Tags result;
+    int fd = open_for_probe(path);
+    if (fd < 0) return result;
+    long long file_size = file_size_of(fd);
+    if (file_size <= 0) { close_probe(fd); return result; }
+
+    // Walk top-level atoms looking for 'moov', skipping over everything
+    // else (in particular 'mdat', the actual audio data, which can be the
+    // large majority of the file) by header alone -- never reading their
+    // contents.
+    constexpr uint64_t kMoovCap = 4 * 1024 * 1024;
+    long long offset = 0;
+    std::vector<uint8_t> moov_buf;
+    while (offset + 8 <= file_size) {
+        uint8_t hdr[16];
+        long long hdr_read = pread_at(fd, hdr, 16, offset);
+        if (hdr_read < 8) break;
+        uint32_t sz32 = read_be32(hdr);
+        uint64_t hdr_size = 8;
+        uint64_t atom_size;
+        if (sz32 == 1) {
+            if (hdr_read < 16) break;
+            atom_size = read_be64(hdr + 8);
+            hdr_size = 16;
+        } else if (sz32 == 0) {
+            atom_size = static_cast<uint64_t>(file_size - offset);
+        } else {
+            atom_size = sz32;
+        }
+        if (atom_size < hdr_size) break;
+        if (std::memcmp(hdr + 4, "moov", 4) == 0) {
+            uint64_t content_len = atom_size - hdr_size;
+            uint64_t to_read = std::min<uint64_t>(content_len, kMoovCap);
+            moov_buf.resize(to_read);
+            if (to_read > 0 &&
+                pread_at(fd, moov_buf.data(), to_read, offset + static_cast<long long>(hdr_size)) !=
+                    static_cast<long long>(to_read)) {
+                close_probe(fd);
+                return result; // truncated read -- bail to ffprobe
+            }
+            if (to_read < content_len) { close_probe(fd); return result; } // moov bigger than our cap -- bail
+            break;
+        }
+        offset += static_cast<long long>(atom_size);
+    }
+    close_probe(fd);
+    if (moov_buf.empty()) return result; // no 'moov' found at all -- not a container we understand here
+
+    AtomRef udta = find_atom(moov_buf.data(), moov_buf.size(), "udta");
+    if (!udta.data) { result.resolved = true; return result; } // valid moov, no iTunes-style tags at all
+    AtomRef meta = find_atom(udta.data, udta.size, "meta");
+    if (!meta.data) { result.resolved = true; return result; }
+    if (meta.size < 4) { result.resolved = true; return result; } // 'meta' is a full box: 4 bytes version+flags first
+    AtomRef ilst = find_atom(meta.data + 4, meta.size - 4, "ilst");
+    if (!ilst.data) { result.resolved = true; return result; }
+
+    auto extract_text = [&](const char tag[4]) -> std::string {
+        AtomRef item = find_atom(ilst.data, ilst.size, tag);
+        if (!item.data) return {};
+        AtomRef data_atom = find_atom(item.data, item.size, "data");
+        if (!data_atom.data || data_atom.size < 8) return {};
+        uint32_t type_indicator = read_be32(data_atom.data);
+        if (type_indicator != 1) return {}; // not plain UTF-8 text -- skip rather than misdecode
+        return std::string(reinterpret_cast<const char*>(data_atom.data + 8),
+                            static_cast<size_t>(data_atom.size - 8));
+    };
+
+    result.title = extract_text("\xA9" "nam");
+    result.artist = extract_text("\xA9" "ART");
+    result.album = extract_text("\xA9" "alb");
+    result.resolved = true;
+    return result;
+}
+
 uint32_t probe_duration_native(const fs::path& path) {
     int fd = open_for_probe(path);
     if (fd < 0) return 0;
