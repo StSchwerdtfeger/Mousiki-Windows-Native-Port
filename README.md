@@ -241,13 +241,13 @@ A few things added on top of the original design rather than required to run it 
 <img width="2302" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/633b4686-1c00-452b-9d39-b3002854f660" />
 
 
-- **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à etc.
-- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v`.
+- **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown...
+- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab.
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
 - **Search Engine Optimization** - Added fuzzy search ("X-Files" didn't show up when searched "X Files", i.e. without dash) and optimized speed for also searching through meta data (not only file titles), which in Windows took >2-3 min. after the app was started to be available (cache cap was also an issue and a bunch of subprocess handling via ffprobe, which remains as a fallback method in case the newly included ID3v2.3/2.4 frame-walker that reads TIT2/TPE1/TALB directly out can't handle the tag layout of a file for some reason...). The speedup currently only covers MP3 handling; I will look into a solution for FLAC (Vorbis comments), OGG/Opus, and M4A/AAC too the next days. 
-- **Hotkey remapping actually works (see above)** — as much as I understood a bug fix rather than a feature, but it's new behavior either way.
+- **Hotkey remapping actually works in app (see above)** — as much as I understood a bug fix rather than a feature, but it's new behavior either way.
 - **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
-- **Categorized** Key commands in Reference tab within the Settings. The color is coded within app.cpp; a change color feature could be added...
+- **Categorized** Key commands in Reference tab within the Settings. The color for the headers is coded within app.cpp; a change color feature for this settings part could be added...
  
   <img width="2294" height="1080" alt="grafik" src="https://github.com/user-attachments/assets/e060895e-e6fa-4132-a9c9-67e2d0ea2167" />
 
@@ -255,5 +255,22 @@ A few things added on top of the original design rather than required to run it 
 - **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
 - **A Lyrics Engine toggle that actually gates fetching**, not just the panel's visibility (`+` to toggle, or Settings → On/Off) — previously the fetch ran and hit the network every single track regardless of whether the panel was shown. Toggling it off now shows the sphere visualization in that space instead of leaving it blank.
 
+## Current Ideas on Features and Modifications (I will not implement all of them; the goal is to keep it simple and not change the TUI and the keyboard philosophy in its essentials):
+
+**Basic Features (that will definitely be implemented soon):**
+
+- speeding up meta data search availability  in Windows currently for MP3, next are FLAC (Vorbis comments), OGG/Opus and M4A/AAC
+- Key toggle and "On/Off" Settings menu tab toggle to show either file or metadata in the (search-)list via `SHIFT-N` 
+- Menu to change filename and meta data inside the app via `SHIFT-R`
+- Optionally adding folder paths via TUI instead of config.txt only
+- making loudness normalization adjustable in the app via extra menu (`SHIFT + G`)
+
+**Major New Features:**
+
+- Apart from regular playlists a modified playlist feature could be added: pixel art cassette tapes with limited number of tracks, A/B side, which can be shared. The cassettes could consist of a number of basic components like cassette style, label style, a decent number color sets (incl. a randomizer for composing the cassette style that optionally keeps track of what had been used already in the list of "cassette mixtapes"(i.e. with or without possible color redundancies or so))), may incl. a yt-dlp feature, where you can share a "cassette files / mixtapes (.mix fiels)" with others which include a list of commands (youtube urls) that can be shared and uploaded to your Mousiki player (commands that initialize starting fetching songs from youtube or elsewhere(local search included)); possible royalty free art that could be adjusted for that purpose (https://pixabay.com/illustrations/search/cassette%20tape/)
+- Fetching meta data from the MusicBrainz API would be interesting, however, it is not always accurate, so I'd include a warning, or make it necessary to confirm every single fetch, instead of just adding them to a file (a check of consistency between filename and meta data with special highlighting for mismatch via fuzzy comparison would also be an idea (currently I use Metatogger to do the job, which uses MusicBrainz as well)). Either way, a separate more complex menu with maybe "autosave" function of a fetch state until including edited tracks during a session until fully saved would be necessary in order to avoid loss of working through the files and general confusion what had been adjusted already and what not...) 
+- listening history (last 10, 25, 50, 100, 200 titles), optionally making it possible to add the to the queue or new or existing playlist (without duplicates!); maybe history including duration of titles (analysis of user listening behavior, but keeping it simple)
+- Search online radio channels incl. a key toggle to switch to radio mode, slight main UI changes where the progress bar could become a radio frequency bar including truning buttons, where different chosen online channels could be assigned to certain frequencies, including a fade effect with an overlay of a selection of noisy sounds when changing the channel (would limit the number of possible channels)... Key toggles for next song (`n` and shuffle nex `#` could be re-used as commands to change channels; probably makes more sense than fiddling around with arrow key (I grew up with classic radios and it was fun but also daunting)); 
+- an optional command palette screen for certain functions, such as meta data editing, playlist menu etc.; depending on the possible commands, it would be partially redundant to the current settings menu (not sure about that, but since the number of hotkeys has grown, it might be worth chasing this idea; I am not sure, since it moves users away from the keyboard)
 
 
