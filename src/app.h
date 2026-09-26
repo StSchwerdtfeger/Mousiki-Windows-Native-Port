@@ -140,7 +140,22 @@ private:
     std::vector<PlaylistSummary> playlist_view_;
     std::string last_playlist_query_;
     std::vector<PlaylistSummary> filter_playlists(const std::string& query) const;
-    fs::path playlists_dir() const; // settings_.playlists_path if set, else local_music_paths[0]/playlists
+    // First configured PlaylistsPath (settings_.playlists_paths[0]) if the
+    // user set one (config.txt's PlaylistsPath=), else
+    // local_music_paths[0]/playlists -- this is the folder NEW playlists
+    // are written to and deleted from.
+    fs::path playlists_dir() const;
+    // Every configured PlaylistsPath (all of them are searched when
+    // listing/loading playlists); just {playlists_dir()} when none is set,
+    // so every caller has at least one folder to look in.
+    std::vector<fs::path> playlist_dirs() const;
+    // Playlists found across playlist_dirs(), merged and de-duplicated by
+    // name (the first folder containing a name wins) -- what both the
+    // main "/p:" list and the playlist editor's manage tab show.
+    std::vector<PlaylistSummary> playlist_summaries() const;
+    // Loads a playlist by name from whichever playlist_dirs() folder has
+    // it; std::nullopt if none does.
+    std::optional<Playlist> load_playlist(const std::string& name) const;
     void playlist_add_selected_to_queue();
 
     // --- playlist editor overlay (Mode::Playlist, HKeyPlaylist) ----------
@@ -497,6 +512,56 @@ private:
     // now sizes off term_rows_ directly instead.)
     void build_settings_screen(std::ostringstream& frame, int W, int player_h) const;
     void handle_settings_key(int key);
+
+    // --- ON/OFF tab layout model (tab 1) --------------------------------
+    // The ON/OFF tab is not a flat list of toggles: underneath them it
+    // also holds two editable path lists, each introduced by a section
+    // header and each ending in a "+ new path" row. Headers are painted
+    // but never selectable, so this struct maps the flat selectable index
+    // the arrow keys walk (settings_row_) onto the display row actually
+    // drawn on screen -- the same disp/scroll relationship the Reference
+    // tab's ref_display_row() provides for its own headers. Both the
+    // renderer and the ColorEdit cursor placement build this once per
+    // frame so they can never disagree on where a row landed, and the
+    // whole thing scrolls (viewport centered on settings_row_) when the
+    // toggle + path rows no longer fit the terminal.
+    struct OnOffRow {
+        enum class Kind { Toggle, Path, AddPath, Header };
+        Kind kind = Kind::Toggle;
+        int sel = -1;              // selectable index, -1 for headers (unselectable)
+        int path_index = -1;       // Path: index inside the owning vector
+        bool playlist_path = false; // Path/AddPath: true = playlist paths, false = local music paths
+        const char* label = "";    // Toggle: field label; Header: section title; AddPath: "+ new path"
+    };
+    // Every display row of the ON/OFF tab, in paint order, with `sel`
+    // assigned over the selectable ones. Always at least one path row per
+    // list even while the underlying vector is empty (an unset path is
+    // shown as an empty field rather than as no field at all).
+    std::vector<OnOffRow> build_onoff_rows() const;
+    // Display row backing the given selectable row (or -1 if it has none
+    // -- only possible for an out-of-range argument).
+    int onoff_display_row(int selectable_row) const;
+    // The row itself; its `sel` field is -1 when there is no such
+    // selectable row, which is how callers detect an out-of-range index.
+    OnOffRow onoff_row(int selectable_row) const;
+    // True when the given selectable row edits one of the path lists --
+    // drives the edit-buffer length limit, since a path needs far more
+    // characters than a color/hotkey field does.
+    bool onoff_row_is_path(int selectable_row) const;
+
+    // Title shown for `path` in the (search-)lists. Honours
+    // settings_.meta_only: metadata-only mode substitutes the embedded
+    // title tag for the filename stem as soon as one has been resolved
+    // for that file, and falls back to the filename when there is no tag
+    // (or none resolved yet), so an untagged library still renders rows.
+    std::string list_row_title(const fs::path& path, const std::string& filename_title) const;
+
+    // Re-runs LocalSource::scan() over the current
+    // settings_.local_music_paths and rebuilds local_view_ -- called when
+    // a path is edited in the ON/OFF tab, so a path change takes effect
+    // immediately instead of only on the next launch (config.txt's own
+    // comment used to say "there's no live rescan"; there is now).
+    void rescan_library();
 
     // Max row count per tab (set in build_settings_screen)
 

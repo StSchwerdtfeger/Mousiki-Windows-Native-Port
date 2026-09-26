@@ -70,6 +70,14 @@ void win_raw_mode_exit();
 // already handle exactly this shape of input from the POSIX side.
 int win_poll_key();
 
+// True while the key win_poll_key() just returned was one of the four
+// arrow keys. Because arrows deliberately collapse to the letters
+// 'A'-'D' (the contract documented above), a value of 'A' on its own can
+// be either an Up press or a real capital A -- and a path/text field that
+// wants to accept uppercase letters needs to tell those apart.
+// see last_key_was_arrow() in terminal_ui.h for the platform-neutral view.
+bool win_last_key_was_arrow();
+
 int win_term_rows();
 int win_term_cols();
 

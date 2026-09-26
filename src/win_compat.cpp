@@ -326,21 +326,39 @@ std::string g_pending_key_bytes;
 // arrives in a later event -- needed for any character outside the BMP
 // (rare from a keyboard, but IME composition and emoji input can do it).
 wchar_t g_pending_high_surrogate = 0;
+// Whether the key win_poll_key() just handed back was an arrow key. The
+// arrows are returned as the letters 'A'-'D' (see the switch in
+// win_poll_key() below), so by value alone a caller cannot tell a real
+// capital A from an Up press -- this is the disambiguation. Every
+// non-arrow return path resets it (including the queued continuation-byte
+// path at the top, which can only ever resume a multi-byte character,
+// never an arrow), so the flag is always in sync with the value just
+// returned.
+bool g_last_key_was_arrow = false;
 } // namespace
+
+bool win_last_key_was_arrow() { return g_last_key_was_arrow; }
 
 int win_poll_key() {
     if (!g_pending_key_bytes.empty()) {
         unsigned char b = static_cast<unsigned char>(g_pending_key_bytes.front());
         g_pending_key_bytes.erase(g_pending_key_bytes.begin());
+        g_last_key_was_arrow = false; // a continuation byte can only ever finish off a real character
         return b;
     }
 
     DWORD events = 0;
-    if (!GetNumberOfConsoleInputEvents(g_con.in, &events) || events == 0) return 0;
+    if (!GetNumberOfConsoleInputEvents(g_con.in, &events) || events == 0) {
+        g_last_key_was_arrow = false;
+        return 0;
+    }
 
     INPUT_RECORD rec;
     DWORD got = 0;
-    if (!ReadConsoleInputW(g_con.in, &rec, 1, &got) || got == 0) return 0;
+    if (!ReadConsoleInputW(g_con.in, &rec, 1, &got) || got == 0) {
+        g_last_key_was_arrow = false;
+        return 0;
+    }
 
     if (rec.EventType != KEY_EVENT || !rec.Event.KeyEvent.bKeyDown) {
         // Key-up, resize, focus-change, mouse (mouse input isn't even
@@ -363,16 +381,17 @@ int win_poll_key() {
     // nothing downstream of this function (app.cpp's key handling) has to
     // know or care which platform it's running on.
     switch (k.wVirtualKeyCode) {
-        case VK_UP:    return 'A';
-        case VK_DOWN:  return 'B';
-        case VK_RIGHT: return 'C';
-        case VK_LEFT:  return 'D';
-        case VK_HOME:  return kKeyHome;
-        case VK_DELETE: return kKeyDelete;
+        case VK_UP:    g_last_key_was_arrow = true;  return 'A';
+        case VK_DOWN:  g_last_key_was_arrow = true;  return 'B';
+        case VK_RIGHT: g_last_key_was_arrow = true;  return 'C';
+        case VK_LEFT:  g_last_key_was_arrow = true;  return 'D';
+        case VK_HOME:  g_last_key_was_arrow = false; return kKeyHome;
+        case VK_DELETE: g_last_key_was_arrow = false; return kKeyDelete;
         default: break;
     }
 
     wchar_t wc = k.uChar.UnicodeChar;
+    g_last_key_was_arrow = false; // from here down it is a real character or nothing at all
     if (wc == 0) return 0; // a bare modifier, function key, Home/End/PgUp/... -- ignored, as on POSIX
     if (wc == 8) return 127; // Backspace -- same normalization the old _getch() path applied
     if (wc < 128) return static_cast<int>(wc); // plain ASCII: Enter (13), Tab (9), Esc (27), space, digits, letters, ...

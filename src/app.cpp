@@ -13,6 +13,7 @@
 #include <random>
 #include <sstream>
 #include <thread>
+#include <unordered_set>
 #if defined(_WIN32)
 #include "win_compat.h"
 #else
@@ -613,6 +614,21 @@ void App::log_event(const std::string& msg) {
 // background sweep (launch_row_meta_resolver) has had to run: each row's
 // real tags only become searchable once resolved. A file whose tags
 // haven't resolved yet is still findable by filename in the meantime.
+// Title shown for `path` in the (search-)lists. Normally that is just the
+// filename stem the row was built from; with "Show meta data only"
+// (settings_.meta_only) on, the embedded title tag wins as soon as one has
+// been resolved for that file, so the row shows metadata rather than a
+// filename. Files with no title tag (or tags not probed yet) still fall
+// back to the filename -- otherwise turning the toggle on would blank out
+// an untagged library instead of just re-describing it.
+std::string App::list_row_title(const fs::path& path, const std::string& filename_title) const {
+    if (!settings_.meta_only) return filename_title;
+    std::lock_guard<std::mutex> lk(row_meta_mutex_);
+    auto it = row_meta_cache_.find(path_utf8(path));
+    if (it != row_meta_cache_.end() && !it->second.title.empty()) return it->second.title;
+    return filename_title;
+}
+
 std::vector<LocalTrack> App::filter_and_rank_local(const std::string& query) const {
     if (query.empty()) {
         auto result = all_local_tracks_;
@@ -698,6 +714,39 @@ void App::refresh_local_view() {
     scroll_ = 0;
 }
 
+// Re-runs the local library scan over whatever settings_.local_music_paths
+// holds right now, then rebuilds the view on top of the result. This is
+// what makes a path edited in the ON/OFF tab take effect immediately --
+// config.txt used to promise "the library is scanned once at startup,
+// there's no live rescan", and editing a local path from Settings now IS
+// a live rescan (it still needs [S]/quit for the change to be written to
+// config.txt, of course).
+void App::rescan_library() {
+    // Keep the streamed-track cache folder in the list even if the edit
+    // happened to drop it, for the same reason the constructor injects it
+    // at all: downloaded songs belong in the local view.
+    std::string cache_dir_str = path_utf8(cache_.cache_dir());
+    if (std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), cache_dir_str)
+        == settings_.local_music_paths.end()) {
+        settings_.local_music_paths.push_back(cache_dir_str);
+    }
+
+    // A local diagnostics vector, not local_scan_diagnostics_ -- that one
+    // is read back once at startup by run() (before any rescan can happen)
+    // and never again, so per-scan results go straight to the log instead.
+    std::vector<std::string> diagnostics;
+    all_local_tracks_ = local_source_.scan(settings_.local_music_paths, &diagnostics);
+    refresh_local_view(); // applies the active query/sort/filter to the new set
+    for (const auto& line : diagnostics) ConsoleLog::instance().log_basic(line);
+
+    // Newly added files need their tags resolved too -- for search and for
+    // metadata-only rows. Re-arm the background sweep, which skips every
+    // path already present in row_meta_cache_; if a previous sweep is
+    // still winding down the two simply overlap, idempotently.
+    row_meta_resolver_started_.store(false, std::memory_order_relaxed);
+    launch_row_meta_resolver();
+}
+
 // Called on every keystroke while typing in the search box, before
 // Enter is pressed — this is the "incremental search" behavior: the
 // list updates live as you type instead of only after confirming. Local
@@ -775,7 +824,7 @@ void App::submit_search() {
 // enough (just a directory scan) to re-run on every keystroke, same as
 // the "p:" live preview above does.
 std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) const {
-    auto all = PlaylistManager::list(playlists_dir());
+    auto all = playlist_summaries();
     if (query.empty()) return all;
     std::vector<PlaylistSummary> out;
     out.reserve(all.size());
@@ -783,15 +832,18 @@ std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) con
     return out;
 }
 
-// settings_.playlists_path if the user set one (config.txt's
-// PlaylistsPath=), otherwise settings_.local_music_paths[0]/playlists --
-// same "first configured local path" fallback HKeyDownloadStream uses
+// The folder NEW playlists are written to and deleted from: the first
+// configured PlaylistsPath (settings_.playlists_paths[0] -- config.txt's
+// PlaylistsPath= line, editable from the ON/OFF tab's PLAYLIST PATH
+// list), otherwise settings_.local_music_paths[0]/playlists -- same
+// "first configured local path" fallback HKeyDownloadStream uses
 // (~/Music if none configured at all, which by the time this runs may
 // itself have become the cache folder -- see load_library()'s
 // cache-dir injection). Computed fresh every call, not cached, so it
 // always reflects whatever the user currently has set in Settings.
 fs::path App::playlists_dir() const {
-    if (!settings_.playlists_path.empty()) return path_from_utf8(settings_.playlists_path);
+    if (!settings_.playlists_paths.empty() && !settings_.playlists_paths[0].empty())
+        return path_from_utf8(settings_.playlists_paths[0]);
     std::string base;
     if (!settings_.local_music_paths.empty()) {
         base = settings_.local_music_paths[0];
@@ -800,6 +852,55 @@ fs::path App::playlists_dir() const {
         base = home ? (std::string(home) + "/Music") : "./Music";
     }
     return path_from_utf8(base) / "playlists";
+}
+
+// Every folder playlists are searched in: all of the configured ones, or
+// the single folder playlists_dir() resolves to when none is (so every
+// caller always has at least one directory to look in). Blanks are
+// skipped -- an empty entry is what a "+ new path" line looks like until
+// the user has finished typing it -- and duplicates collapse, since
+// scanning the same folder twice would just re-yield its playlists.
+std::vector<fs::path> App::playlist_dirs() const {
+    std::vector<fs::path> out;
+    for (const auto& p : settings_.playlists_paths) {
+        if (p.empty()) continue;
+        fs::path dir = path_from_utf8(p);
+        if (std::find(out.begin(), out.end(), dir) == out.end()) out.push_back(dir);
+    }
+    if (out.empty()) out.push_back(playlists_dir());
+    return out;
+}
+
+// Playlists across every folder in playlist_dirs(), merged into one
+// list: what both the main "/p:" list and the playlist editor's manage
+// tab show. De-duplicated by case-insensitive name with the first folder
+// containing it winning (so a row always resolves to one concrete file,
+// wherever it gets opened from), then re-sorted with exactly the
+// case-insensitive order PlaylistManager::list() already guarantees
+// within a single folder -- so several configured folders read as one
+// alphabetized list rather than as concatenated per-folder blocks.
+std::vector<PlaylistSummary> App::playlist_summaries() const {
+    std::vector<PlaylistSummary> merged;
+    std::unordered_set<std::string> seen;
+    for (const fs::path& dir : playlist_dirs()) {
+        for (PlaylistSummary& s : PlaylistManager::list(dir)) {
+            if (seen.insert(lower(s.name)).second) merged.push_back(std::move(s));
+        }
+    }
+    std::sort(merged.begin(), merged.end(),
+              [](const PlaylistSummary& a, const PlaylistSummary& b) { return lower(a.name) < lower(b.name); });
+    return merged;
+}
+
+// Loads a playlist by name from whichever playlist_dirs() folder has it
+// -- first match wins, the same rule playlist_summaries() de-duplicated
+// with, so what the list showed always loads. nullopt when no folder
+// holds that name (anymore).
+std::optional<Playlist> App::load_playlist(const std::string& name) const {
+    for (const fs::path& dir : playlist_dirs()) {
+        if (auto pl = PlaylistManager::load(dir, name)) return pl;
+    }
+    return std::nullopt;
 }
 
 // ---------------------------------------------------------------------
@@ -1345,7 +1446,7 @@ void App::queue_add_selected() {
 void App::playlist_add_selected_to_queue() {
     if (playlist_view_.empty() || selected_ < 0 || selected_ >= static_cast<int>(playlist_view_.size())) return;
     const auto& summary = playlist_view_[selected_];
-    auto pl = PlaylistManager::load(playlists_dir(), summary.name);
+    auto pl = load_playlist(summary.name);
     if (!pl) { status_line_ = "could not load \"" + summary.name + "\""; return; }
 
     int added = 0, skipped = 0;
@@ -1623,6 +1724,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyRefreshUi", "Refresh UI"},
     {nullptr, "HKeyToggleWaveform", "Toggle Waveform"},
     {nullptr, "HKeyToggleLyrics", "Toggle Lyrics"},
+    {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
     {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
@@ -1679,6 +1781,100 @@ static int ref_display_row(int selectable_row) {
     return selectable_row + headers;
 }
 
+// The ON/OFF tab's toggle rows, in paint order -- and that order IS the
+// tab's selectable row index (settings_row_) for its toggle part: both
+// settings_get_value()/settings_commit_edit() and the renderer key off
+// it, so appending a line here is all it takes to add another toggle.
+static const char* const kOnOffToggles[] = {
+    "Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
+    "Lyrics Engine", "Lyric Ball", "Visualizer", "Stereo Sound",
+    "Normalize Volume", "Show meta data only",
+};
+static constexpr int kOnOffToggleCount =
+    static_cast<int>(sizeof(kOnOffToggles) / sizeof(kOnOffToggles[0]));
+
+// Rebuilds the ON/OFF tab's full paint order: every toggle, then a
+// "LOCAL PATH" header + one row per configured local music path + a
+// "+ new path" row, then the same three for the playlist paths. Headers
+// are display-only (sel stays -1); everything else gets the next
+// selectable index in order.
+//
+// A section whose vector is still empty still shows one (empty) row: an
+// unset path has to be an editable blank field, not a missing one,
+// otherwise there'd be nowhere to type the very first path.
+std::vector<App::OnOffRow> App::build_onoff_rows() const {
+    std::vector<OnOffRow> rows;
+    rows.reserve(kOnOffToggleCount + 8);
+
+    int sel = 0;
+    for (int i = 0; i < kOnOffToggleCount; ++i) {
+        OnOffRow r;
+        r.kind = OnOffRow::Kind::Toggle;
+        r.sel = sel++;
+        r.label = kOnOffToggles[i];
+        rows.push_back(r);
+    }
+
+    auto add_path_section = [&](const char* header, bool playlist) {
+        OnOffRow h;
+        h.kind = OnOffRow::Kind::Header;
+        h.label = header;
+        rows.push_back(h);
+
+        const std::vector<std::string>& paths = playlist ? settings_.playlists_paths
+                                                         : settings_.local_music_paths;
+        int count = std::max(1, static_cast<int>(paths.size()));
+        for (int i = 0; i < count; ++i) {
+            OnOffRow p;
+            p.kind = OnOffRow::Kind::Path;
+            p.sel = sel++;
+            p.path_index = i;
+            p.playlist_path = playlist;
+            rows.push_back(p);
+        }
+
+        OnOffRow add;
+        add.kind = OnOffRow::Kind::AddPath;
+        add.sel = sel++;
+        add.playlist_path = playlist;
+        add.label = "+ new path";
+        rows.push_back(add);
+    };
+
+    add_path_section("LOCAL PATH", false);
+    add_path_section("PLAYLIST PATH", true);
+    return rows;
+}
+
+// Selectable row -> the display row it's painted on. Every header
+// contributes two display rows (a blank spacer above it plus the title
+// itself, exactly like the Reference tab's category headers), so this
+// walks the layout and counts rather than just indexing -- the same
+// relationship ref_display_row() provides over on the Reference tab,
+// shared by the renderer and the ColorEdit cursor placement below so the
+// two can never disagree. -1 if there is no such selectable row.
+int App::onoff_display_row(int selectable_row) const {
+    int disp = 0;
+    for (const OnOffRow& r : build_onoff_rows()) {
+        if (r.kind == OnOffRow::Kind::Header) { disp += 2; continue; }
+        if (r.sel == selectable_row) return disp;
+        disp++;
+    }
+    return -1;
+}
+
+App::OnOffRow App::onoff_row(int selectable_row) const {
+    OnOffRow none; // sel == -1 == "no such row"
+    if (selectable_row < 0) return none;
+    for (const OnOffRow& r : build_onoff_rows()) if (r.sel == selectable_row) return r;
+    return none;
+}
+
+bool App::onoff_row_is_path(int selectable_row) const {
+    OnOffRow r = onoff_row(selectable_row);
+    return r.sel >= 0 && r.kind == OnOffRow::Kind::Path;
+}
+
 std::string* App::color_field_ptr(int row, int col) {
     switch (row) {
         case 0: return col == 0 ? &settings_.border_color : &settings_.border_color_bottom;
@@ -1695,6 +1891,7 @@ std::string* App::color_field_ptr(int row, int col) {
         case 11: return col == 0 ? &settings_.inactive_line_color : &settings_.inactive_line_bg_color;
         case 12: return col == 0 ? &settings_.active_line_color : &settings_.active_line_bg_color;
         case 13: return col == 0 ? &settings_.active_word_color : &settings_.active_word_bg_color;
+        case 14: return col == 0 ? &settings_.header_color : nullptr; // HEADER: text color only, no background cell
         default: return nullptr;
     }
 }
@@ -1705,8 +1902,15 @@ int App::settings_max_row() const {
     // scrollable text (both computed dynamically, not hardcoded, so they
     // track the actual font_map/about_app_lines content).
     switch (settings_tab_) {
-        case 0: return 13; // COLOR_SCHEMA: 14 rows
-        case 1: return 8;  // ONOFF_SCHEMA: 9 rows
+        case 0: return 14; // COLOR_SCHEMA: 15 rows (the extra one is HEADER)
+        case 1: {          // ON/OFF: the toggles plus the LOCAL PATH /
+            // PLAYLIST PATH lists -- computed from the layout instead of
+            // hardcoded, since it now depends on how many paths are
+            // configured. Headers are not selectable and don't count.
+            int last = -1;
+            for (const auto& r : build_onoff_rows()) last = std::max(last, r.sel);
+            return last;
+        }
         case 2: return 7;  // ANIM_SCHEMA: 8 rows
         case 3: {
             int letters = 0;
@@ -1732,6 +1936,21 @@ std::string App::settings_get_value(int row, int col) const {
         return p ? *p : "";
     }
     if (settings_tab_ == 1) {
+        // The toggle rows read straight off their bool; the path rows
+        // (added below the toggles -- see build_onoff_rows()) read the
+        // string at their index in the owning vector, which is "" both
+        // for a not-yet-set path and for a placeholder row shown while
+        // the vector is still empty.
+        OnOffRow r = onoff_row(row);
+        if (r.sel < 0) return "";
+        if (r.kind == OnOffRow::Kind::Path) {
+            const std::vector<std::string>& paths = r.playlist_path ? settings_.playlists_paths
+                                                                    : settings_.local_music_paths;
+            if (r.path_index >= 0 && r.path_index < static_cast<int>(paths.size()))
+                return paths[r.path_index];
+            return "";
+        }
+        if (r.kind == OnOffRow::Kind::AddPath) return ""; // the row IS the button, it has no value
         bool v = false;
         switch (row) {
             case 0: v = settings_.element_disk; break;
@@ -1743,6 +1962,7 @@ std::string App::settings_get_value(int row, int col) const {
             case 6: v = settings_.element_visualizer; break;
             case 7: v = settings_.stereo; break;
             case 8: v = settings_.normalize; break;
+            case 9: v = settings_.meta_only; break;
         }
         return v ? "true" : "false";
     }
@@ -1775,7 +1995,16 @@ std::string App::settings_get_value(int row, int col) const {
 // through. Empty return = not cyclable (Colors and Reference rows,
 // exactly like the reference's g_options map has no entries for those).
 std::vector<std::string> App::settings_options_for(int tab, int row) const {
-    if (tab == 1) return {"true", "false"};
+    if (tab == 1) {
+        // Only the bool toggles cycle through a fixed value list. Path
+        // fields are free text (a folder to type in), and "+ new path" is
+        // an action row rather than a value -- neither has anything for
+        // Left/Right to walk, and letting it pretend otherwise would feed
+        // a "true"/"false" into a commit that then had nowhere to put it.
+        OnOffRow r = onoff_row(row);
+        if (r.sel < 0 || r.kind != OnOffRow::Kind::Toggle) return {};
+        return {"true", "false"};
+    }
     if (tab == 2) {
         switch (row) {
             case 0: return {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
@@ -1803,6 +2032,38 @@ void App::settings_commit_edit() {
         std::string* p = color_field_ptr(settings_row_, settings_col_);
         if (p) *p = buf;
     } else if (settings_tab_ == 1) {
+        OnOffRow r = onoff_row(settings_row_);
+        if (r.kind == OnOffRow::Kind::Path) {
+            // A path row commits a string instead of a bool. Trim the stray
+            // spaces a careless Enter can leave behind (a trailing one would
+            // otherwise point at a directory that doesn't exist) and expand
+            // a leading ~ exactly the way load_settings() does, so
+            // "~/Music" means the same thing whether it was typed into this
+            // field or written into config.txt by hand. Committing an empty
+            // value deletes the line rather than storing a blank
+            // LocalMusicPath=/PlaylistsPath= -- which is also what keeps
+            // the placeholder row a still-empty list shows harmless.
+            std::string p = buf;
+            while (!p.empty() && (p.front() == ' ' || p.front() == '\t')) p.erase(p.begin());
+            while (!p.empty() && (p.back() == ' ' || p.back() == '\t')) p.pop_back();
+            if (!p.empty() && p[0] == '~') {
+                const char* home = std::getenv("HOME");
+                if (home) p = std::string(home) + p.substr(1);
+            }
+            std::vector<std::string>& paths = r.playlist_path ? settings_.playlists_paths
+                                                              : settings_.local_music_paths;
+            if (static_cast<int>(paths.size()) <= r.path_index) paths.resize(r.path_index + 1);
+            if (p.empty()) {
+                paths.erase(paths.begin() + r.path_index);
+                status_line_ = r.playlist_path ? "playlist path removed" : "local path removed";
+            } else {
+                paths[r.path_index] = p;
+                status_line_ = std::string(r.playlist_path ? "playlist path: " : "local path: ") + p;
+            }
+            if (!r.playlist_path) rescan_library(); // the whole point: paths apply without a restart
+            settings_row_ = std::min(settings_row_, settings_max_row()); // the list may have shrunk by one
+            return;
+        }
         std::string v = to_lower(buf);
         bool is_true = (v == "true"), is_false = (v == "false");
         if (!is_true && !is_false) return;
@@ -1824,6 +2085,7 @@ void App::settings_commit_edit() {
                                           static_cast<float>(settings_.normalize_target_lufs),
                                           static_cast<float>(settings_.normalize_max_boost_db));
                 break;
+            case 9: settings_.meta_only = is_true; break;
         }
     } else if (settings_tab_ == 2) {
         std::string v = to_lower(buf);
@@ -1875,6 +2137,10 @@ void App::settings_cycle(int dir) {
     if (settings_tab_ == 1 && settings_row_ == 8) {
         status_line_ = settings_.normalize ? "normalize: on" : "normalize: off";
     }
+    if (settings_tab_ == 1 && settings_row_ == 9) {
+        status_line_ = settings_.meta_only ? "lists: metadata only (no filename)"
+                                           : "lists: filename + metadata";
+    }
 }
 
 void App::handle_settings_key(int key) {
@@ -1899,20 +2165,29 @@ void App::handle_settings_key(int key) {
                     return; // stay in ColorEdit: redraw and repeat
                 }
             }
+            // Path commits write their own status (which path changed, and
+            // that the library was rescanned) -- don't bury it under the
+            // generic "UPDATED".
+            bool was_path = (settings_tab_ == 1 && onoff_row(settings_row_).kind == OnOffRow::Kind::Path);
             settings_commit_edit();
-            status_line_ = key_name.empty() ? "UPDATED" : ("UPDATED " + key_name);
+            if (!was_path) status_line_ = key_name.empty() ? "UPDATED" : ("UPDATED " + key_name);
             mode_ = Mode::Settings;
             return;
         }
         if (key == 127 || key == 8) { pop_utf8_char(color_edit_buffer_); return; }
-        // Same bug as Mode::Search below: arrow keys collapse to 'A'-'D',
-        // which sit inside 32-126 and would otherwise get typed as literal
-        // letters. No navigable list here to repurpose them for, so they're
-        // just excluded -- also avoids letting a hotkey rebind on this same
-        // buffer accidentally capture an arrow-key code, which would create
-        // exactly this collision for whatever action got bound to it.
-        if ((key == 'A' || key == 'B' || key == 'C' || key == 'D')) return;
-        if (is_text_key(key) && color_edit_buffer_.size() < 18) color_edit_buffer_ += static_cast<char>(key);
+        // Arrow keys collapse to the letters 'A'-'D' (same collision as
+        // Mode::Search below), which sit inside 32-126 and would otherwise
+        // be typed as literal letters -- for a hotkey rebind that would
+        // mean an arrow press could silently become the new binding. The
+        // value on its own can't tell a real capital A from an Up press,
+        // so ask the input layer instead: a genuinely typed A-D goes into
+        // the buffer now (without it a Windows path could never be
+        // entered -- "C:\" has no way past this check), while an arrow
+        // press is still dropped exactly as before.
+        if ((key == 'A' || key == 'B' || key == 'C' || key == 'D') && last_key_was_arrow()) return;
+        // A path needs far more room than a color/hotkey field does.
+        const int edit_limit = (settings_tab_ == 1 && onoff_row_is_path(settings_row_)) ? 240 : 18;
+        if (is_text_key(key) && color_edit_buffer_.size() < edit_limit) color_edit_buffer_ += static_cast<char>(key);
         return;
     }
 
@@ -1939,6 +2214,27 @@ void App::handle_settings_key(int key) {
 
     if (key == '\r' || key == '\n') {
         if (settings_tab_ == 3 && settings_row_ >= kRefRowCount) return; // hardcoded/font-map rows are read-only display
+        if (settings_tab_ == 1) {
+            OnOffRow r = onoff_row(settings_row_);
+            if (r.kind == OnOffRow::Kind::AddPath) {
+                // "+ new path": append an empty line to the list this row
+                // belongs to and go straight into editing it. No row
+                // bookkeeping needed -- build_onoff_rows() gives the new
+                // entry exactly the selectable index this AddPath row just
+                // vacated (every row after it shifts up by one), so
+                // settings_row_ already points at the new empty field.
+                std::vector<std::string>& paths = r.playlist_path ? settings_.playlists_paths
+                                                                  : settings_.local_music_paths;
+                paths.push_back("");
+                color_edit_buffer_.clear();
+                mode_ = Mode::ColorEdit;
+                status_line_ = r.playlist_path
+                    ? "new playlist path -- type it, ENTER to confirm"
+                    : "new local music path -- type it, ENTER to confirm";
+                force_redraw_ = true;
+                return;
+            }
+        }
         color_edit_buffer_ = settings_get_value(settings_row_, settings_col_);
         mode_ = Mode::ColorEdit;
         return;
@@ -2332,6 +2628,13 @@ void App::handle_key(int key) {
         }
         status_line_ = msg;
         log_event(msg);
+    } else if (action == "HKeyToggleMetaOnly") { // SHIFT+N: swap the lists between filename+metadata and metadata-only rows
+        settings_.meta_only = !settings_.meta_only;
+        std::string msg = settings_.meta_only ? "lists: metadata only (no filename)"
+                                              : "lists: filename + metadata";
+        status_line_ = msg;
+        log_event(msg);
+        force_redraw_ = true;
     } else if (action == "HKeyToggleMute") { // force volume to 0 without touching pause state
         if (!muted_) {
             pre_mute_volume_ = player_.volume();
@@ -2566,7 +2869,11 @@ void App::recompute_waveform_for_current_track() {
 }
 
 void App::launch_row_meta_resolver() {
-    if (row_meta_resolver_started_.exchange(true)) return; // only ever runs once per app session
+    // One sweep per session -- except that rescan_library() clears the
+    // flag when the configured path set changes, which is the one
+    // situation where files this sweep has already passed (or never saw)
+    // can appear.
+    if (row_meta_resolver_started_.exchange(true)) return;
     auto paths = std::make_shared<std::vector<fs::path>>();
     paths->reserve(all_local_tracks_.size());
     for (auto& t : all_local_tracks_) paths->push_back(t.path);
@@ -3274,7 +3581,7 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                     }
                 }
                 std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
-                std::string t_title = apply_font_map(t.title, settings_.font_map);
+                std::string t_title = apply_font_map(list_row_title(t.path, t.title), settings_.font_map);
                 std::string t_artist = apply_font_map(artist, settings_.font_map);
                 std::string t_dur = apply_font_map(fmt_mmss(dur), settings_.font_map);
 
@@ -3393,7 +3700,7 @@ void App::playlist_refresh_lib_view() {
 }
 
 void App::playlist_refresh_manage_view() {
-    playlist_manage_view_ = PlaylistManager::list(playlists_dir());
+    playlist_manage_view_ = playlist_summaries();
     playlist_manage_selected_ = std::clamp(playlist_manage_selected_, 0,
         std::max(0, static_cast<int>(playlist_manage_view_.size()) - 1));
 }
@@ -3422,7 +3729,7 @@ void App::playlist_open_editor() {
 }
 
 void App::playlist_load_into_editor(const std::string& name) {
-    auto pl = PlaylistManager::load(playlists_dir(), name);
+    auto pl = load_playlist(name);
     if (!pl) { playlist_status_ = "could not load \"" + name + "\""; return; }
     playlist_edit_name_ = pl->name;
     playlist_edit_tracks_ = pl->tracks;
@@ -3675,7 +3982,7 @@ std::vector<std::string> App::build_playlist_library_panel(int total_width, int 
             const auto& t = playlist_edit_lib_view_[idx];
             int title_w = std::max(5, inner - idx_w - 2);
             std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
-            std::string t_title = apply_font_map(t.title, settings_.font_map);
+            std::string t_title = apply_font_map(list_row_title(t.path, t.title), settings_.font_map);
             // Every column padded to its own fixed width *before*
             // concatenating (rather than truncating the assembled whole
             // afterward) -- matches build_list_panel()'s row construction.
@@ -3761,7 +4068,8 @@ std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int h
         if (idx < total) {
             const auto& t = playlist_edit_tracks_[idx];
             int title_w = std::max(5, inner - idx_w - 2);
-            std::string shown = t.missing ? (t.title + " [missing]") : t.title;
+            std::string base = list_row_title(t.path, t.title);
+            std::string shown = t.missing ? (base + " [missing]") : base;
             std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
             std::string t_title = apply_font_map(shown, settings_.font_map);
             content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
@@ -3948,6 +4256,18 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
 // (the real, current ioctl-reported row count) instead, so this
 // function no longer has a reason to exist.
 
+// SGR prefix for the section titles drawn by the Settings panel itself:
+// bold plus settings_.header_color -- the Colors tab's HEADER row, a
+// palette index of the 256 by default (10, which is exactly the color
+// the REFERENCE tab's category titles have always been drawn in, and
+// what the ON/OFF tab's LOCAL PATH / PLAYLIST PATH titles borrow). An
+// explicit 0/empty means "no color" here like it does everywhere else,
+// which degrades these to plain bold rather than to a stray escape.
+static std::string header_sgr(const Settings& s) {
+    std::string params = sgr_params_for(s.header_color);
+    return params.empty() ? "\x1b[1m" : "\x1b[1;" + params + "m";
+}
+
 void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) const {
     // Literal port of the reference SettingsEngine::render() -- same
     // columns, same labels, same schema text, same group-blanking, same
@@ -4017,15 +4337,17 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     // 2. Content.
     int y = 3;
     if (settings_tab_ == 0) {
-        static const char* grp[14]  = {"BORDER_COLOR", "DISK", "METADATA", "VIZ", "PROGRESS_BAR",
-                                        "LIST", "", "", "QUEUE", "", "", "LYRICS", "", ""};
-        static const char* l1n[14]  = {"TOP", "TOP", "KEY", "LEFT", "PLAYED",
+        static const char* grp[15]  = {"BORDER_COLOR", "DISK", "METADATA", "VIZ", "PROGRESS_BAR",
+                                        "LIST", "", "", "QUEUE", "", "", "LYRICS", "", "", "HEADER"};
+        static const char* l1n[15]  = {"TOP", "TOP", "KEY", "LEFT", "PLAYED",
                                         "INACTIVE  FG", "PLAYING   FG", "CURSOR    FG",
                                         "INACTIVE  FG", "PLAYING   FG", "CURSOR    FG",
-                                        "INACTIVE  FG", "ACTIVE L  FG", "ACTIVE W  FG"};
-        static const char* l2n[14]  = {"BOTTOM", "BOTTOM", "VAL", "RIGHT", "PENDING",
-                                        "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG"};
-        for (int i = 0; i < 14; ++i) {
+                                        "INACTIVE  FG", "ACTIVE L  FG", "ACTIVE W  FG",
+                                        "TEXT"};
+        static const char* l2n[15]  = {"BOTTOM", "BOTTOM", "VAL", "RIGHT", "PENDING",
+                                        "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG",
+                                        ""}; // HEADER is a foreground-only field: no background cell at all
+        for (int i = 0; i < 15; ++i) {
             if (i == 5) { pos(y, 1, B(y) + "\u251c" + repeat("\u2500", W - 2) + "\u2524" + R); y++; }
             pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
 
@@ -4039,8 +4361,12 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 pos(y, 38, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
             }
 
-            pos(y, 48, pad(l2n[i], 7, false)); pos(y, 56, ":");
-            {
+            // Second (background) column: the HEADER row has no background
+            // cell at all, so it renders neither a label nor a ":" here --
+            // without this guard there'd be a dangling colon at col 56 with
+            // nothing between it and the preview.
+            if (l2n[i][0]) {
+                pos(y, 48, pad(l2n[i], 7, false)); pos(y, 56, ":");
                 bool sel = (i == settings_row_ && settings_col_ == 1 && mode_ != Mode::ColorEdit);
                 bool ed = (i == settings_row_ && settings_col_ == 1 && mode_ == Mode::ColorEdit);
                 std::string v = ed ? pad(color_edit_buffer_, 7) : pad(settings_get_value(i, 1), 7);
@@ -4060,21 +4386,92 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 std::string aW_F = ansi_for(valA, false), aW_B = bg_ansi_for(valB);
                 std::string iN_F = ansi_for(settings_.inactive_line_color, false), iN_B = bg_ansi_for(settings_.inactive_line_bg_color);
                 rt = aL_B + aL_F + "THIS IS " + R + aW_B + aW_F + "AN " + R + iN_B + iN_F + "EXAMPLE TEXT" + R;
+            } else if (i == 14) {
+                // Same bold + color construction header_sgr() draws the real
+                // section titles with, so the swatch shows the exact result.
+                std::string params = sgr_params_for(valA);
+                rt = (params.empty() ? std::string("\x1b[1m") : "\x1b[1;" + params + "m") + "SECTION HEADER" + R;
             }
             if (!rt.empty()) pos(y, 72, rt);
             y++;
         }
-    } else if (settings_tab_ == 1 || settings_tab_ == 2) {
-        static const char* onoff_l[9] = {"Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
-                                          "Lyrics Engine", "Lyric Ball", "Visualizer", "Stereo Sound",
-                                          "Normalize Volume"};
+    } else if (settings_tab_ == 1) {
+        // ON/OFF: the toggles, then a LOCAL PATH list and a PLAYLIST PATH
+        // list, each ending in its own "+ new path" row -- an editable
+        // list rather than one fixed path, since neither count is pinned
+        // to a single entry. Two display rows per section header (a blank
+        // spacer plus the title, same rhythm as the Reference tab) and a
+        // viewport centered on settings_row_ keep the whole thing inside
+        // the panel no matter how many paths have been added, which is
+        // what makes this scrollable instead of growing the frame. Order
+        // comes from build_onoff_rows(), the row-to-line mapping from
+        // onoff_display_row() -- the renderer and the ColorEdit cursor
+        // placement below both use them, so they cannot disagree.
+        std::vector<OnOffRow> rows = build_onoff_rows();
+        int display_count = 0;
+        for (const OnOffRow& r : rows) display_count += (r.kind == OnOffRow::Kind::Header) ? 2 : 1;
+        int visible = std::max(1, MAX_Y - 3);
+        int cur_display = std::max(0, onoff_display_row(settings_row_));
+        int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
+
+        int disp = 0;
+        auto in_view = [&]() { return disp >= scroll && y < MAX_Y; };
+        auto side_borders = [&]() {
+            pos(y, 1, B(y) + "\u2502" + R);
+            pos(y, W, B(y) + "\u2502" + R);
+        };
+        for (const OnOffRow& r : rows) {
+            if (r.kind == OnOffRow::Kind::Header) {
+                if (in_view()) { side_borders(); y++; } // blank spacer above the title
+                disp++;
+                if (in_view()) { side_borders(); pos(y, 6, header_sgr(settings_) + r.label + R); y++; }
+                disp++;
+                continue;
+            }
+            if (in_view()) {
+                side_borders();
+                const bool sel = (r.sel == settings_row_ && mode_ != Mode::ColorEdit);
+                const bool ed = (r.sel == settings_row_ && mode_ == Mode::ColorEdit);
+                if (r.kind == OnOffRow::Kind::Path) {
+                    std::string lab = std::string(r.playlist_path ? "Playlist Path " : "Local Path ")
+                                    + std::to_string(r.path_index + 1);
+                    pos(y, 6, pad(lab, 25)); pos(y, 32, ":");
+                    // The value column runs from col 35 right up to the border --
+                    // a folder path is far longer than a toggle's 20 columns, and
+                    // nothing may spill over the panel edge. While editing, the
+                    // tail is what's on screen (typing always happens at the end),
+                    // with the cursor below clamped to the same width.
+                    int val_w = std::max(10, W - 36);
+                    std::string v;
+                    if (ed) {
+                        v = color_edit_buffer_;
+                        if (display_width(v) > val_w) v = utf8_skip_take(v, display_width(v) - val_w, val_w);
+                        v = pad(v, val_w);
+                    } else {
+                        v = pad(truncate_str(settings_get_value(r.sel, 0), val_w), val_w);
+                    }
+                    pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                } else if (r.kind == OnOffRow::Kind::AddPath) {
+                    pos(y, 6, pad(r.label, 25)); pos(y, 32, ":");
+                    pos(y, 35, (sel ? HI : "") + std::string(20, ' ') + R);
+                    if (sel) pos(y, 57, "\x1b[90m[ENTER] add a line\x1b[0m");
+                } else { // Toggle
+                    pos(y, 6, pad(r.label, 25)); pos(y, 32, ":");
+                    std::string v = ed ? pad(color_edit_buffer_, 20) : pad(settings_get_value(r.sel, 0), 20);
+                    pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                    if (sel && !settings_options_for(settings_tab_, r.sel).empty())
+                        pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
+                }
+                y++;
+            }
+            disp++;
+        }
+    } else if (settings_tab_ == 2) {
         static const char* anim_l[8] = {"Vis. Fluidity", "Waveform Style", "Disk Speed", "Playback Mode",
                                          "Vis. Degradation", "Vis. Viscosity", "Lyrics Alignment", "Lyrics Animation"};
-        int count = (settings_tab_ == 1) ? 9 : 8; // ON/OFF now has 9 rows, ANIMATION still 8
-        const char* const* labels = (settings_tab_ == 1) ? onoff_l : anim_l;
-        for (int i = 0; i < count; ++i) {
+        for (int i = 0; i < 8; ++i) {
             pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-            pos(y, 6, pad(labels[i], 25)); pos(y, 32, ":");
+            pos(y, 6, pad(anim_l[i], 25)); pos(y, 32, ":");
 
             bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
             bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
@@ -4116,10 +4513,11 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             }
             disp++;
 
-            // the header itself, in color 10 of the 256-color palette + bold
+            // the header itself, in the configurable Header color (bold;
+            // palette index 10 by default, exactly what it always was)
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, "\x1b[1;38;5;10m" + std::string(text) + R);
+                pos(y, 6, header_sgr(settings_) + text + R);
                 y++;
             }
             disp++;
@@ -4207,7 +4605,30 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             frame << "\x1b[" << cy << ";" << (cx + static_cast<int>(color_edit_buffer_.size())) << "H\x1b[?25h";
         } else {
             int cy = 3 + settings_row_;
-            if (settings_tab_ == 3) {
+            int cx = 35 + static_cast<int>(color_edit_buffer_.size());
+            if (settings_tab_ == 1) {
+                // The ON/OFF tab scrolls and its section headers aren't
+                // 1:1 with settings_row_, so 3 + row would put the cursor
+                // on the wrong line (or off the panel entirely) once the
+                // path lists push it down. Recompute the exact scroll the
+                // renderer used -- same build_onoff_rows()/onoff_display_row()
+                // pair -- and place the cursor on the line that row was
+                // actually painted on. A path value is also wider than the
+                // fixed 20-column field, and the field itself is clamped to
+                // the panel width while editing, so keep the cursor at the
+                // end of what is really on screen.
+                int visible = std::max(1, MAX_Y - 3);
+                int display_count = 0;
+                for (const OnOffRow& r : build_onoff_rows())
+                    display_count += (r.kind == OnOffRow::Kind::Header) ? 2 : 1;
+                int cur_display = std::max(0, onoff_display_row(settings_row_));
+                int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
+                cy = 3 + (cur_display - scroll);
+                if (onoff_row_is_path(settings_row_)) {
+                    int val_w = std::max(10, W - 36);
+                    cx = 35 + std::min(display_width(color_edit_buffer_), val_w);
+                }
+            } else if (settings_tab_ == 3) {
                 // Reference tab scrolls once its row list exceeds the
                 // visible window -- the common case, since it holds every
                 // rebindable hotkey plus the hardcoded-keys section and
@@ -4228,7 +4649,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);
             }
-            frame << "\x1b[" << cy << ";" << (35 + static_cast<int>(color_edit_buffer_.size())) << "H\x1b[?25h";
+            frame << "\x1b[" << cy << ";" << cx << "H\x1b[?25h";
         }
     }
 }
@@ -4297,6 +4718,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyRetryLyrics",                 "Retry lyrics"},
         {"HKeyShuffleNext",                 "Shuffle to a random next track"},
         {"HKeyToggleLyrics",                "Toggle lyrics on/off"},
+        {"HKeyToggleMetaOnly",              "Toggle metadata-only track list (no filename)"},
         {"HKeyQueueMoveUp",                 "Move hovering queue item up"},
         {"HKeyQueueMoveDown",               "Move hovering queue item down"},
         {"HKeyToggleWaveform",              "Toggle waveform style (raw/smooth)"},

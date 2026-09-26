@@ -48,6 +48,17 @@ private:
     void reassert_raw_mode(); // see poll_key()'s definition for why this exists
 };
 
+// True while the key most recently returned by poll_key() was one of the
+// four arrow keys. Arrows collapse to the letters 'A'-'D' (see kKeyHome's
+// comment above), so a bare value of 'A' can be either an Up press or a
+// real capital A -- indistinguishable by value alone. A text field that
+// wants to accept those four capitals (a Windows path has to be able to
+// type "C:\...") checks this to accept a typed letter while still
+// ignoring arrow presses; navigation code that keys off 'A'-'D' can keep
+// using the value as-is, since every return path updates this flag in
+// step with what it returned.
+bool last_key_was_arrow();
+
 // Truncates/right-pads (by byte length — good enough for the mostly-ASCII
 // UI text here; multi-byte titles may render slightly short) to exactly
 // `width` visible columns.

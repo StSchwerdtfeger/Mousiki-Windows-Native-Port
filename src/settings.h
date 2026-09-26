@@ -27,6 +27,17 @@ struct Settings {
     int lyrics_animation = 0; // 0=full (default), 1=word by word, 2=letter by letter, 3=only active line, 4=only active word
     bool element_visualizer = true;
 
+    // --- what a track row in the (search-)lists shows (config.txt: MetaDataOnly) ---
+    // false = filename stem plus the metadata columns (the long-standing
+    //         behavior: filename AND meta data).
+    // true  = metadata only: the embedded title tag is shown instead of
+    //         the filename wherever a real tag is known (files without a
+    //         title tag still fall back to their filename, so an untagged
+    //         library doesn't turn into a blank list).
+    // Toggled from the ON/OFF tab ("Show meta data only") and with the
+    // HKeyToggleMetaOnly hotkey (Shift+N by default).
+    bool meta_only = false;
+
     // --- appearance / tuning -------------------------------------------
     int visualizer_fluidity = 1;        // 1-10, higher = smoother/slower rise
     int visualizer_degradation_speed = 8; // 1 (slow fade) - 10 (near-instant), how fast bars fall after a drop
@@ -94,6 +105,14 @@ struct Settings {
     std::string list_cursor_bg_color = "238"; // one of the seven config-level defaults (ColorListCursorBg)
 
     std::string button_color;
+
+    // Section headers drawn by the Settings panel itself: the category
+    // titles on the REFERENCE tab and the "LOCAL PATH" / "PLAYLIST PATH"
+    // titles on the ON/OFF tab. Default "10" -- palette index 10 of 256,
+    // exactly the color the Reference tab headers have always been drawn
+    // in -- changeable from the Colors tab's HEADER row, or ColorHeader=
+    // in config.txt. "0"/empty = plain bold, no color.
+    std::string header_color = "10";
 
     std::string visualizer_color = "32";
     std::string visualizer_color_end = "33";
@@ -174,9 +193,14 @@ struct Settings {
     // Where saved playlists (App::playlists_dir()) live. Empty (the
     // default) means "use local_music_paths[0]/playlists", which falls
     // back further to the cache folder if no LocalMusicPath is
-    // configured at all. Set PlaylistsPath= in config.txt to pin it
-    // somewhere specific regardless of local_music_paths.
-    std::string playlists_path;
+    // configured at all. Set PlaylistsPath= in config.txt -- one line per
+    // folder -- to pin it somewhere specific regardless of
+    // local_music_paths. Several folders may be listed (each additional
+    // PlaylistsPath= line adds one): playlists are *listed* and *loaded*
+    // from all of them, while saving/deleting always uses the first one,
+    // which is also the one App::playlists_dir() returns. Editable from
+    // the ON/OFF tab's PLAYLIST PATH list.
+    std::vector<std::string> playlists_paths;
 
     // --- hotkey mapping ------------------------------------------------
     // Action name → key string (e.g. "ARROW_KEY_UP", "s", "ENTER")

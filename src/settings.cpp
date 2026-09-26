@@ -331,6 +331,12 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyPlaylist",                    "P"},
             {"HKeySearchPlaylist",              "/p:"},
             {"HKeyToggleNormalize",             "v"},
+            // Shift+N: deliberately the UPPERCASE letter, because plain
+            // "n" is already HKeyPlayNextSong and resolve_hotkey_action()
+            // only falls back to the other case when a key resolves to
+            // nothing (app.cpp handle_key) -- so "N" gives a dedicated
+            // Shift+N binding while "n" keeps meaning "next track".
+            {"HKeyToggleMetaOnly",              "N"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -540,6 +546,8 @@ static Settings load_from_config(const fs::path& path) {
             {"ColorLyricsInactiveFg", "inactive_line_color"}, {"ColorLyricsInactiveBg", "inactive_line_bg_color"},
             {"ColorLyricsActiveLineFg", "active_line_color"}, {"ColorLyricsActiveLineBg", "active_line_bg_color"},
             {"ColorLyricsActiveWordFg", "active_word_color"}, {"ColorLyricsActiveWordBg", "active_word_bg_color"},
+            {"ColorHeader", "header_color"},
+            {"MetaDataOnly", "meta_only"},
             {"ElimentDisk", "Eliment_disk"}, {"ElimentDummyButtons", "Element_dummy_buttons"},
             {"ElimentQueue", "Eliment_queue"}, {"ElimentWaveForm", "Eliment_waveform_progress_bar"},
             {"ElimentLyrics", "Eliment_lyrics"}, {"LyricsPlaceholderBall", "Eliment_lyrics_placeholder_ball"},
@@ -597,6 +605,7 @@ static Settings load_from_config(const fs::path& path) {
             continue;
         }
         if (key == "Eliment_visualizer" || key == "Element_visualizer") { s.element_visualizer = parse_bool(value); continue; }
+        if (key == "meta_only") { s.meta_only = parse_bool(value); continue; }
 
         // --- Border characters ---
         if (key == "upper_left_corner") { s.box_upper_left = unquote(value); continue; }
@@ -622,6 +631,7 @@ static Settings load_from_config(const fs::path& path) {
         if (set_color("title", value, s.meta_val_color)) continue;
         if (set_color("meta_key", value, s.meta_key_color)) continue;
         if (set_color("meta_val", value, s.meta_val_color)) continue;
+        if (set_color("header", value, s.header_color)) continue;
         if (set_color("progress", value, s.progress_played_color)) continue;
         if (set_color("progress_bg", value, s.progress_remaining_color)) continue;
         if (set_color("status", value, s.status_color)) continue;
@@ -643,6 +653,7 @@ static Settings load_from_config(const fs::path& path) {
         if (key == "disk_rotation_speed") { try { s.disk_rotation_speed = std::clamp(std::stod(value), 0.01, 1.00); } catch (...) {} continue; }
         if (key == "border_color") { if (!value.empty()) s.border_color = normalize_color_value(value); continue; }
         if (key == "border_color_bottom") { if (!value.empty()) s.border_color_bottom = normalize_color_value(value); continue; }
+        if (key == "header_color") { if (!value.empty()) s.header_color = normalize_color_value(value); continue; }
         if (key == "active_line_color") { if (!value.empty()) s.active_line_color = normalize_color_value(value); continue; }
         if (key == "active_line_bg_color") { if (!value.empty()) s.active_line_bg_color = normalize_color_value(value); continue; }
         if (key == "active_word_color") { if (!value.empty()) s.active_word_color = normalize_color_value(value); continue; }
@@ -741,16 +752,17 @@ static Settings load_from_config(const fs::path& path) {
         }
 
         // --- Playlists folder override ---
-        // A single PlaylistsPath= line pins where saved playlists live,
-        // independent of local_music_paths[0]. Same ~ expansion as
-        // LocalMusicPath, above.
+        // Each PlaylistsPath= line adds one folder, independent of
+        // local_music_paths[0] (the first one is where playlists get
+        // saved/deleted; all of them are searched when listing/loading).
+        // Same ~ expansion as LocalMusicPath, above.
         if (key == "PlaylistsPath" || key == "playlists_path") {
             std::string path = trim(unquote(value));
             if (!path.empty() && path[0] == '~') {
                 const char* home = std::getenv("HOME");
                 if (home) path = std::string(home) + path.substr(1);
             }
-            s.playlists_path = path;
+            if (!path.empty()) s.playlists_paths.push_back(path);
             continue;
         }
 
@@ -900,6 +912,9 @@ void save_settings(const Settings& s) {
     out << "ColorVizRight=" << s.visualizer_color_end << "\n";
     out << "ColorProgressBarPlayed=" << s.progress_played_color << "\n";
     out << "ColorProgressBarPending=" << s.progress_remaining_color << "\n";
+    out << "\n# Section headers (the REFERENCE tab's category titles and the ON/OFF tab's\n";
+    out << "# LOCAL PATH / PLAYLIST PATH titles) -- 0 = no color, plain bold text\n";
+    out << "ColorHeader=" << s.header_color << "\n";
     out << "\n# List\n";
     out << "ColorListInactiveFg=" << s.list_color << "\n";
     out << "ColorListInactiveBg=" << s.list_inactive_bg_color << "\n";
@@ -934,6 +949,11 @@ void save_settings(const Settings& s) {
     out << "ElimentLyrics=" << tf(s.element_lyrics) << "\n";
     out << "LyricsPlaceholderBall=" << tf(s.element_lyrics_placeholder_ball) << "\n";
     out << "Visualizer=" << tf(s.element_visualizer) << "\n";
+    out << "MetaDataOnly=" << tf(s.meta_only) << "\n";
+    out << "## true  = the (search-)lists show embedded metadata only -- the title tag is used\n";
+    out << "##         instead of the filename (files without a title tag keep their filename)\n";
+    out << "## false = lists show filename AND metadata, as before\n";
+    out << "## Toggleable live from this panel (\"Show meta data only\") or with HKeyToggleMetaOnly.\n";
     out << "\n";
 
     out << "##-------------------------------------------\n";
@@ -1034,10 +1054,19 @@ void save_settings(const Settings& s) {
     }
     out << "\n# Local Music Paths\n";
     for (const auto& path : s.local_music_paths) {
+        // Blank entries are skipped rather than written out as an empty
+        // "LocalMusicPath=" line: an abandoned "+ new path" edit in the
+        // ON/OFF tab can leave one behind in memory, and the loader skips
+        // empty values anyway, so writing it would only litter the file.
+        if (path.empty()) continue;
         out << "LocalMusicPath=" << path << "\n";
     }
-    out << "\n# Playlists folder (optional -- overrides the LocalMusicPath[0]/playlists default)\n";
-    if (!s.playlists_path.empty()) out << "PlaylistsPath=" << s.playlists_path << "\n";
+    out << "\n# Playlists folder(s) (optional -- overrides the LocalMusicPath[0]/playlists default).\n";
+    out << "# One line per folder: playlists are listed/loaded from all of them, while saving\n";
+    out << "# and deleting uses the first one.\n";
+    for (const auto& path : s.playlists_paths) {
+        if (!path.empty()) out << "PlaylistsPath=" << path << "\n";
+    }
 
     out << "\n# Navigation\n";
     // Write every mapped hotkey, stable order, whatever the key is named.
@@ -1047,6 +1076,7 @@ void save_settings(const Settings& s) {
         "HKeySeekForward", "HKeySeekBackward", "HKeyIncreaseVolume", "HKeyDecreaseVolume",
         "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
         "HKeyFilterForFolder", "HKeyClearFilter", "HKeyQuit", "HKeyResetPreference", "HKeyDownloadStream",
+        "HKeyToggleNormalize", "HKeyToggleMetaOnly",
     };
     for (const char* name : hkey_order) {
         auto it = s.hotkeys.find(name);

@@ -99,34 +99,47 @@ void TerminalIO::reassert_raw_mode() {
 #endif
 }
 
+// See last_key_was_arrow() in terminal_ui.h. Only ever written by
+// poll_key() below, and only read by whatever handles the key that same
+// call just returned -- single-threaded, since the input loop is the only
+// thing that polls.
+static bool g_last_key_was_arrow = false;
+
+bool last_key_was_arrow() { return g_last_key_was_arrow; }
+
 int TerminalIO::poll_key() {
     reassert_raw_mode();
 #if defined(_WIN32)
-    return win_poll_key();
+    int key = win_poll_key();
+    g_last_key_was_arrow = win_last_key_was_arrow();
+    return key;
 #else
     unsigned char c = 0;
-    if (read(STDIN_FILENO, &c, 1) != 1) return 0;
+    if (read(STDIN_FILENO, &c, 1) != 1) { g_last_key_was_arrow = false; return 0; }
 
     if (c == '\x1b') {
         unsigned char seq[2] = {0, 0};
-        if (read(STDIN_FILENO, &seq[0], 1) != 1) return 27;
-        if (read(STDIN_FILENO, &seq[1], 1) != 1) return 27;
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) { g_last_key_was_arrow = false; return 27; }
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) { g_last_key_was_arrow = false; return 27; }
         if (seq[0] == '[') {
             switch (seq[1]) {
-                case 'A': return 'A';
-                case 'B': return 'B';
-                case 'C': return 'C';
-                case 'D': return 'D';
-                case 'H': return kKeyHome; // most xterm-likes send ESC [ H for Home
+                case 'A': g_last_key_was_arrow = true; return 'A';
+                case 'B': g_last_key_was_arrow = true; return 'B';
+                case 'C': g_last_key_was_arrow = true; return 'C';
+                case 'D': g_last_key_was_arrow = true; return 'D';
+                case 'H': g_last_key_was_arrow = false; return kKeyHome; // most xterm-likes send ESC [ H for Home
                 case '3': { // ESC [ 3 ~ -- Delete key
                     unsigned char tail = 0;
-                    if (read(STDIN_FILENO, &tail, 1) == 1 && tail == '~') return kKeyDelete;
+                    if (read(STDIN_FILENO, &tail, 1) == 1 && tail == '~') { g_last_key_was_arrow = false; return kKeyDelete; }
+                    g_last_key_was_arrow = false;
                     return 27;
                 }
             }
         }
+        g_last_key_was_arrow = false;
         return 27;
     }
+    g_last_key_was_arrow = false;
     return c;
 #endif
 }
