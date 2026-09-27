@@ -292,6 +292,9 @@ A few things added on top of the original design rather than required to run it 
 ## Current Ideas on Features and Modifications 
 I will not implement all of them; the goal is to keep it simple and not change the TUI and the keyboard philosophy in its essentials):
 
+**To-do**
+- When editing a path or meta data field, the arrow keys can't be used to move the courser - will be changed soon....
+
 **Basic Features (that will definitely be implemented soon):**
 - making loudness normalization adjustable in the app via extra menu (`SHIFT + G`)
 
