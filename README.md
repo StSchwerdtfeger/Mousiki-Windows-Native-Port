@@ -279,7 +279,14 @@ A few things added on top of the original design rather than required to run it 
     
 <img width="1595" height="776" alt="grafik" src="https://github.com/user-attachments/assets/56baf7e7-bff9-4674-b42e-996ab47968ad" />
 
-- **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most palyed tracks on top" second sort ist "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish). 
+- **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most palyed tracks on top" second sort ist "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
+
+<img width="2293" height="1015" alt="grafik" src="https://github.com/user-attachments/assets/55a20505-e4f5-493c-a7ba-a8d70561f71b" />
+
+<img width="2280" height="1016" alt="grafik" src="https://github.com/user-attachments/assets/7b69dd69-81e2-4a15-a6ae-16f6d08d0f02" />
+
+<img width="2284" height="1019" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" />
+
 
 ### Minor Additions / Modifications
 
