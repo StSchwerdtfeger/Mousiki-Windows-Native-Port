@@ -390,6 +390,21 @@ int win_poll_key() {
         default: break;
     }
 
+    // Ctrl+Shift+S / Ctrl+Shift+D. Checked by VIRTUAL-KEY code rather than
+    // by the character: with Ctrl held, uChar.UnicodeChar is the control
+    // code (S -> 0x13), never the letter, so the shifted letter itself is
+    // only recoverable from dwControlKeyState + wVirtualKeyCode. The
+    // sentinel values are documented in terminal_ui.h -- they exist because
+    // a hotkey string has no way to say "modifier combination".
+    {
+        DWORD st = k.dwControlKeyState;
+        bool ctrl = (st & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+        if (ctrl && (st & SHIFT_PRESSED) != 0) {
+            if (k.wVirtualKeyCode == 'S') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
+            if (k.wVirtualKeyCode == 'D') { g_last_key_was_arrow = false; return kKeyCtrlShiftD; }
+        }
+    }
+
     wchar_t wc = k.uChar.UnicodeChar;
     g_last_key_was_arrow = false; // from here down it is a real character or nothing at all
     if (wc == 0) return 0; // a bare modifier, function key, Home/End/PgUp/... -- ignored, as on POSIX

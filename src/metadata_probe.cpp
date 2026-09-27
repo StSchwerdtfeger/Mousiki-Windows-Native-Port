@@ -40,7 +40,8 @@ RowMeta probe_row_meta(const fs::path& file) {
     // has everything). Keeping format_tags too covers everything else
     // (MP3, FLAC, M4A, ...), where it's the one that's populated.
     std::string cmd = "ffprobe -v error "
-                       "-show_entries format=duration:format_tags=artist,title,album:stream_tags=artist,title,album "
+                       "-show_entries format=duration:format_tags=artist,title,album,date:"
+                       "stream_tags=artist,title,album,date "
                        "-of default=noprint_wrappers=1 " + shell_quote(path_utf8(file));
     ProcResult r = run_capture(cmd);
     // A real probe attempt happened either way -- mark it resolved even on
@@ -74,6 +75,13 @@ RowMeta probe_row_meta(const fs::path& file) {
             if (rm.title.empty()) rm.title = val;
         } else if (key == "TAG:album") {
             if (rm.album.empty()) rm.album = val;
+        } else if (key == "TAG:date") {
+            // Containers store the year very differently (ID3's TYER="1999",
+            // ID3v2.4's TDRC="1999-05-01", Vorbis' DATE, MP4's ©day) --
+            // ffprobe just reports whatever it found, so keep only the
+            // leading 4-digit year. Same rule probe_metadata() applies to
+            // its own md.year, so the editor and the metadata panel agree.
+            if (rm.year.empty()) rm.year = (val.size() >= 4) ? val.substr(0, 4) : val;
         }
     }
     return rm;

@@ -34,9 +34,11 @@ struct NativeId3Tags {
     std::string title;
     std::string artist;
     std::string album;
+    std::string year;    // "YYYY" (or a free-text year), empty if the tag is absent
 };
 
-// Reads TIT2/TPE1/TALB straight out of an MP3's ID3v2 header -- no `ffprobe`
+// Reads TIT2/TPE1/TALB/TYER (and the ID3v2.4 TDRC date) straight out of an
+// MP3's ID3v2 header -- no `ffprobe`
 // subprocess at all, just the same handful of pread() calls
 // probe_duration_native() already does for MP3 duration. This is what lets
 // an 800-track library's metadata become fully searchable in well under a

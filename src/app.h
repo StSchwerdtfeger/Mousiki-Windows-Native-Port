@@ -14,6 +14,7 @@
 #include "fft_visualizer.h"
 #include "local_source.h"
 #include "lyrics_fetcher.h"
+#include "meta_editor.h"
 #include "metadata_probe.h"
 #include "native_duration.h"
 #include "online_source.h"
@@ -30,7 +31,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit };
 enum class ListSource { Local, Online, Playlist };
 
 struct QueueItem {
@@ -196,6 +197,88 @@ private:
     std::vector<std::string> build_playlist_tracks_panel(int width, int height) const;
     std::vector<std::string> build_playlist_manage_panel(int width, int height) const;
 
+    // --- meta/tag editor overlay (Mode::MetaEdit, HKeyMetaEditor = Shift+M) ---
+    // Deliberately shaped like the playlist editor above: same tab strip,
+    // same boxed side-by-side panels, same hint/status footer, same Y/N
+    // confirmation prompts in place of the hint line. Tab 0 = edit (a search
+    // field, a library picker, and the five editable fields -- FILE plus
+    // ARTIST/TITLE/ALBUM/YEAR -- for the row the picker is on); tab 1 = the
+    // fetch list, filled with 'a' and run through AcoustID with Enter.
+    //
+    // Everything typed or fetched here goes into meta_session_ -- a pending
+    // edit session that is autosaved to disk after every change (meta_editor.h)
+    // but is NEVER written to the audio files on its own. Ctrl+Shift+S applies
+    // it, Ctrl+Shift+D throws it away, and simply leaving (ESC or quitting)
+    // keeps the autosave backup, so no amount of editing can lose work by
+    // accident.
+    int meta_tab_ = 0;
+    int meta_focus_ = 0; // 0=search field, 1=library picker, 2=field editor -- cycled with Tab
+    std::string meta_query_;
+    std::vector<LocalTrack> meta_lib_view_;  // filter_and_rank_local(meta_query_)
+    int meta_lib_selected_ = 0;
+    int meta_field_ = 0; // hovered row of the field editor (0=FILE .. 4=YEAR)
+    std::vector<MetaEditEntry> meta_session_;          // the pending edits
+    std::vector<std::string> meta_fetch_list_;         // paths queued for an AcoustID lookup
+    int meta_fetch_selected_ = 0;
+    bool meta_session_loaded_ = false; // load_session() already ran (once per run, not once per open)
+    std::string meta_status_; // bottom line of the overlay; cleared on (re)entry
+    // Y/N confirmation currently covering the footer (in the menu) or the
+    // status line (in Browse, for Shift+B), plus the exact paths it will act
+    // on once confirmed. Every key is swallowed while one is up.
+    enum class MetaPrompt { None, Save, Discard, Fetch };
+    MetaPrompt meta_prompt_ = MetaPrompt::None;
+    std::vector<std::string> meta_prompt_paths_;
+    // AcoustID batch: runs on its own thread, publishes results under
+    // meta_fetch_mutex_, applied to the session on the main thread by
+    // poll_pending_meta_fetch() (called from the render loop).
+    fs::path meta_script_; // scripts/fetch_meta.py, next to the exe
+    std::thread meta_fetch_thread_;
+    std::atomic<bool> meta_fetch_running_{false};
+    mutable std::mutex meta_fetch_mutex_;
+    std::vector<MetaFetchResult> meta_fetch_results_;
+    // Paths the current batch has already delivered successfully (filled in
+    // by poll_pending_meta_fetch() on the main thread, so no lock needed).
+    // On completion they leave the fetch list -- what stays queued is
+    // exactly what still needs another try.
+    std::vector<std::string> meta_fetch_ok_paths_;
+    bool meta_fetch_done_ = false;
+    MetaFetchOutcome meta_fetch_outcome_;
+    std::string meta_fetch_progress_; // "3/7", shown while a batch runs
+    // What the field editor panel draws for the currently hovered path.
+    // Precomputed once per frame (meta_refresh_hover_values(), just before
+    // rendering) because the current tag values need a mutable cache lookup,
+    // while build_meta_screen() itself is const.
+    std::array<std::string, kMetaFieldCount> meta_hover_values_{};
+    bool meta_hover_resolved_ = false; // tags for that path are final (vs. not read yet)
+
+    void meta_open();                  // HKeyMetaEditor entry point
+    void meta_ensure_session_loaded(); // restores the autosaved session, once
+    void meta_refresh_lib_view();
+    void meta_persist();               // save (or delete) the autosave backup file
+    const MetaEditEntry* meta_entry(const std::string& path) const;
+    MetaEditEntry& meta_touch_entry(const std::string& path); // create on first edit
+    void meta_set_field(const std::string& path, int field, const std::string& value);
+    std::string meta_display_value(const std::string& path, int field, const MetaEditEntry* e);
+    RowMeta meta_row_meta(const fs::path& path); // current tags of a file, cached + native
+    std::string meta_hovering_path() const;      // path the picker/editor/fetch tab is on
+    void meta_refresh_hover_values();            // fills meta_hover_values_ for this frame
+    void meta_add_hovering_to_fetch();           // 'a', mirrors the queue's add key
+    void meta_remove_hovering();                 // DEL/'d'
+    void meta_prompt_single_fetch(const std::string& path); // Shift+B
+    void meta_prompt_list_fetch();                          // Enter on tab 1
+    void meta_start_fetch();
+    void poll_pending_meta_fetch();
+    void meta_apply_session();  // Ctrl+Shift+S, after Y
+    void meta_discard_session();// Ctrl+Shift+D, after Y
+    // True if a confirmation was up and the key was consumed by it (incl. the
+    // swallow-everything-else case). Checked first thing in handle_key().
+    bool handle_meta_prompt_key(int key);
+    void handle_meta_key(int key);
+    void build_meta_screen(std::ostringstream& frame, int W, int player_h) const;
+    std::vector<std::string> build_meta_library_panel(int width, int height) const;
+    std::vector<std::string> build_meta_fields_panel(int width, int height) const;
+    std::vector<std::string> build_meta_fetch_panel(int width, int height) const;
+
     // --- now playing ---
     bool has_track_ = false;
     // True from the moment advance_track() hands off to a load until
@@ -285,6 +368,12 @@ private:
     void build_console_screen(std::ostringstream& frame, int W, int target_height) const;
 
     // --- cheatsheet overlay (HKeyCheatsheet) ----------------------------
+    // Scroll position within the key table -- the table is longer than a
+    // small terminal can show at once, and (unlike Settings' Reference tab)
+    // this overlay used to just silently drop whatever didn't fit. Mutable
+    // because build_cheatsheet_screen() is const and clamps it against the
+    // rows that actually fit as it draws.
+    mutable int cheatsheet_scroll_ = 0;
     void build_cheatsheet_screen(std::ostringstream& frame, int W) const;
 
     // The Console and Settings overlays must always be exactly as tall as
@@ -544,9 +633,9 @@ private:
     // The row itself; its `sel` field is -1 when there is no such
     // selectable row, which is how callers detect an out-of-range index.
     OnOffRow onoff_row(int selectable_row) const;
-    // True when the given selectable row edits one of the path lists --
-    // drives the edit-buffer length limit, since a path needs far more
-    // characters than a color/hotkey field does.
+    // True when the given selectable row edits free text -- one of the two
+    // path lists -- since those need far more characters than a color/hotkey
+    // field does. Drives the edit-buffer length limit.
     bool onoff_row_is_path(int selectable_row) const;
 
     // Title shown for `path` in the (search-)lists. Honours

@@ -20,6 +20,18 @@ constexpr int kKeyHome = 300;
 // delete/remove action.
 constexpr int kKeyDelete = 301;
 
+// Ctrl+Shift+S and Ctrl+Shift+D -- the meta editor's "apply this editing
+// session to the files" and "throw this editing session away" commands.
+// These are modifier COMBINATIONS, so unlike a plain letter they can't be
+// expressed as a hotkey string (hotkey_string_to_key() has no representation
+// for them, and every letter code it could produce would be ambiguous with
+// the arrow-key letters anyway), which is why they arrive as their own
+// sentinel values rather than through settings_.hotkeys. On Windows they
+// come from win_poll_key() reading dwControlKeyState; on POSIX from the
+// xterm modifyOtherKeys/CSI-u encoding of a modified key.
+constexpr int kKeyCtrlShiftS = 302;
+constexpr int kKeyCtrlShiftD = 303;
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {

@@ -65,6 +65,25 @@ long long pread_at(int fd, void* buf, size_t count, long long offset) {
 #endif
 }
 
+// Normalises a raw "year" tag to the 4-digit year the meta editor shows and
+// edits. The same underlying value arrives as "1999" (ID3v2.3 TYER, Vorbis
+// DATE), "1999-05-01" (ID3v2.4 TDRC, MP4 ©day) or occasionally something
+// free-text -- keeping only a leading all-digit run of >= 4 characters
+// matches what probe_row_meta()/probe_metadata() do with ffprobe's answer,
+// so a file looks the same whether it was resolved here or by ffprobe.
+std::string year_from_tag(std::string v) {
+    size_t start = v.find_first_not_of(" \t");
+    if (start == std::string::npos) return std::string();
+    v.erase(0, start);
+    if (v.size() >= 4 && std::isdigit(static_cast<unsigned char>(v[0])) &&
+        std::isdigit(static_cast<unsigned char>(v[1])) &&
+        std::isdigit(static_cast<unsigned char>(v[2])) &&
+        std::isdigit(static_cast<unsigned char>(v[3]))) {
+        return v.substr(0, 4);
+    }
+    return v;
+}
+
 } // namespace
 
 namespace {
@@ -379,6 +398,13 @@ NativeId3Tags probe_id3v2_native(const fs::path& path) {
             if (std::strcmp(frame_id, "TIT2") == 0) result.title = decode_id3_text(payload, payload_len);
             else if (std::strcmp(frame_id, "TPE1") == 0) result.artist = decode_id3_text(payload, payload_len);
             else if (std::strcmp(frame_id, "TALB") == 0) result.album = decode_id3_text(payload, payload_len);
+            // TYER carries the year in ID3v2.3, TDRC the full recording
+            // date in ID3v2.4 -- only one of the two is ever present, so
+            // first-wins is the right merge rule here.
+            else if ((std::strcmp(frame_id, "TYER") == 0 || std::strcmp(frame_id, "TDRC") == 0) &&
+                     result.year.empty()) {
+                result.year = year_from_tag(decode_id3_text(payload, payload_len));
+            }
         }
         off += frame_size;
     }
@@ -418,6 +444,9 @@ bool parse_vorbis_comment_list(const uint8_t* data, size_t len, NativeId3Tags& o
             if (key == "TITLE" && out.title.empty()) out.title = val;
             else if (key == "ARTIST" && out.artist.empty()) out.artist = val;
             else if (key == "ALBUM" && out.album.empty()) out.album = val;
+            // DATE is the Vorbis/FLAC standard for the year; YEAR is the
+            // (common) tagger convention. First-wins, like the others.
+            else if ((key == "DATE" || key == "YEAR") && out.year.empty()) out.year = year_from_tag(val);
         }
         off += clen;
     }
@@ -662,6 +691,7 @@ NativeId3Tags probe_mp4_native(const fs::path& path) {
     result.title = extract_text("\xA9" "nam");
     result.artist = extract_text("\xA9" "ART");
     result.album = extract_text("\xA9" "alb");
+    result.year = year_from_tag(extract_text("\xA9" "day")); // MP4/M4A stores the year in ©day
     result.resolved = true;
     return result;
 }

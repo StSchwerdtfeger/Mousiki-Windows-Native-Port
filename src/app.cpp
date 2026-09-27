@@ -510,6 +510,7 @@ App::App() {
                               static_cast<float>(settings_.normalize_max_boost_db));
     lyrics_script_ = find_lyrics_script();
     fast_search_script_ = find_fast_search_script();
+    meta_script_ = find_scripts_file("fetch_meta.py"); // AcoustID helper for Mode::MetaEdit
 
     // BUGFIX: the cache-dir injection below used to push_back()
     // unconditionally, every single launch -- and since save_settings()
@@ -1737,6 +1738,8 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyQueueMoveDown", "Queue Move Down"},
     // --- Playlists ---
     {"PLAYLISTS", "HKeyPlaylist", "Open Playlist Editor"}, // opens the playlist create/manage screen
+    // --- Meta editor ---
+    {"META EDITOR", "HKeyMetaEditor", "Open Meta Editor"}, // edit file names/tags, AcoustID fetch
     // --- Downloads ---
     {"DOWNLOADS", "HKeyDownloadStream", "Download Stream"},
     // --- System ---
@@ -1762,6 +1765,9 @@ static const RefHardcodedRow kRefHardcoded[] = {
     {"Y / N", "Confirm Or Cancel"},
     {"4 / 5", "Move Track Up/Down"},
     {"D / DEL / BACKSPACE", "Removal commands"},
+    {"SHIFT+B", "Fetch Metadata For Hovering Title"}, // Meta editor (also in Browse); can't be a hotkey -- see handle_key()
+    {"CTRL+SHIFT+S", "Apply Meta Edit Session To Files"},
+    {"CTRL+SHIFT+D", "Discard Meta Edit Session"},
 };
 static constexpr int kRefHardcodedCount = sizeof(kRefHardcoded) / sizeof(kRefHardcoded[0]);
 
@@ -1843,6 +1849,7 @@ std::vector<App::OnOffRow> App::build_onoff_rows() const {
 
     add_path_section("LOCAL PATH", false);
     add_path_section("PLAYLIST PATH", true);
+
     return rows;
 }
 
@@ -2165,12 +2172,14 @@ void App::handle_settings_key(int key) {
                     return; // stay in ColorEdit: redraw and repeat
                 }
             }
-            // Path commits write their own status (which path changed, and
-            // that the library was rescanned) -- don't bury it under the
-            // generic "UPDATED".
-            bool was_path = (settings_tab_ == 1 && onoff_row(settings_row_).kind == OnOffRow::Kind::Path);
+            // Path commits write their own status (which path changed, that
+            // the library was rescanned) -- don't bury it under the generic
+            // "UPDATED".
+            OnOffRow commit_row = onoff_row(settings_row_);
+            bool wrote_own_status = (settings_tab_ == 1 &&
+                                     commit_row.kind == OnOffRow::Kind::Path);
             settings_commit_edit();
-            if (!was_path) status_line_ = key_name.empty() ? "UPDATED" : ("UPDATED " + key_name);
+            if (!wrote_own_status) status_line_ = key_name.empty() ? "UPDATED" : ("UPDATED " + key_name);
             mode_ = Mode::Settings;
             return;
         }
@@ -2274,6 +2283,13 @@ void App::start_online_track(const OnlineResult& result) {
 void App::handle_key(int key) {
     if (key == 0) return;
 
+    // A meta-editor confirmation -- Shift+B's AcoustID disclaimer (raised
+    // here in Browse) or Ctrl+Shift+S/D raised from the menu -- swallows every
+    // key until it's answered, so nothing underneath it can be triggered by
+    // accident. Checked before the mode dispatch on purpose: the prompt can
+    // outlive the key that raised it in either of two modes.
+    if (handle_meta_prompt_key(key)) return;
+
     if (mode_ == Mode::ColorEdit || mode_ == Mode::Settings) {
         handle_settings_key(key);
         return;
@@ -2291,8 +2307,15 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::MetaEdit) {
+        handle_meta_key(key);
+        return;
+    }
+
     if (mode_ == Mode::Cheatsheet) {
         if (key == 27 || key == '?') mode_ = Mode::Browse;
+        else if (key == 'A') --cheatsheet_scroll_; // up -- the table is longer than the screen
+        else if (key == 'B') ++cheatsheet_scroll_; // down (clamped while rendering)
         return;
     }
 
@@ -2465,6 +2488,35 @@ void App::handle_key(int key) {
                      : (list_source_ == ListSource::Online) ? online_view_.size()
                      : playlist_view_.size();
 
+    // SHIFT+B -- AcoustID lookup of the hovered title (by audio fingerprint).
+    //
+    // Deliberately matched on the raw key + last_key_was_arrow() instead of
+    // going through settings_.hotkeys: the four arrow keys collapse to the
+    // letters 'A'..'D', so a hotkey string of "B" would be VALUE-identical
+    // to the Down arrow and would race HKeyNavigateDown inside
+    // resolve_hotkey_action()'s unordered_map scan (whichever the hash
+    // happened to visit first would win -- a nondeterministic bug), while
+    // the lowercase-fallback at the bottom of this chain would otherwise
+    // turn Shift+B into "play previous track" ('b'). last_key_was_arrow() is
+    // the only thing that can tell "the B key with Shift held" from "Down".
+    if (key == 'B' && !last_key_was_arrow()) {
+        std::string path;
+        if (queue_focus_) {
+            if (queue_selected_ >= 0 && queue_selected_ < static_cast<int>(queue_.size()) && queue_[queue_selected_].is_local) {
+                path = path_utf8(queue_[queue_selected_].local_path);
+            }
+        } else if (list_source_ == ListSource::Local && !local_view_.empty() &&
+                   selected_ >= 0 && selected_ < static_cast<int>(local_view_.size())) {
+            path = path_utf8(local_view_[selected_].path);
+        }
+        if (path.empty()) {
+            status_line_ = "SHIFT+B: only a local file can be fingerprinted";
+        } else {
+            meta_prompt_single_fetch(path); // asks the AcoustID disclaimer first
+        }
+        return;
+    }
+
     // Hotkeys are resolved to an action name via settings_.hotkeys /
     // resolve_hotkey_action() instead of switching on the raw key
     // directly, so a rebinding in Settings > Reference (or config.txt)
@@ -2495,6 +2547,8 @@ void App::handle_key(int key) {
         settings_col_ = 0;
     } else if (action == "HKeyPlaylist") {
         playlist_open_editor();
+    } else if (action == "HKeyMetaEditor") { // SHIFT+M: edit file names / tags, fetch metadata
+        meta_open();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
         queue_focus_ = !queue_focus_;
     } else if (action == "HKeyNavigateUp") {
@@ -2777,6 +2831,7 @@ RowMeta try_native_row_meta(const fs::path& path) {
         rm.title = tags.title;
         rm.artist = tags.artist;
         rm.album = tags.album;
+        rm.year = tags.year; // TYER/TDRC (MP3), DATE (Vorbis), ©day (MP4)
         rm.tags_resolved = true; // fully resolved without ffprobe
     }
     return rm;
@@ -4200,7 +4255,18 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     // range instead so up to 22 tracks are visible regardless of
     // terminal height (fewer on a short terminal, down to the 8-row
     // floor).
-    int panel_h = std::clamp(target_height - fixed_rows - 2, 8, 22); // -2: hint line + status line below
+    // Sized against BOTH bounds that matter (same reasoning as
+    // build_meta_screen()): target_height is player_view_height(), but
+    // clamp_output_rows() keeps term_rows_ - 1 lines and a full-width
+    // prompt here can wrap, so never lay out taller than the screen.
+    int budget = std::min(target_height, term_rows_ - 1);
+    // -4: the panel box's own top+bottom border rows (added by
+    // build_playlist_*_panel(), which draw a box around the panel_h rows
+    // they're handed) plus the hint line + status line below it. The old
+    // "-2" forgot the border rows, which made the frame 1-2 lines too tall
+    // and chopped the green status line -- "removed ...", "deleted ...",
+    // "added ..." -- off every single frame.
+    int panel_h = std::clamp(budget - fixed_rows - 4, 8, 22);
     if (playlist_tab_ == 0) {
         int left_w = W / 2;
         int right_w = W - left_w;
@@ -4266,6 +4332,904 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
 static std::string header_sgr(const Settings& s) {
     std::string params = sgr_params_for(s.header_color);
     return params.empty() ? "\x1b[1m" : "\x1b[1;" + params + "m";
+}
+
+// ---------------------------------------------------------------------
+// Meta/tag editor overlay (Mode::MetaEdit, HKeyMetaEditor = Shift+M)
+//
+// A second full-screen overlay modelled on the playlist editor further up --
+// same tab strip, same boxed side-by-side panels, same hint/status footer,
+// same Y/N prompts in place of the hint line -- but instead of building a
+// playlist it edits the FILES themselves: their names, and their
+// artist/title/album/year tags.
+//
+// Three rules shape the whole thing:
+//
+//  1. Edits are session state, never a side effect. Everything typed or
+//     fetched goes into meta_session_ and is written to an autosave backup
+//     (meta_editor.h, under ~/.cache/mousiki/meta_session/) after every
+//     single change. The audio files stay untouched until Ctrl+Shift+S
+//     explicitly applies the session.
+//  2. Leaving is always safe. ESC, quitting, crashing between two edits --
+//     none of that loses work: the backup is reloaded next run by
+//     meta_ensure_session_loaded(), and it is only ever deleted when the
+//     session is applied or explicitly discarded with Ctrl+Shift+D.
+//  3. What changed stays visible. A field that was touched -- typed OR
+//     filled in by AcoustID -- is drawn in header_sgr(), the same bold
+//     header colour the Settings section titles use, so "what will
+//     Ctrl+Shift+S write?" is answerable at a glance.
+// ---------------------------------------------------------------------
+
+// The AcoustID disclaimer, verbatim, shown by Shift+B's confirmation in
+// Browse (in the status line) and by the menu's batch fetch (in the footer).
+static const char* kMetaFetchDisclaimer =
+    "Fetching meta data via AcoustID; not always accurate and previous "
+    "meta data will be overwritten. Continue?";
+
+void App::meta_open() {
+    meta_status_.clear();          // before the loader below, which may set it
+    meta_prompt_ = MetaPrompt::None;
+    meta_prompt_paths_.clear();
+    meta_ensure_session_loaded();  // reopening never loses what's already pending
+    mode_ = Mode::MetaEdit;
+    meta_tab_ = 0;
+    meta_focus_ = 0;
+    meta_query_.clear();
+    meta_lib_selected_ = 0;
+    meta_field_ = 0;
+    meta_fetch_selected_ = 0;
+    meta_refresh_lib_view();
+}
+
+// Loads the autosaved backup exactly once per run. Called from meta_open()
+// AND from every session-touching action, because Shift+B reaches the same
+// session from Browse mode without ever opening the menu.
+void App::meta_ensure_session_loaded() {
+    if (meta_session_loaded_) return;
+    meta_session_loaded_ = true;
+    std::vector<MetaEditEntry> entries;
+    std::vector<std::string> fetch_list;
+    if (load_meta_session(entries, fetch_list)) {
+        meta_session_ = std::move(entries);
+        meta_fetch_list_ = std::move(fetch_list);
+        meta_status_ = "restored autosaved session: " + std::to_string(meta_session_.size())
+                     + " file" + (meta_session_.size() == 1 ? "" : "s") + " with pending edits";
+        log_event("restored meta edit session (" + std::to_string(meta_session_.size()) + " files)");
+    }
+    meta_refresh_lib_view();
+}
+
+void App::meta_refresh_lib_view() {
+    meta_lib_view_ = filter_and_rank_local(meta_query_);
+    meta_lib_selected_ = std::clamp(meta_lib_selected_, 0,
+        std::max(0, static_cast<int>(meta_lib_view_.size()) - 1));
+    meta_fetch_selected_ = std::clamp(meta_fetch_selected_, 0,
+        std::max(0, static_cast<int>(meta_fetch_list_.size()) - 1));
+}
+
+// The autosave: save whenever there is something to restore, remove the file
+// when there isn't. Deliberately NOT tied to any "was it applied" flag --
+// leaving the app always ends with whatever the user last edited still on
+// disk as a backup, which is the whole point of the session file.
+void App::meta_persist() {
+    if (!meta_session_loaded_) return;
+    if (meta_session_.empty() && meta_fetch_list_.empty()) delete_meta_session();
+    else save_meta_session(meta_session_, meta_fetch_list_);
+}
+
+const MetaEditEntry* App::meta_entry(const std::string& path) const {
+    for (const auto& e : meta_session_) if (e.path == path) return &e;
+    return nullptr;
+}
+
+MetaEditEntry& App::meta_touch_entry(const std::string& path) {
+    for (auto& e : meta_session_) if (e.path == path) return e;
+    MetaEditEntry e;
+    e.path = path;
+    meta_session_.push_back(std::move(e));
+    return meta_session_.back();
+}
+
+void App::meta_set_field(const std::string& path, int field, const std::string& value) {
+    meta_ensure_session_loaded();
+    MetaEditEntry& e = meta_touch_entry(path);
+    e.edited[field] = true;
+    e.value[field] = value;
+    meta_persist(); // autosave the backup after every keystroke -- it's a ~2KB file
+}
+
+// Current tags of one file for the editor. Uses the same cache the main list
+// uses, and the same in-process header parser as a render-thread-safe first
+// pass (no subprocess on the frame loop -- see ensure_visible_row_meta()'s
+// comment for why a stray ffprobe here used to freeze the whole UI). Files
+// that parser declines are finished off by the background sweep's ffprobe
+// pass, which now also reads the date tag, so YEAR arrives there too.
+RowMeta App::meta_row_meta(const fs::path& path) {
+    std::string key = path_utf8(path);
+    {
+        std::lock_guard<std::mutex> lk(row_meta_mutex_);
+        auto it = row_meta_cache_.find(key);
+        if (it != row_meta_cache_.end() && it->second.tags_resolved) return it->second;
+    }
+    RowMeta rm = try_native_row_meta(path);
+    bool usable = (rm.duration_sec > 0 || rm.tags_resolved);
+    bool promote = usable;
+    {
+        std::lock_guard<std::mutex> lk(row_meta_mutex_);
+        auto it = row_meta_cache_.find(key);
+        if (it != row_meta_cache_.end()) {
+            if (it->second.tags_resolved) { promote = false; rm = it->second; } // a better answer is already cached
+            else if (!usable) { rm = it->second; }
+        } else if (usable && row_meta_cache_.size() >= 4096) {
+            promote = false; // cache cap: same rule as ensure_visible_row_meta()
+        }
+        if (promote) row_meta_cache_[key] = rm;
+    }
+    if (promote && rm.tags_resolved) row_meta_tags_version_.fetch_add(1, std::memory_order_relaxed);
+    return rm;
+}
+
+std::string App::meta_hovering_path() const {
+    if (meta_tab_ == 1) { // the fetch list's rows ARE the titles
+        if (meta_fetch_list_.empty()) return {};
+        int i = std::clamp(meta_fetch_selected_, 0, static_cast<int>(meta_fetch_list_.size()) - 1);
+        return meta_fetch_list_[i];
+    }
+    if (meta_lib_view_.empty()) return {};
+    int i = std::clamp(meta_lib_selected_, 0, static_cast<int>(meta_lib_view_.size()) - 1);
+    return path_utf8(meta_lib_view_[i].path);
+}
+
+// What the field editor shows for one field: the pending value if the field
+// has been edited (that's what the highlight keys off), otherwise whatever
+// the file already carries.
+std::string App::meta_display_value(const std::string& path, int field, const MetaEditEntry* e) {
+    if (e && e->edited[field]) return e->value[field];
+    if (field == static_cast<int>(MetaField::FileName)) {
+        // The STEM, not the whole name: typing is meant to feel like editing
+        // "Alpha Song" rather than "Alpha Song.mp3", and apply_meta_entry()
+        // puts the original extension back on (meta_editor.cpp's
+        // normalize_file_name()), so a rename can never change the format.
+        return path_utf8(path_from_utf8(path).stem());
+    }
+    RowMeta rm = meta_row_meta(path_from_utf8(path));
+    switch (static_cast<MetaField>(field)) {
+        case MetaField::Artist: return rm.artist;
+        case MetaField::Title:  return rm.title;
+        case MetaField::Album:  return rm.album;
+        case MetaField::Year:   return rm.year;
+        default: return {};
+    }
+}
+
+// Precomputes the five displayed values for whatever row is hovered, once
+// per frame, because resolving them needs the mutable tag cache while
+// build_meta_screen() itself is const. Called from render_frame().
+void App::meta_refresh_hover_values() {
+    meta_hover_values_.fill(std::string());
+    meta_hover_resolved_ = false;
+    if (mode_ != Mode::MetaEdit) return;
+    std::string path = meta_hovering_path();
+    if (path.empty()) return;
+    const MetaEditEntry* e = meta_entry(path);
+    meta_hover_resolved_ = meta_row_meta(path_from_utf8(path)).tags_resolved;
+    for (int i = 0; i < kMetaFieldCount; ++i) meta_hover_values_[i] = meta_display_value(path, i, e);
+}
+
+void App::meta_add_hovering_to_fetch() {
+    meta_ensure_session_loaded();
+    std::string path = meta_hovering_path();
+    if (path.empty()) { meta_status_ = "no title selected"; return; }
+    for (const auto& p : meta_fetch_list_) {
+        if (p == path) {
+            meta_status_ = "already on the fetch list (" + std::to_string(meta_fetch_list_.size()) + " queued)";
+            return;
+        }
+    }
+    meta_fetch_list_.push_back(path);
+    meta_fetch_selected_ = static_cast<int>(meta_fetch_list_.size()) - 1;
+    meta_persist();
+    meta_status_ = "added to fetch list (" + std::to_string(meta_fetch_list_.size()) + " queued)";
+}
+
+// DEL / 'd' -- same "unqueue" gesture as the main list's removal key.
+void App::meta_remove_hovering() {
+    meta_ensure_session_loaded();
+    std::string path = meta_hovering_path();
+    if (path.empty()) return;
+    for (size_t i = 0; i < meta_fetch_list_.size(); ++i) {
+        if (meta_fetch_list_[i] == path) {
+            meta_fetch_list_.erase(meta_fetch_list_.begin() + static_cast<long>(i));
+            meta_refresh_lib_view();
+            meta_persist();
+            meta_status_ = "removed from fetch list (" + std::to_string(meta_fetch_list_.size()) + " queued)";
+            return;
+        }
+    }
+    meta_status_ = "not on the fetch list";
+}
+
+void App::meta_prompt_single_fetch(const std::string& path) {
+    if (path.empty()) return;
+    meta_ensure_session_loaded();
+    meta_prompt_ = MetaPrompt::Fetch;
+    meta_prompt_paths_.assign(1, path);
+    // In the menu the footer renders the disclaimer; in Browse there is no
+    // footer, so it goes through the status line instead.
+    if (mode_ == Mode::MetaEdit) meta_status_.clear();
+    else status_line_ = kMetaFetchDisclaimer;
+}
+
+void App::meta_prompt_list_fetch() {
+    meta_ensure_session_loaded();
+    if (meta_fetch_list_.empty()) {
+        meta_status_ = "fetch list is empty -- press 'a' on a track to queue it";
+        return;
+    }
+    meta_prompt_ = MetaPrompt::Fetch;
+    meta_prompt_paths_ = meta_fetch_list_;
+}
+
+void App::meta_start_fetch() {
+    meta_ensure_session_loaded();
+    if (meta_prompt_paths_.empty()) return;
+    if (meta_fetch_running_.exchange(true)) {
+        (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = "an AcoustID fetch is already running";
+        return;
+    }
+
+    std::vector<MetaFetchRequest> reqs;
+    reqs.reserve(meta_prompt_paths_.size());
+    for (const auto& path : meta_prompt_paths_) {
+        MetaFetchRequest r;
+        r.path = path;
+        const MetaEditEntry* e = meta_entry(path);
+        RowMeta rm = meta_row_meta(path_from_utf8(path));
+        r.title = (e && e->edited[static_cast<int>(MetaField::Title)])
+                      ? e->value[static_cast<int>(MetaField::Title)]
+                      : rm.title;
+        if (r.title.empty()) r.title = path_utf8(path_from_utf8(path).stem()); // last resort: the file name
+        r.artist = (e && e->edited[static_cast<int>(MetaField::Artist)])
+                       ? e->value[static_cast<int>(MetaField::Artist)]
+                       : rm.artist;
+        reqs.push_back(std::move(r));
+    }
+    meta_prompt_paths_.clear();
+    meta_fetch_ok_paths_.clear();
+    {
+        std::lock_guard<std::mutex> lk(meta_fetch_mutex_);
+        meta_fetch_results_.clear();
+        meta_fetch_progress_ = "0/" + std::to_string(reqs.size());
+        meta_fetch_done_ = false;
+        meta_fetch_outcome_ = MetaFetchOutcome{};
+    }
+    (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) =
+        "AcoustID: fetching " + std::to_string(reqs.size()) + " title" + (reqs.size() == 1 ? "" : "s") + " ...";
+
+    if (meta_fetch_thread_.joinable()) meta_fetch_thread_.join(); // previous batch already finished (running_ was false)
+    meta_fetch_thread_ = std::thread([this, reqs]() {
+        run_guarded("acoustid fetch", [&] {
+            int total = static_cast<int>(reqs.size());
+            int done = 0;
+            // One python process fingerprints the whole batch (fpcalc) and
+            // paces itself to AcoustID's 3-requests-per-second limit, printing
+            // a JSON line per lookup, so results are applied to the session as
+            // they land instead of only after the last one.
+            MetaFetchOutcome out = run_acoustid_fetch(reqs, meta_script_,
+                [this, total, &done](const MetaFetchResult& r) {
+                    std::lock_guard<std::mutex> lk(meta_fetch_mutex_);
+                    meta_fetch_results_.push_back(r);
+                    ++done;
+                    meta_fetch_progress_ = std::to_string(done) + "/" + std::to_string(total);
+                });
+            std::lock_guard<std::mutex> lk(meta_fetch_mutex_);
+            meta_fetch_outcome_ = out;
+            meta_fetch_done_ = true;
+        });
+    });
+}
+
+// Called from the render loop: drains whatever the batch produced since the
+// last frame (each result becomes pending edits, highlighted exactly like
+// typed ones) and finalises it once the worker reports done.
+void App::poll_pending_meta_fetch() {
+    std::vector<MetaFetchResult> incoming;
+    std::string progress;
+    bool done = false;
+    MetaFetchOutcome outcome;
+    {
+        std::lock_guard<std::mutex> lk(meta_fetch_mutex_);
+        // All pushes happen under this same lock, so reading `done` in the
+        // same critical section as the swap means a true `done` implies no
+        // further results are coming.
+        incoming.swap(meta_fetch_results_);
+        progress = meta_fetch_progress_;
+        done = meta_fetch_done_;
+        if (done) { outcome = meta_fetch_outcome_; meta_fetch_done_ = false; }
+    }
+
+    if (!incoming.empty()) {
+        int applied = 0;
+        for (const auto& r : incoming) {
+            if (!r.ok) continue;
+            MetaEditEntry& e = meta_touch_entry(r.path);
+            bool any = false;
+            for (int i = 1; i < kMetaFieldCount; ++i) { // 0 = file name: AcoustID never renames anything
+                if (r.set[i]) { e.edited[i] = true; e.value[i] = r.value[i]; any = true; }
+            }
+            if (any) { ++applied; meta_fetch_ok_paths_.push_back(r.path); }
+        }
+        if (applied) { meta_persist(); meta_refresh_lib_view(); }
+        if (!progress.empty()) {
+            (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = "AcoustID: " + progress + " ...";
+        }
+    }
+    if (!done) return;
+
+    if (meta_fetch_thread_.joinable()) meta_fetch_thread_.join();
+    meta_fetch_running_ = false;
+
+    // Everything that came back is now in the session, so drop it from the
+    // fetch list -- what remains is exactly what still needs another try.
+    if (!meta_fetch_ok_paths_.empty() && !meta_fetch_list_.empty()) {
+        std::vector<std::string> keep;
+        for (const auto& p : meta_fetch_list_) {
+            if (std::find(meta_fetch_ok_paths_.begin(), meta_fetch_ok_paths_.end(), p) == meta_fetch_ok_paths_.end()) {
+                keep.push_back(p);
+            }
+        }
+        meta_fetch_list_ = std::move(keep);
+        meta_refresh_lib_view();
+    }
+    meta_fetch_ok_paths_.clear();
+
+    std::string msg;
+    if (outcome.python_missing || outcome.script_missing) {
+        msg = "AcoustID: " + outcome.error;
+    } else if (outcome.ok_count > 0 || outcome.fail_count > 0) {
+        msg = "AcoustID: " + std::to_string(outcome.ok_count) + " ok";
+        if (outcome.fail_count > 0) {
+            msg += ", " + std::to_string(outcome.fail_count) + " failed";
+            if (!outcome.error.empty()) msg += " (" + outcome.error + ")";
+        }
+    } else {
+        msg = "AcoustID: " + (outcome.error.empty() ? std::string("no result") : outcome.error);
+    }
+    meta_persist();
+    (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = msg;
+    log_event(msg);
+}
+
+// Ctrl+Shift+S -> Y. Writes every pending edit to disk, keeps the failures
+// in the session so they can be retried, and only clears the backup when
+// nothing is left over.
+void App::meta_apply_session() {
+    meta_ensure_session_loaded();
+    if (meta_session_.empty()) {
+        (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = "nothing to save -- no pending edits";
+        return;
+    }
+    int ok = 0, failed = 0;
+    std::string first_error;
+    std::vector<MetaEditEntry> remaining;
+    remaining.reserve(meta_session_.size());
+    for (const auto& e : meta_session_) {
+        std::string err, new_path;
+        if (apply_meta_entry(e, &err, &new_path)) {
+            ++ok;
+            if (!new_path.empty() && new_path != e.path) {
+                // The file was renamed: keep every in-app reference pointed
+                // at the new name so playback/queue/lyrics don't break.
+                if (path_utf8(current_path_) == e.path) current_path_ = path_from_utf8(new_path);
+                for (auto& q : queue_) {
+                    if (q.is_local && path_utf8(q.local_path) == e.path) q.local_path = path_from_utf8(new_path);
+                }
+                for (auto& p : meta_fetch_list_) if (p == e.path) p = new_path;
+            }
+        } else {
+            ++failed;
+            if (first_error.empty()) first_error = err;
+            remaining.push_back(e);
+        }
+    }
+    meta_session_ = std::move(remaining);
+    meta_persist();
+    if (ok > 0) {
+        // Names and tags changed -- rebuild the lists. rescan_library() only
+        // refreshes the app's own views, so the meta menu's LIBRARY panel has
+        // to be rebuilt as well: after a rename it would otherwise keep
+        // showing (and keep handing out, via meta_hovering_path()) the old
+        // path, and every edit made against it from there on would be filed
+        // under a file that no longer exists.
+        rescan_library();
+        meta_refresh_lib_view();
+    }
+    std::string msg;
+    if (failed == 0) {
+        msg = "applied " + std::to_string(ok) + " pending edit" + (ok == 1 ? "" : "s") + " to disk";
+    } else {
+        msg = "applied " + std::to_string(ok) + ", " + std::to_string(failed) + " failed: " + first_error;
+    }
+    (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = msg;
+    log_event(msg);
+}
+
+// Ctrl+Shift+D -> Y. The audio files were never written to by an edit, so
+// discarding only means throwing the pending values (and their backup file)
+// away.
+void App::meta_discard_session() {
+    meta_ensure_session_loaded();
+    int had = static_cast<int>(meta_session_.size());
+    meta_session_.clear();
+    meta_fetch_list_.clear();
+    meta_fetch_ok_paths_.clear();
+    meta_persist(); // empty -> the autosave backup file goes away
+    std::string msg = "editing session discarded";
+    if (had > 0) msg += " (" + std::to_string(had) + " file" + (had == 1 ? "" : "s") + " had pending edits)";
+    (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = msg;
+    log_event(msg);
+}
+
+// Shared Y/N/ESC handler for the three confirmations. Returns true whenever
+// it consumed the key -- including the "a prompt is up, swallow everything
+// else" case -- and false only when there is no prompt at all, which is what
+// lets handle_key() call it unconditionally before its mode dispatch.
+bool App::handle_meta_prompt_key(int key) {
+    if (meta_prompt_ == MetaPrompt::None) return false;
+    auto say = [this](const std::string& s) {
+        (mode_ == Mode::MetaEdit ? meta_status_ : status_line_) = s;
+    };
+    if (key == 'y' || key == 'Y') {
+        MetaPrompt p = meta_prompt_;
+        meta_prompt_ = MetaPrompt::None;
+        // Careful with meta_prompt_paths_: the fetch batch is built FROM it,
+        // so it may only be cleared by the actions that don't read it -- an
+        // eager clear here made meta_start_fetch() see an empty list and
+        // return without fetching anything (silently: the confirmation had
+        // already been dismissed).
+        if (p == MetaPrompt::Save) {
+            meta_prompt_paths_.clear();
+            meta_apply_session();
+        } else if (p == MetaPrompt::Discard) {
+            meta_prompt_paths_.clear();
+            meta_discard_session();
+        } else {
+            meta_start_fetch(); // clears meta_prompt_paths_ itself
+        }
+        return true;
+    }
+    if (key == 'n' || key == 'N' || key == 27) {
+        meta_prompt_ = MetaPrompt::None;
+        meta_prompt_paths_.clear();
+        say("cancelled");
+        return true;
+    }
+    return true; // swallow everything else while a confirmation is up
+}
+
+void App::handle_meta_key(int key) {
+    if (handle_meta_prompt_key(key)) return;
+
+    if (key == 27) { // ESC -- leaving always just keeps the autosave backup
+        mode_ = Mode::Browse;
+        return;
+    }
+    if (key == kKeyCtrlShiftS) {
+        if (meta_session_.empty()) { meta_status_ = "nothing to save -- no pending edits"; return; }
+        meta_prompt_ = MetaPrompt::Save;
+        return;
+    }
+    if (key == kKeyCtrlShiftD) {
+        if (meta_session_.empty() && meta_fetch_list_.empty()) { meta_status_ = "nothing to discard"; return; }
+        meta_prompt_ = MetaPrompt::Discard;
+        return;
+    }
+    // SHIFT+B for the hovered title -- raw 'B' with no arrow behind it (see
+    // handle_key()'s Browse branch for why this can't be a normal hotkey).
+    if (key == 'B' && !last_key_was_arrow()) {
+        std::string path = meta_hovering_path();
+        if (path.empty()) meta_status_ = "no title selected";
+        else meta_prompt_single_fetch(path);
+        return;
+    }
+
+    // Arrows collapse to 'A'..'D' app-wide; last_key_was_arrow() is what
+    // tells a real arrow from a typed capital. Unlike the playlist editor
+    // (where the name field only ever sees casual typing) these fields hold
+    // real words, so capitals MUST stay typable here -- which is also why
+    // the tab switch below only fires for the arrow itself.
+    bool arrow = last_key_was_arrow();
+
+    if (arrow && (key == 'C' || key == 'D')) { // left/right: the only 2 tabs
+        meta_tab_ = (meta_tab_ + 1) % 2;
+        meta_focus_ = 0;
+        meta_refresh_lib_view();
+        return;
+    }
+    if (key == 9) { // Tab: search field -> library picker -> field editor -> ...
+        if (meta_tab_ == 0) meta_focus_ = (meta_focus_ + 1) % 3;
+        return;
+    }
+
+    if (meta_tab_ == 1) { // --- fetch list ---
+        int total = static_cast<int>(meta_fetch_list_.size());
+        if (arrow && key == 'A') { if (meta_fetch_selected_ > 0) --meta_fetch_selected_; return; }
+        if (arrow && key == 'B') { if (total > 0 && meta_fetch_selected_ < total - 1) ++meta_fetch_selected_; return; }
+        if (key == '\r' || key == '\n') { meta_prompt_list_fetch(); return; } // "fetch metadata" over the whole list
+        if (key == kKeyDelete || key == 127 || key == 'd') { meta_remove_hovering(); return; }
+        return;
+    }
+
+    if (meta_focus_ == 0) { // --- search field ---
+        if (arrow) {
+            if (key == 'A' && meta_lib_selected_ > 0) --meta_lib_selected_;
+            else if (key == 'B' && meta_lib_selected_ + 1 < static_cast<int>(meta_lib_view_.size())) ++meta_lib_selected_;
+            return;
+        }
+        if (key == 127 || key == 8) { pop_utf8_char(meta_query_); meta_refresh_lib_view(); return; }
+        if (key == '\r' || key == '\n') { meta_focus_ = 1; return; } // confirm the filter, jump to the list
+        if (is_text_key(key) && meta_query_.size() < 120) {
+            meta_query_ += static_cast<char>(key);
+            meta_refresh_lib_view();
+        }
+        return;
+    }
+
+    if (meta_focus_ == 1) { // --- library picker ---
+        int total = static_cast<int>(meta_lib_view_.size());
+        if (arrow && key == 'A') { if (meta_lib_selected_ > 0) --meta_lib_selected_; return; }
+        if (arrow && key == 'B') { if (total > 0 && meta_lib_selected_ < total - 1) ++meta_lib_selected_; return; }
+        if (key == '\r' || key == '\n') {
+            if (total == 0) { meta_status_ = "no track selected"; return; }
+            meta_focus_ = 2; // start editing the hovered title's fields
+            return;
+        }
+        if (key == 'a') { meta_add_hovering_to_fetch(); return; } // queue it for AcoustID, like the main queue's 'a'
+        if (key == kKeyDelete || key == 127 || key == 'd') { meta_remove_hovering(); return; }
+        return; // every other printable key would be search input, and search lives in focus 0
+    }
+
+    // --- field editor: type directly into the selected field ---
+    {
+        std::string path = meta_hovering_path();
+        if (path.empty()) { meta_focus_ = 1; return; }
+        if (arrow && key == 'A') { if (meta_field_ > 0) --meta_field_; return; }
+        if (arrow && key == 'B') { if (meta_field_ + 1 < kMetaFieldCount) ++meta_field_; return; }
+        if (key == '\r' || key == '\n') { meta_focus_ = 1; return; } // "done with this field"
+        if (key == 127 || key == 8) {
+            const MetaEditEntry* e = meta_entry(path);
+            std::string cur = meta_display_value(path, meta_field_, e);
+            pop_utf8_char(cur);
+            meta_set_field(path, meta_field_, cur); // marks it edited -> header colour
+            return;
+        }
+        if (is_text_key(key)) {
+            const MetaEditEntry* e = meta_entry(path);
+            std::string cur = meta_display_value(path, meta_field_, e);
+            size_t limit = (meta_field_ == static_cast<int>(MetaField::FileName)) ? 200 : 160;
+            if (cur.size() < limit) {
+                cur += static_cast<char>(key);
+                meta_set_field(path, meta_field_, cur);
+            }
+        }
+        return;
+    }
+}
+
+std::vector<std::string> App::build_meta_library_panel(int total_width, int height) const {
+    int inner = total_width - 4;
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::vector<std::string> out;
+
+    out.push_back(box_top("LIBRARY" + (meta_focus_ == 1 ? std::string(" \u25c0") : std::string()),
+                          total_width, border_ansi));
+
+    int total = static_cast<int>(meta_lib_view_.size());
+    if (total == 0) {
+        int mid = height / 2;
+        for (int row = 0; row < height; ++row) {
+            std::string content;
+            if (row == mid) {
+                std::string text = apply_font_map(meta_query_.empty() ? "NO TRACKS FOUND" : "NO MATCHING TRACK",
+                                                  settings_.font_map);
+                int left = std::max(0, (inner - display_width(text)) / 2);
+                content = std::string(left, ' ') + text;
+            }
+            std::string padded = pad_right(truncate_str(content, inner), inner);
+            std::string list_ansi = ansi_for(settings_.list_color, false);
+            out.push_back(bar + " " + list_ansi + padded + "\x1b[0m " + bar);
+        }
+        out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+        return out;
+    }
+
+    int scroll = std::clamp(meta_lib_selected_ - height / 2, 0, std::max(0, total - height));
+    const int idx_w = 3;
+    for (int row = 0; row < height; ++row) {
+        int idx = scroll + row;
+        std::string content;
+        bool edited = false;
+        if (idx < total) {
+            const auto& t = meta_lib_view_[idx];
+            int title_w = std::max(5, inner - idx_w - 2);
+            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+            std::string t_title = apply_font_map(list_row_title(t.path, t.title), settings_.font_map);
+            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                    + pad_right(truncate_str(t_title, title_w), title_w);
+            // Files carrying pending edits are painted in the header colour,
+            // the same bold highlight an edited field gets in the FIELDS
+            // panel -- so the list answers "which files is that panel talking
+            // about?" without having to walk over them one by one.
+            const MetaEditEntry* e = meta_entry(path_utf8(t.path));
+            edited = e && e->any_edited();
+        }
+        bool sel = (meta_focus_ == 1) && (idx == meta_lib_selected_);
+        std::string padded = pad_right(truncate_str(content, inner), inner);
+        std::string base;
+        if (sel) {
+            base = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
+        } else {
+            base = ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color);
+        }
+        // Colour AFTER padding: display_width() is UTF-8-aware but not
+        // ANSI-aware, so a coloured row would otherwise measure wrong.
+        if (edited) {
+            out.push_back(bar + " " + base + header_sgr(settings_) + padded
+                          + "\x1b[0m" + base + "\x1b[0m " + bar);
+        } else {
+            out.push_back(bar + " " + base + padded + "\x1b[0m " + bar);
+        }
+    }
+    std::string footer;
+    int remaining = total - (scroll + height);
+    if (remaining > 0) footer = "( " + std::to_string(remaining) + " more )";
+    // One number for the highlight above: how many files in the session have
+    // pending edits (meta_session_ only ever holds those).
+    if (!meta_session_.empty()) {
+        std::string tag = "[ " + std::to_string(meta_session_.size()) + " edited ]";
+        footer += footer.empty() ? tag : "  " + tag;
+    }
+    out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
+    return out;
+}
+
+// The five editable fields. This is where the header-colour highlight and
+// the block cursor live, and both are built the same way build_list_panel()
+// builds a row: plain segments are measured first, then the already-sized
+// pieces get wrapped in colour -- display_width() is UTF-8-aware but NOT
+// ANSI-aware, so colouring before padding would miscount the row.
+std::vector<std::string> App::build_meta_fields_panel(int total_width, int height) const {
+    int inner = total_width - 4;
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::vector<std::string> out;
+
+    std::string path = meta_hovering_path();
+    std::string name = path.empty() ? std::string() : path_utf8(path_from_utf8(path).filename());
+    std::string sel_pos;
+    if (!meta_lib_view_.empty()) {
+        sel_pos = "  " + std::to_string(meta_lib_selected_ + 1) + "/" + std::to_string(meta_lib_view_.size());
+    }
+    std::string label = "EDIT" + sel_pos + (name.empty() ? std::string() : " " + truncate_str(name, 40))
+                      + (meta_focus_ == 2 ? " \u25c0" : std::string());
+    out.push_back(box_top(label, total_width, border_ansi));
+
+    if (path.empty()) {
+        for (int row = 0; row < height; ++row) {
+            std::string content;
+            if (row == height / 2) {
+                std::string text = apply_font_map("NO TRACK SELECTED", settings_.font_map);
+                int left = std::max(0, (inner - display_width(text)) / 2);
+                content = std::string(left, ' ') + text;
+            }
+            std::string padded = pad_right(truncate_str(content, inner), inner);
+            out.push_back(bar + " " + ansi_for(settings_.list_color, false) + padded + "\x1b[0m " + bar);
+        }
+        out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+        return out;
+    }
+
+    const MetaEditEntry* entry = meta_entry(path);
+    const int label_w = 8;
+    for (int row = 0; row < height; ++row) {
+        if (row >= kMetaFieldCount) { // unused rows stay blank, so the panel height never changes
+            std::string padded = pad_right(std::string(), inner);
+            out.push_back(bar + " " + ansi_for(settings_.list_color, false) + padded + "\x1b[0m " + bar);
+            continue;
+        }
+        int i = row;
+        std::string lab = pad_right(meta_field_label(i), label_w);
+        std::string val_raw = meta_hover_values_[i];
+        if (val_raw.empty()) {
+            val_raw = (i == 0) ? std::string("-")
+                    : (meta_hover_resolved_ ? "(untagged)" : "(reading ...)");
+        }
+        bool sel = (meta_focus_ == 2) && (i == meta_field_);
+        if (sel) val_raw += "\u2588"; // block cursor on the field being typed into
+        std::string val = truncate_str(val_raw, std::max(4, inner - label_w));
+        int used = display_width(lab) + display_width(val);
+        std::string fill(std::max(0, inner - used), ' ');
+        bool edited = entry && entry->edited[i];
+
+        std::string base = sel ? cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color)
+                               : (ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color));
+        std::string row_ansi = base + lab;
+        if (edited) row_ansi += header_sgr(settings_); // bold + header colour: this field has been edited
+        row_ansi += val;
+        if (edited) row_ansi += "\x1b[0m" + base; // back to the row's own colours for the padding
+        row_ansi += fill + "\x1b[0m";
+        out.push_back(bar + " " + row_ansi + " " + bar);
+    }
+
+    int n_edited = 0;
+    if (entry) for (bool b : entry->edited) if (b) ++n_edited;
+    std::string footer = n_edited ? ("( " + std::to_string(n_edited) + " edited, pending )") : "";
+    out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
+    return out;
+}
+
+std::vector<std::string> App::build_meta_fetch_panel(int total_width, int height) const {
+    int inner = total_width - 4;
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::vector<std::string> out;
+
+    out.push_back(box_top("FETCH LIST (" + std::to_string(meta_fetch_list_.size()) + ") \u25c0",
+                          total_width, border_ansi));
+
+    int total = static_cast<int>(meta_fetch_list_.size());
+    if (total == 0) {
+        int mid = height / 2;
+        for (int row = 0; row < height; ++row) {
+            std::string content;
+            if (row == mid) {
+                std::string text = apply_font_map("NOTHING QUEUED -- PRESS 'a' ON A TRACK IN THE EDIT TAB",
+                                                  settings_.font_map);
+                int left = std::max(0, (inner - display_width(text)) / 2);
+                content = std::string(left, ' ') + text;
+            }
+            std::string padded = pad_right(truncate_str(content, inner), inner);
+            out.push_back(bar + " " + ansi_for(settings_.list_color, false) + padded + "\x1b[0m " + bar);
+        }
+        out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+        return out;
+    }
+
+    int scroll = std::clamp(meta_fetch_selected_ - height / 2, 0, std::max(0, total - height));
+    const int idx_w = 3;
+    for (int row = 0; row < height; ++row) {
+        int idx = scroll + row;
+        std::string content;
+        if (idx < total) {
+            const std::string& p = meta_fetch_list_[idx];
+            int title_w = std::max(5, inner - idx_w - 2);
+            const MetaEditEntry* e = meta_entry(p);
+            std::string base = list_row_title(path_from_utf8(p), path_utf8(path_from_utf8(p).stem()));
+            std::string shown = (e && e->any_edited()) ? (base + " [edited]") : base;
+            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+            std::string t_title = apply_font_map(shown, settings_.font_map);
+            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                    + pad_right(truncate_str(t_title, title_w), title_w);
+        }
+        bool sel = (idx == meta_fetch_selected_);
+        std::string padded = pad_right(truncate_str(content, inner), inner);
+        if (sel) {
+            std::string cursor_ansi = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
+            out.push_back(bar + " " + cursor_ansi + padded + "\x1b[0m " + bar);
+        } else {
+            std::string list_ansi = ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color);
+            out.push_back(bar + " " + list_ansi + padded + "\x1b[0m " + bar);
+        }
+    }
+    std::string footer;
+    int remaining = total - (scroll + height);
+    if (remaining > 0) footer = "( " + std::to_string(remaining) + " more )";
+    out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
+    return out;
+}
+
+// Full-screen meta editor, assembled exactly like build_playlist_screen():
+// header box, tab strip, optional search row, boxed panels, then a footer
+// that is ALWAYS two lines (prompt, or legend + status) so switching
+// states never makes the layout jump.
+void App::build_meta_screen(std::ostringstream& frame, int W, int target_height) const {
+    if (W < 60) W = 60;
+    std::string border = ansi_for(settings_.border_color, false);
+    std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string HI = "\x1b[7m", R = "\x1b[0m";
+
+    frame << box_top("META EDITOR", W, border) << "\n";
+
+    // Tab strip, hand-built like the playlist editor's (box_line() can't
+    // measure the reverse-video highlight before padding it).
+    {
+        std::string bar = border + settings_.box_vertical + R;
+        std::string plain0 = " 1: EDIT ";
+        std::string plain1 = " 2: FETCH LIST ";
+        std::string gap = "   ";
+        int inner = W - 4;
+        std::string plain_row = plain0 + gap + plain1;
+        std::string seg0 = (meta_tab_ == 0) ? (HI + plain0 + R) : plain0;
+        std::string seg1 = (meta_tab_ == 1) ? (HI + plain1 + R) : plain1;
+        int pad_n = std::max(0, inner - display_width(plain_row));
+        frame << bar << " " << seg0 + gap + seg1 << std::string(pad_n, ' ') << " " << bar << "\n";
+    }
+
+    int fixed_rows = 3; // top border + tab strip + bottom border
+    if (meta_tab_ == 0) {
+        std::string cursor = (meta_focus_ == 0) ? "\u2588" : "";
+        std::string q = meta_query_.empty() ? (meta_focus_ == 0 ? std::string() : "(type to filter)")
+                                            : meta_query_;
+        frame << box_line("Search: " + q + cursor, W, border) << "\n";
+        fixed_rows += 1;
+    }
+    frame << box_bottom(W, "", border_bottom) << "\n";
+
+    // Sized against BOTH bounds that matter: term_rows_ - 1 is what
+    // clamp_output_rows() will actually keep (a footer line chopped off
+    // every frame is a status message or half a confirmation prompt gone),
+    // while player_view_height() is what the other overlays are sized to --
+    // except on a short terminal, where the Browse view's metadata/progress/
+    // search panels don't shrink and that value is several rows taller than
+    // the screen. total = fixed_rows + (panel_h + 2) + 2 must fit the
+    // smaller of the two.
+    int budget = std::min(target_height, term_rows_ - 1);
+    int panel_h = std::clamp(budget - fixed_rows - 4, 6, 22);
+    if (meta_tab_ == 0) {
+        int left_w = W / 2;
+        int right_w = W - left_w;
+        auto left_lines = build_meta_library_panel(left_w, panel_h);
+        auto right_lines = build_meta_fields_panel(right_w, panel_h);
+        size_t rows = std::max(left_lines.size(), right_lines.size());
+        for (size_t i = 0; i < rows; ++i) {
+            std::string l = (i < left_lines.size()) ? left_lines[i] : std::string(left_w, ' ');
+            std::string r = (i < right_lines.size()) ? right_lines[i] : std::string(right_w, ' ');
+            frame << l << r << "\n";
+        }
+    } else {
+        for (auto& l : build_meta_fetch_panel(W, panel_h)) frame << l << "\n";
+    }
+
+    if (meta_prompt_ != MetaPrompt::None) {
+        // Wrapped to at most 2 lines: the AcoustID disclaimer is longer
+        // than a narrow terminal, and an unwrapped bar would wrap into a
+        // third line and push the whole overlay past its own height.
+        std::string text;
+        std::string colors;
+        if (meta_prompt_ == MetaPrompt::Fetch) {
+            text = std::string(kMetaFetchDisclaimer) + "   [Y]es   [N]o   [ESC] cancel";
+            colors = "\x1b[43;30m"; // yellow, same as the playlist editor's save prompt
+        } else if (meta_prompt_ == MetaPrompt::Save) {
+            text = "Want to save? Applies every pending edit to the files.   [Y]es   [N]o   [ESC] cancel";
+            colors = "\x1b[43;30m";
+        } else {
+            text = "Want to discard changes? The files themselves were never touched.   [Y]es   [N]o   [ESC] cancel";
+            colors = "\x1b[41;97m"; // red, same as its delete prompt
+        }
+        auto lines = wrap_lines(text, std::max(10, W - 2), 2);
+        while (lines.size() < 2) lines.push_back(std::string());
+        for (const auto& l : lines) {
+            // The second row is reserved (so the footer never changes
+            // height between a prompt and a hint/status), but a reserved
+            // row stays bare: a full-width empty color bar reads as a
+            // rendering glitch, not as an empty status line.
+            if (l.empty()) frame << "\n";
+            else frame << colors << " " << l << " \x1b[0m\n";
+        }
+    } else {
+        std::string hint = (meta_tab_ == 0)
+            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | "
+              "[SHIFT+B] Fetch | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
+            : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | "
+              "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit";
+        frame << "\x1b[90m" << truncate_str(hint, W) << "\x1b[0m\n";
+        if (!meta_status_.empty()) frame << "\x1b[32m" << truncate_str(meta_status_, W) << "\x1b[0m\n";
+        else frame << "\n";
+    }
 }
 
 void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) const {
@@ -4434,7 +5398,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 const bool ed = (r.sel == settings_row_ && mode_ == Mode::ColorEdit);
                 if (r.kind == OnOffRow::Kind::Path) {
                     std::string lab = std::string(r.playlist_path ? "Playlist Path " : "Local Path ")
-                                    + std::to_string(r.path_index + 1);
+                                      + std::to_string(r.path_index + 1);
                     pos(y, 6, pad(lab, 25)); pos(y, 32, ":");
                     // The value column runs from col 35 right up to the border --
                     // a folder path is far longer than a toggle's 20 columns, and
@@ -4725,20 +5689,43 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"HKeyCycleSortMode",               "Cycle local list sort mode"},
         {"HKeyPlaylist",                    "Create/manage playlists"},
         {"HKeySearchPlaylist",              "Search saved playlists (type /p:query)"},
+        {"HKeyMetaEditor",                  "Meta editor: edit file name / artist / title / album / year"},
+        {"#SHIFT+B",                        "Fetch metadata for the hovered title (AcoustID)"},
+        {"#CTRL+SHIFT+S",                   "Apply the meta editor's pending edits to the files"},
+        {"#CTRL+SHIFT+D",                   "Discard the meta editor's pending edits"},
         {"HKeyToggleNormalize",             "Toggle loudness normalization"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
     int visible = std::max(1, height - 2);
     int total = static_cast<int>(std::size(rows));
+    // Scrollable, same as Settings' Reference tab: this table is longer than
+    // what a 32-row terminal can show at once (it already was, before the
+    // meta editor's four rows were added to it), and silently dropping the
+    // tail would make entries unreachable rather than just off-screen.
+    int max_scroll = std::max(0, total - visible);
+    cheatsheet_scroll_ = std::clamp(cheatsheet_scroll_, 0, max_scroll);
     for (int r = 0; r < visible; ++r) {
-        if (r >= total) { frame << box_line("", W, border) << "\n"; continue; }
-        auto it = settings_.hotkeys.find(rows[r].first);
-        std::string key = (it != settings_.hotkeys.end() && !it->second.empty()) ? it->second : "-";
-        std::string line = pad_right(key, 14) + rows[r].second;
+        int idx = cheatsheet_scroll_ + r;
+        if (idx >= total) { frame << box_line("", W, border) << "\n"; continue; }
+        // '#'-prefixed entries are a literal key label rather than an action
+        // name: SHIFT+B / Ctrl+Shift+S / Ctrl+Shift+D are not rebindable
+        // (see handle_key()'s comment on SHIFT+B), so there is no
+        // settings_.hotkeys entry to look them up in.
+        std::string key;
+        if (rows[idx].first[0] == '#') {
+            key = rows[idx].first + 1;
+        } else {
+            auto it = settings_.hotkeys.find(rows[idx].first);
+            key = (it != settings_.hotkeys.end() && !it->second.empty()) ? it->second : "-";
+        }
+        std::string line = pad_right(key, 14) + rows[idx].second;
         frame << box_line(line, W, border) << "\n";
     }
-    frame << box_bottom(W, "[? / ESC] close", border) << "\n";
+    std::string bottom = "[? / ESC] close";
+    if (max_scroll > 0) bottom += "  [\u2191\u2193] scroll " + std::to_string(cheatsheet_scroll_ + 1) + "/"
+                                + std::to_string(total);
+    frame << box_bottom(W, bottom, border) << "\n";
 }
 
 // ---------------------------------------------------------------------
@@ -5072,7 +6059,8 @@ int App::player_view_height(int w) const {
     h += static_cast<int>(build_progress_panel(w).size());
     h += static_cast<int>(build_search_bar(w).size());
     h += list_visible_rows_;
-    h += 1; // blank separator line
+    h += 2; // the list/queue box's own top+bottom border rows (build_list_panel()/
+            // build_queue_panel() add them ON TOP of the content rows they're given)
     h += 1; // status/loading line -- reserved even when currently empty, so this doesn't jitter frame to frame
     return h;
 }
@@ -5116,6 +6104,7 @@ std::string App::render_frame(TerminalIO& term) {
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
             case Mode::Playlist: return 4;
+            case Mode::MetaEdit: return 5;
         }
         return 0;
     };
@@ -5133,17 +6122,32 @@ std::string App::render_frame(TerminalIO& term) {
     last_render_mode_ = mode_;
     const char* clear_prefix = hard_clear ? "\x1b[2J\x1b[H" : "\x1b[H";
 
+    // Every overlay below lays itself out against player_view_height() --
+    // the height of the Browse view it stands in for -- but that value can
+    // exceed what actually fits: list_visible_rows_ is only recomputed
+    // while Browse itself is being rendered, so anything that grows the
+    // metadata panel while another mode is up (playback starting, for
+    // instance) leaves it stale and pvH points past the bottom of the
+    // screen. clamp_output_rows() keeps term_rows_ - 1 lines, so the
+    // budget asked for here is min(pvH, term_rows_ - 1): an overlay laid
+    // out taller than the screen would have its own footer -- hint line
+    // plus status line -- chopped off on every single frame, which is the
+    // same bug that used to hide Browse's status line entirely.
+    auto overlay_budget = [&](int w) {
+        return std::min(player_view_height(w), std::max(1, term_rows_ - 1));
+    };
+
     if (mode_ == Mode::Settings || mode_ == Mode::ColorEdit) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
-        build_settings_screen(frame, W, player_view_height(W));
+        build_settings_screen(frame, W, overlay_budget(W));
         return clamp_output_rows(frame.str(), term_rows_);
     }
 
     if (mode_ == Mode::Console) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
-        build_console_screen(frame, W, player_view_height(W));
+        build_console_screen(frame, W, overlay_budget(W));
         return clamp_output_rows(frame.str(), term_rows_);
     }
 
@@ -5157,7 +6161,18 @@ std::string App::render_frame(TerminalIO& term) {
     if (mode_ == Mode::Playlist) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
-        build_playlist_screen(frame, W, player_view_height(W));
+        build_playlist_screen(frame, W, overlay_budget(W));
+        return clamp_output_rows(frame.str(), term_rows_);
+    }
+
+    if (mode_ == Mode::MetaEdit) {
+        // The five field values are resolved right before drawing them:
+        // reading a tag can promote into the shared cache, and the panel
+        // builder itself is const (see meta_refresh_hover_values()).
+        meta_refresh_hover_values();
+        std::ostringstream frame;
+        frame << "\x1b[2J\x1b[H\x1b[?25l";
+        build_meta_screen(frame, W, overlay_budget(W));
         return clamp_output_rows(frame.str(), term_rows_);
     }
 
@@ -5168,14 +6183,39 @@ std::string App::render_frame(TerminalIO& term) {
     auto metadata_lines = build_metadata_panel(W);
     auto progress_lines = build_progress_panel(W);
     auto search_lines = build_search_bar(W);
+    // The AcoustID confirmation raised by SHIFT+B lives in Browse's
+    // status area too (there is no footer here), but the disclaimer alone is
+    // 110 characters -- wider than many terminals -- so instead of trusting
+    // one physical line to hold it (which would wrap in the terminal and
+    // push the whole frame into a scroll), it is wrapped here and as many
+    // rows as it actually needs are reserved for it, exactly like the normal
+    // single status row.
+    std::vector<std::string> prompt_lines;
+    if (meta_prompt_ != MetaPrompt::None && mode_ == Mode::Browse) {
+        prompt_lines = wrap_lines(std::string(kMetaFetchDisclaimer) + "   [Y]es   [N]o   [ESC] cancel",
+                                  std::max(10, W - 2), 2);
+    }
+    int status_rows = std::max<int>(1, static_cast<int>(prompt_lines.size()));
     int fixed_h = static_cast<int>(metadata_lines.size() + progress_lines.size() + search_lines.size())
-                + 1  // blank separator line
-                + 1; // status/loading line (reserved even when empty, so it doesn't jitter frame to frame)
+                + status_rows; // status/loading line (reserved even when empty, so it doesn't jitter frame to frame)
+    // Two things used to be missing from this budget, and together they made
+    // the frame exactly 2 lines too tall on EVERY terminal:
+    //   * build_list_panel()/build_queue_panel() draw a top and a bottom
+    //     border row around the `list_h` content rows they're handed, and
+    //   * there used to be a blank separator line before the status line.
+    // clamp_output_rows() keeps term_rows_ - 1 lines, so those last 2 lines
+    // -- blank + status/loading -- were chopped off every single frame: no
+    // Browse message ever reached the screen at all ("added to queue",
+    // "queued 3 tracks", the SHIFT+B AcoustID question, ...). The blank
+    // line is gone (the status line sits directly under the list box now),
+    // and the box's 2 border rows are subtracted from the room the list may
+    // use, so the frame ends up exactly term_rows_ - 1 lines tall with the
+    // status line as its last one.
     // -1 extra margin: leave the terminal's very last row untouched so a
     // trailing '\n' after the final printed line can never itself force
     // a scroll (see clamp_output_rows()'s comment for the same reasoning
     // applied as a hard backstop).
-    int available_for_list = term_rows_ - fixed_h - 1;
+    int available_for_list = term_rows_ - fixed_h - 1 - 2;
     list_visible_rows_ = std::clamp(available_for_list, 0, kListVisibleRows);
 
     ensure_visible_row_meta();
@@ -5203,8 +6243,14 @@ std::string App::render_frame(TerminalIO& term) {
         for (auto& l : build_list_panel(W, list_h)) frame << l << "\n";
     }
 
-    frame << "\n";
-    if (load_in_progress_.load() && load_stage_.load() == 1) {
+    // No blank separator above the status line any more: with the list box's
+    // border rows now counted in available_for_list, dropping this row is
+    // what actually leaves room for the status line itself (see the comment
+    // there -- it used to be cut off by clamp_output_rows() every frame).
+    if (!prompt_lines.empty()) {
+        // Same yellow-on-black as the meta menu's own confirmation footer.
+        for (const auto& l : prompt_lines) frame << "\x1b[43;30m " << l << " \x1b[0m\n";
+    } else if (load_in_progress_.load() && load_stage_.load() == 1) {
         // Only the online resolve/download step shows a live status —
         // local loads are probe-only now (near-instant) and deliberately
         // silent, no "loading..." flash.
@@ -5343,6 +6389,7 @@ int App::run() {
         poll_pending_waveform();
         poll_pending_bulk_add();
         poll_pending_row_meta_tags();
+        poll_pending_meta_fetch(); // AcoustID results -> pending edits
         maybe_autosave();
 
         auto now = std::chrono::steady_clock::now();
@@ -5361,7 +6408,8 @@ int App::run() {
                                2.0 * 3.14159265358979323846);
         }
 
-        std::cout << render_frame(term) << std::flush;
+        std::string frame_str = render_frame(term);
+        std::cout << frame_str << std::flush;
         // 25fps (was 12.5fps) — the 700ms waveform reveal animation only
         // got ~9 frames to work with at the old 80ms cadence, which
         // showed as a handful of visible ~11% jumps rather than a smooth
@@ -5393,6 +6441,14 @@ int App::run() {
     if (search_thread_.joinable()) search_thread_.join();
     if (device_worker_thread_.joinable()) device_worker_thread_.join();
     if (bulk_add_thread_.joinable()) bulk_add_thread_.join();
+    // An AcoustID batch still in flight: let it finish (it's just a
+    // paced python subprocess), apply whatever it answered into the
+    // session, then write the autosave backup one last time. Quitting with
+    // unsaved edits is *supposed* to leave them on disk -- the session file
+    // IS the backup, and only Ctrl+Shift+S or Ctrl+Shift+D ever clears it.
+    if (meta_fetch_thread_.joinable()) meta_fetch_thread_.join();
+    poll_pending_meta_fetch();
+    meta_persist();
     std::cout << "\nbye.\n";
     return 0;
 }

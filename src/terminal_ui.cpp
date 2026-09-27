@@ -3,6 +3,7 @@
 #include "utf8_util.h"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #if defined(_WIN32)
 #include "win_compat.h"
@@ -133,6 +134,36 @@ int TerminalIO::poll_key() {
                     if (read(STDIN_FILENO, &tail, 1) == 1 && tail == '~') { g_last_key_was_arrow = false; return kKeyDelete; }
                     g_last_key_was_arrow = false;
                     return 27;
+                }
+            }
+            // Modified-key sequences (a digit after ESC [): xterm's
+            // modifyOtherKeys form "ESC [ 27 ; <mod> ; <code> ~" and the
+            // kitty/CSI-u form "ESC [ <code> ; <mod> u", which is how a
+            // terminal reports a key pressed WITH modifiers -- notably the
+            // Ctrl+Shift+S / Ctrl+Shift+D sentinels the meta editor uses
+            // (mod = 1 + shift*1 + alt*2 + ctrl*4, so Ctrl+Shift = 6).
+            // Only ever reached for a sequence whose final byte hasn't been
+            // consumed by the arrow/Home/Delete cases above.
+            if (seq[1] >= '0' && seq[1] <= '9') {
+                std::string body(1, static_cast<char>(seq[1]));
+                unsigned char tail = 0;
+                for (int i = 0; i < 24; ++i) {
+                    if (read(STDIN_FILENO, &tail, 1) != 1) break;
+                    if (tail >= 0x40 && tail <= 0x7E) break; // final byte of the sequence
+                    body.push_back(static_cast<char>(tail));
+                }
+                // "27;<mod>;<code>~" or "<code>;<mod>u"
+                int code = 0, mod = 0;
+                if (body.rfind("27;", 0) == 0 && tail == '~') {
+                    int m = 0, c = 0;
+                    if (std::sscanf(body.c_str(), "27;%d;%d~", &m, &c) == 2) { mod = m; code = c; }
+                } else if (tail == 'u') {
+                    int c = 0, m = 0;
+                    if (std::sscanf(body.c_str(), "%d;%d", &c, &m) >= 1) { code = c; mod = m; }
+                }
+                if (mod == 6) { // Ctrl+Shift
+                    if (code == 'S' || code == 's') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
+                    if (code == 'D' || code == 'd') { g_last_key_was_arrow = false; return kKeyCtrlShiftD; }
                 }
             }
         }
