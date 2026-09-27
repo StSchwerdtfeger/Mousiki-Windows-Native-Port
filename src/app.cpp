@@ -1825,26 +1825,49 @@ static const RefHardcodedRow kRefHardcoded[] = {
     {"Y / N", "Confirm Or Cancel"},
     {"4 / 5", "Move Track Up/Down"},
     {"D / DEL / BACKSPACE", "Removal commands"},
+    {"HOME", "Save Playlist"}, // playlist editor's save-and-exit, checked as a raw key like the rows above
     {"SHIFT+B", "Fetch Metadata For Hovering Title"}, // Meta editor (also in Browse); can't be a hotkey -- see handle_key()
     {"CTRL+SHIFT+S", "Apply Meta Edit Session To Files"},
     {"CTRL+SHIFT+D", "Discard Meta Edit Session"},
 };
 static constexpr int kRefHardcodedCount = sizeof(kRefHardcoded) / sizeof(kRefHardcoded[0]);
 
+// The label column of every row on this tab is 25 cells wide with the
+// ":" barrier sitting right behind it, and pad() below deliberately does
+// NOT truncate (the reference renderer doesn't either) -- so a label
+// longer than those 25 cells used to run straight through the barrier and
+// get chopped up by the ":" and the keys drawn after it. Wrapping at a
+// word boundary onto extra display lines keeps both columns intact: line
+// one carries the label's head, the ":" and the key, continuation lines
+// carry only the rest of the label. Every row after a wrapped one moves
+// down, which is what ref_display_row() has to count.
+static constexpr int kRefLabelW = 25;
+static std::vector<std::string> ref_label_lines(int hardcoded_index) {
+    std::vector<std::string> lines =
+        wrap_lines(kRefHardcoded[hardcoded_index].label, kRefLabelW, 4);
+    if (lines.empty()) lines.push_back(std::string());
+    return lines;
+}
+
 // Maps a selectable row index -- 0..kRefRowCount-1 for hotkeys,
 // kRefRowCount..+kRefHardcodedCount-1 for the hardcoded rows, then the
 // font-map letters -- to the row it's actually drawn on, once the section
 // header/divider lines inserted along the way (one above each hotkey
-// category, one above the hardcoded section, one above the font map) are
-// accounted for. Used by both the render block and the ColorEdit cursor
-// placement below, so the two always agree on where a given row lands.
+// category, one above the hardcoded section, one above the font map) and
+// the wrapped labels' continuation lines are accounted for. Used by both
+// the render block and the ColorEdit cursor placement below, so the two
+// always agree on where a given row lands.
 static int ref_display_row(int selectable_row) {
-    int headers = 0;
+    int headers = 0, wrapped = 0;
     for (int i = 0; i <= selectable_row; ++i) {
         if (i < kRefRowCount) { if (kRefRows[i].header) headers += 2; }
-        else if (i == kRefRowCount || i == kRefRowCount + kRefHardcodedCount) headers += 2;
+        else {
+            if (i == kRefRowCount || i == kRefRowCount + kRefHardcodedCount) headers += 2;
+            if (i < kRefRowCount + kRefHardcodedCount) // a hardcoded row's label may span 2 lines
+                wrapped += static_cast<int>(ref_label_lines(i - kRefRowCount).size()) - 1;
+        }
     }
-    return selectable_row + headers;
+    return selectable_row + headers + wrapped;
 }
 
 // The ON/OFF tab's toggle rows, in paint order -- and that order IS the
@@ -3130,6 +3153,41 @@ void App::poll_pending_row_meta_tags() {
 }
 
 // ---------------------------------------------------------------------
+// Idle-state cassette picture
+// ---------------------------------------------------------------------
+// Braille cassette shown in the metadata panel's lyrics/sphere column
+// whenever no track is loaded (never started, playback stopped in "stop"
+// mode, or the file that was playing got deleted). Byte-for-byte copy of
+// tape_ascii.txt: 15 rows of 30 braille cells -- deliberately the same
+// geometry as the rotating disk (disk_art.cpp), so it fills that column at
+// exactly the panel's size and can be tinted with the same top-to-bottom
+// disk gradient. See the !has_track_ branch of build_metadata_panel().
+//
+// The characters are written as \uXXXX escapes so this file stays pure
+// ASCII: no editor, copy or checkout can re-encode them, while /utf-8
+// still compiles them into exactly the same UTF-8 bytes.
+static constexpr const char* kTapeArt[] = {
+    "\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2880\u2864\u28c4\u2800\u2800\u2800\u2800\u2800\u2800\u2800",
+    "\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2880\u28c0\u28e4\u28c0\u28c0\u2800\u2800\u2880\u2840\u2814\u2801\u2800\u28b8\u2803\u2800\u2800\u2800\u2800\u2800\u2800",
+    "\u2800\u2800\u2820\u2802\u2809\u2809\u2809\u2811\u28b2\u28fe\u2849\u2800\u2800\u2800\u2800\u2808\u2801\u2800\u2800\u28c0\u2814\u2802\u2801\u2800\u2800\u2800\u2800\u2800\u2800\u2800",
+    "\u2800\u2800\u2847\u2800\u2800\u2800\u2800\u2800\u28b8\u2800\u2809\u28a6\u2800\u2800\u2800\u2800\u2800\u2800\u28b0\u2801\u2800\u2800\u2800\u2880\u28c0\u2800\u2800\u2800\u2800\u2800",
+    "\u2800\u2800\u2810\u28c4\u2800\u2800\u2800\u2800\u2808\u2823\u2804\u280a\u2800\u28c0\u28c0\u28e4\u28e4\u28f4\u28fe\u28f6\u28ff\u28ff\u28ff\u28ff\u28ff\u2847\u2800\u2800\u2800\u2800",
+    "\u2800\u2800\u2800\u2808\u28f3\u28c4\u28e0\u28e4\u28f4\u28f6\u28f6\u28ff\u28ff\u28bf\u28df\u28ef\u28bf\u28dd\u28af\u2877\u28fb\u28be\u28df\u28ff\u28fb\u28ff\u2800\u2800\u2800\u2800",
+    "\u28e4\u28f6\u28f6\u28fe\u28ff\u28bf\u28fb\u289f\u28ef\u28bf\u2875\u28fb\u28ae\u283f\u28ee\u28b7\u28ef\u28fb\u28fd\u286b\u28bf\u289d\u286b\u285b\u28cd\u28bf\u2846\u2800\u2800\u2800",
+    "\u28bb\u28fe\u28ff\u28ff\u28ef\u28b7\u28ef\u287b\u28f7\u28eb\u285f\u287d\u28cf\u287b\u2873\u286d\u286a\u28d6\u289c\u28ce\u28b3\u289d\u2854\u286e\u28d5\u283d\u28f7\u2800\u2800\u2800",
+    "\u2818\u28ff\u283f\u28de\u289b\u2873\u286d\u28f9\u28a2\u28a7\u2879\u28ea\u28ce\u28de\u283c\u282e\u28be\u287e\u28de\u285b\u281a\u2897\u28dd\u28ae\u286a\u2873\u28fb\u2844\u2800\u2800",
+    "\u2800\u28bf\u2857\u2875\u28d9\u288e\u285e\u289c\u2837\u28bb\u28ef\u287b\u28de\u28b7\u28a9\u28a3\u28b9\u287e\u28ef\u2866\u2820\u28ed\u2897\u28b5\u2839\u285c\u287d\u28e7\u2800\u2800",
+    "\u2800\u2838\u28df\u28f2\u2809\u28de\u28ba\u28eb\u2840\u28c0\u28bf\u28dd\u28de\u287f\u2874\u2875\u2873\u283b\u280d\u281b\u2899\u2801\u2829\u2800\u2804\u2800\u28b9\u28bf\u2840\u2800",
+    "\u2800\u2800\u28ff\u28d5\u289d\u2855\u28c7\u283b\u2832\u281a\u280b\u288a\u2808\u28ec\u28c0\u28e4\u2802\u2880\u2801\u2800\u2804\u2800\u28c2\u28c0\u28ec\u28e4\u28fc\u285d\u2847\u2800",
+    "\u2800\u2800\u28b8\u28ef\u280e\u2880\u2800\u28b2\u2866\u2815\u2800\u2804\u2800\u28c3\u28c8\u28ed\u28e4\u28f4\u28f6\u28fe\u28ff\u283f\u283f\u281f\u281b\u280b\u2809\u2809\u2800\u2800",
+    "\u2800\u2800\u2800\u28ff\u28f3\u28c0\u28ec\u28e4\u28f4\u28f6\u28fe\u28ff\u283f\u283f\u281f\u281b\u280b\u2809\u2809\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800",
+    "\u2800\u2800\u2800\u2839\u283d\u281f\u281b\u280b\u2809\u2809\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800",
+};
+
+static constexpr int kTapeArtRows = 15;   // == rows in tape_ascii.txt
+static constexpr int kTapeArtWidth = 30;  // == cells per row == disk width
+
+// ---------------------------------------------------------------------
 // Panel builders
 // ---------------------------------------------------------------------
 
@@ -3177,7 +3235,7 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     bool viz_rows_colored = false;
     std::vector<int> bars; // computed once below, reused by the sphere visualizer fallback further down
     if (has_track_) {
-        int meta_row_cursor_ = 1; // row 0 stays reserved for the "no track loaded" message
+        int meta_row_cursor_ = 1; // row 0 stays blank: the metadata block starts below the panel's top edge (the idle message is centred in the column instead)
         std::string k_col = settings_.meta_key_color.empty() ? ansi_for(settings_.list_color) : ansi_for(settings_.meta_key_color);
         std::string v_col = settings_.meta_val_color.empty() ? ansi_for(settings_.list_color) : ansi_for(settings_.meta_val_color);
         auto kv = [&](const std::string& label, const std::string& value, int max_lines = 1) {
@@ -3263,17 +3321,20 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
             bars = fft_.compute_bars(48, viz_dt_);
         }
     } else {
-        meta_rows[0] = "no track loaded - press / to search, Enter to play";
+        // Nothing loaded -- never started, playback stopped with no track,
+        // or the file that was playing got deleted. The message sits centred
+        // (both ways) in the metadata/visualizer column instead of being
+        // glued to its first row, where it used to hide behind the disk.
+        meta_rows[std::max(0, panel_h / 2)] = center_pad("Currently No Track Loaded", meta_w);
     }
     for (int i = 0; i < static_cast<int>(meta_rows.size()); ++i) {
         if (meta_rows[i].empty()) {
             meta_rows[i] = std::string(meta_w, ' ');
-        } else if (!has_track_ && i == 0) {
-            meta_rows[i] = pad_right(meta_rows[i], meta_w);
         }
-        // all other rows (kv data, visualizer) are already perfectly padded
-        // by their respective builders, and padding them again would miscount 
-        // their ANSI color escapes as visible columns, truncating them.
+        // Every other row (kv data, visualizer, and the centred idle message
+        // above -- center_pad() already pads that one to meta_w) was padded
+        // by its own builder, and padding it again would miscount its ANSI
+        // color escapes as visible columns, truncating it.
     }
 
     // lyrics window: word-wrapped, center-aligned, word-level highlight on
@@ -3298,7 +3359,25 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
         // misleading status line.
     }
 
-    if (!lyrics_avail) {
+    if (!has_track_) {
+        // Nothing is playing, so there is no sphere and no lyric line to draw
+        // and this column would just be empty. Fill it with the braille
+        // cassette picture (kTapeArt above -- 15 rows of 30 cells, the disk's
+        // own dimensions), centred in the column and tinted with the SAME
+        // top-to-bottom disk gradient the rotating disk gets, so the idle
+        // panel keeps the colour it has while playing.
+        int start = std::max(0, (panel_h - kTapeArtRows) / 2);
+        for (int i = 0; i < kTapeArtRows && start + i < panel_h; ++i) {
+            float t = panel_h > 1 ? static_cast<float>(start + i) / (panel_h - 1) : 0.0f;
+            int left = (lyrics_w - kTapeArtWidth) / 2;
+            std::string body = (left >= 0)
+                ? std::string(left, ' ') + kTapeArt[i]
+                  + std::string(lyrics_w - left - kTapeArtWidth, ' ')
+                : utf8_skip_take(kTapeArt[i], -left, lyrics_w); // column narrower than the art: keep its middle, never wrap braille cells
+            lyric_rows[start + i] =
+                gradient_ansi(settings_.disk_color, settings_.disk_color_end, t) + body + "\x1b[0m";
+        }
+    } else if (!lyrics_avail) {
         // A status message ("fetching...", "no lyrics found", etc.) is
         // only shown for the first 1.75s after it appears -- after that
         // the sphere gets the whole panel to itself instead of a
@@ -5652,14 +5731,26 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             disp++;
         };
         auto draw_hardcoded_row = [&](int i, int selectable_row) {
-            if (in_view()) {
-                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, pad(kRefHardcoded[i].label, 25)); pos(y, 32, ":");
-                bool sel = (selectable_row == settings_row_);
-                pos(y, 35, (sel ? HI : "") + pad(kRefHardcoded[i].keys, 20) + R);
-                y++;
+            // The label wraps at kRefLabelW cells instead of running past
+            // the ":" barrier (see ref_label_lines()), so a long command
+            // name takes a second display line: the ":" and the key stay on
+            // the first one, the continuation sits right below the label's
+            // head. disp++/y++ happen per drawn line, which is exactly what
+            // ref_display_row() counts for the scroll window and cursor.
+            const std::vector<std::string> parts = ref_label_lines(i);
+            bool sel = (selectable_row == settings_row_);
+            for (size_t p = 0; p < parts.size(); ++p) {
+                if (in_view()) {
+                    pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                    pos(y, 6, pad(parts[p], kRefLabelW));
+                    if (p == 0) {
+                        pos(y, 32, ":");
+                        pos(y, 35, (sel ? HI : "") + pad(kRefHardcoded[i].keys, 20) + R);
+                    }
+                    y++;
+                }
+                disp++;
             }
-            disp++;
         };
         auto draw_font_row = [&](char c, int selectable_row) {
             if (in_view()) {
@@ -5811,78 +5902,141 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
     std::string border = ansi_for(settings_.border_color, false);
     frame << box_top("CHEATSHEET", W, border) << "\n";
 
-    // action, human-readable description -- key shown is whatever the
-    // user actually has bound (config.txt / rebound in Settings), not a
-    // hardcoded assumption, so this stays accurate after remapping.
-    static const std::pair<const char*, const char*> rows[] = {
-        {"HKeySearch",                      "Search local folder"},
-        {"HKeySearchOnline",                "Search online (YouTube)"},
-        {"HKeyDownloadStream",              "Download stream to 1st local path"},
-        {"HKeyTogglePlayPause",             "Play / pause"},
-        {"HKeyPlayNextSong",                "Play next in list/queue"},
-        {"HKeyPlayPreviousSong",            "Play previous in list"},
-        {"HKeySeekForward",                 "Seek forward 5s"},
-        {"HKeySeekBackward",                "Seek backward 5s"},
-        {"HKeyIncreaseVolume",              "Volume up"},
-        {"HKeyDecreaseVolume",              "Volume down"},
-        {"HKeyCyclePlayMode",               "Cycle play mode (list/repeat/shuffle/repeat queue/stop)"},
-        {"HKeyRefreshUi",                   "Refresh UI (redraw)"},
-        {"HKeyConsole",                     "Console / logs"},
-        {"HKeySwitchBetweenCards",          "Switch between panels"},
-        {"HKeyAddHoveringSongToQueue",      "Add hovering track to queue"},
-        {"HKeyRemoveHoveringSongFromQueue", "Remove hovering track from queue"},
-        {"HKeyFilterForFolder",             "Filter by folder"},
-        {"HKeyClearFilter",                 "Clear filter"},
-        {"HKeyQuit",                        "Quit"},
-        {"HKeySetting",                     "Settings panel"},
-        {"HKeyNavigateUp",                  "Explore list (up)"},
-        {"HKeyNavigateDown",                "Explore list (down)"},
-        {"HKeyToggleMute",                  "Mute (without pausing)"},
-        {"HKeyCheatsheet",                  "This cheatsheet"},
-        {"HKeyRetryLyrics",                 "Retry lyrics"},
-        {"HKeyShuffleNext",                 "Shuffle to a random next track"},
-        {"HKeyToggleLyrics",                "Toggle lyrics on/off"},
-        {"HKeyToggleMetaOnly",              "Toggle metadata-only track list (no filename)"},
-        {"HKeyQueueMoveUp",                 "Move hovering queue item up"},
-        {"HKeyQueueMoveDown",               "Move hovering queue item down"},
-        {"HKeyToggleWaveform",              "Toggle waveform style (raw/smooth)"},
-        {"HKeyCycleSortMode",               "Cycle local list sort mode"},
-        {"HKeyPlaylist",                    "Create/manage playlists"},
-        {"HKeySearchPlaylist",              "Search saved playlists (type /p:query)"},
-        {"HKeyMetaEditor",                  "Meta editor: edit file name / artist / title / album / year"},
-        {"#SHIFT+B",                        "Fetch metadata for the hovered title (AcoustID)"},
-        {"#CTRL+SHIFT+S",                   "Apply the meta editor's pending edits to the files"},
-        {"#CTRL+SHIFT+D",                   "Discard the meta editor's pending edits"},
-        {"#r",                              "Meta editor: toggle edited files on top of the library pane"},
-        {"HKeyToggleNormalize",             "Toggle loudness normalization"},
+    // Same shape as the Reference tab of Settings (kRefRows/kRefHardcoded):
+    // `header` is set only on a category's first row and is drawn as a
+    // section title in the Header colour above a blank spacer row -- and the
+    // rows below it are that tab's ENTIRE command list, so the two screens
+    // can't drift apart. `action` is either
+    //   * a plain action name, looked up in settings_.hotkeys, so the key
+    //     shown is whatever the user actually has bound (config.txt /
+    //     rebound in Settings), never a hardcoded assumption; or
+    //   * '#'-prefixed: a literal key label. SHIFT+B, Ctrl+Shift+S/D, ESC
+    //     and friends are checked as raw key codes in handle_*_key() (see
+    //     kRefHardcoded), so there is no hotkey entry to look them up in.
+    struct CheatRow { const char* header; const char* action; const char* desc; };
+    static const CheatRow rows[] = {
+        // --- Playback ---
+        {"PLAYBACK", "HKeyPlay", "Play the selected track"},
+        {nullptr, "HKeyTogglePlayPause", "Play / pause"},
+        {nullptr, "HKeyPlayNextSong", "Play next in list/queue"},
+        {nullptr, "HKeyPlayPreviousSong", "Play previous in list"},
+        {nullptr, "HKeyShuffleNext", "Shuffle to a random next track"},
+        {nullptr, "HKeyCyclePlayMode", "Cycle play mode (list/repeat/shuffle/repeat queue/stop)"},
+        {nullptr, "HKeySeekForward", "Seek forward 5s"},
+        {nullptr, "HKeySeekBackward", "Seek backward 5s"},
+        {nullptr, "HKeyIncreaseVolume", "Volume up"},
+        {nullptr, "HKeyDecreaseVolume", "Volume down"},
+        {nullptr, "HKeyToggleMute", "Mute (without pausing)"},
+        {nullptr, "HKeyToggleNormalize", "Toggle loudness normalization"},
+        // --- Navigation & View ---
+        {"NAVIGATION & VIEW", "HKeyNavigateUp", "Explore list (up)"},
+        {nullptr, "HKeyNavigateDown", "Explore list (down)"},
+        {nullptr, "HKeySwitchBetweenCards", "Switch between panels"},
+        {nullptr, "HKeyFilterForFolder", "Filter by folder"},
+        {nullptr, "HKeyClearFilter", "Clear filter"},
+        {nullptr, "HKeyCycleSortMode", "Cycle local list sort mode"},
+        {nullptr, "HKeyRefreshUi", "Refresh UI (redraw)"},
+        {nullptr, "HKeyToggleWaveform", "Toggle waveform style (raw/smooth)"},
+        {nullptr, "HKeyToggleLyrics", "Toggle lyrics on/off"},
+        {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
+        {nullptr, "HKeyRetryLyrics", "Retry lyrics"},
+        // --- Search ---
+        {"SEARCH", "HKeySearch", "Search local folder"},
+        {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
+        {nullptr, "HKeySearchPlaylist", "Search saved playlists (type /p:query)"},
+        // --- Queue ---
+        {"QUEUE", "HKeyAddHoveringSongToQueue", "Add hovering track to queue"},
+        {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove hovering track from queue"},
+        {nullptr, "HKeyQueueMoveUp", "Move hovering queue item up"},
+        {nullptr, "HKeyQueueMoveDown", "Move hovering queue item down"},
+        // --- Playlists ---
+        {"PLAYLISTS", "HKeyPlaylist", "Create/manage playlists"},
+        // --- Meta editor ---
+        {"META EDITOR", "HKeyMetaEditor", "Meta editor: edit file name / artist / title / album / year"},
+        {nullptr, "#TAB", "Meta editor: cycle panels (search / library / fields)"},
+        {nullptr, "#a", "Meta editor: add the hovering file to the fetch list"},
+        {nullptr, "#r", "Meta editor: toggle edited files on top of the library pane"},
+        {nullptr, "#SHIFT+B", "Fetch metadata for the hovered title (AcoustID)"},
+        {nullptr, "#CTRL+SHIFT+S", "Apply the meta editor's pending edits to the files"},
+        {nullptr, "#CTRL+SHIFT+D", "Discard the meta editor's pending edits"},
+        // --- Downloads ---
+        {"DOWNLOADS", "HKeyDownloadStream", "Download stream to 1st local path"},
+        // --- System ---
+        {"SYSTEM", "HKeySetting", "Settings panel"},
+        {nullptr, "HKeyConsole", "Console / logs"},
+        {nullptr, "HKeyCheatsheet", "This cheatsheet"},
+        {nullptr, "HKeyQuit", "Quit"},
+        // --- The literal keys kRefHardcoded lists on the Reference tab ---
+        {"HARDCODED / NOT REBINDABLE", "#ESC", "Close setting / overlay / menu"},
+        {nullptr, "#S", "Save and quit Settings"},
+        {nullptr, "#ENTER", "Confirm / select (meta editor: fetch the whole list)"},
+        {nullptr, "#ARROW KEYS", "Navigate (meta editor: left/right switch tab)"},
+        {nullptr, "#Y / N", "Confirm or cancel a prompt"},
+        {nullptr, "#4 / 5", "Move the track up/down (playlist editor)"},
+        {nullptr, "#D / DEL / BACKSPACE", "Removal commands (playlist editor: delete tracks)"},
+        {nullptr, "#HOME", "Save the playlist (playlist editor)"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
     int visible = std::max(1, height - 2);
-    int total = static_cast<int>(std::size(rows));
+    // Counted in DISPLAY lines rather than rows: a category costs three
+    // (blank spacer + title + the row the title sits on) exactly like
+    // ref_display_row() counts them on the Reference tab, and
+    // cheatsheet_scroll_ is kept in the same unit -- so a header scrolls
+    // like any other line.
+    int total = 0;
+    for (const auto& r : rows) total += r.header ? 3 : 1;
     // Scrollable, same as Settings' Reference tab: this table is longer than
     // what a 32-row terminal can show at once (it already was, before the
-    // meta editor's four rows were added to it), and silently dropping the
-    // tail would make entries unreachable rather than just off-screen.
+    // meta editor's rows were added to it), and silently dropping the tail
+    // would make entries unreachable rather than just off-screen.
     int max_scroll = std::max(0, total - visible);
     cheatsheet_scroll_ = std::clamp(cheatsheet_scroll_, 0, max_scroll);
-    for (int r = 0; r < visible; ++r) {
-        int idx = cheatsheet_scroll_ + r;
-        if (idx >= total) { frame << box_line("", W, border) << "\n"; continue; }
-        // '#'-prefixed entries are a literal key label rather than an action
-        // name: SHIFT+B / Ctrl+Shift+S / Ctrl+Shift+D are not rebindable
-        // (see handle_key()'s comment on SHIFT+B), so there is no
-        // settings_.hotkeys entry to look them up in.
+
+    // A coloured line can't go through box_line(): that pads by counting
+    // bytes, so it would treat the escape codes as columns and truncate the
+    // text away. Pad the plain text first, then wrap the padded result.
+    const std::string R = "\x1b[0m";
+    const std::string bar = border + settings_.box_vertical + R;
+    const int inner = std::max(0, W - 4);
+    int disp = 0;  // running index over the whole table's display lines
+    int shown = 0; // how many of them are actually printed (a window of `visible`)
+    auto emit = [&](const std::string& plain, const std::string& sgr) {
+        bool in_window = disp >= cheatsheet_scroll_ && shown < visible;
+        ++disp;
+        if (!in_window) return;
+        ++shown;
+        frame << bar << " ";
+        if (!sgr.empty()) frame << sgr;
+        frame << pad_right(plain, inner);
+        if (!sgr.empty()) frame << R;
+        frame << " " << bar << "\n";
+    };
+    for (const auto& r : rows) {
+        if (r.header) {
+            emit(std::string(), "");                       // blank spacer row...
+            emit(r.header, header_sgr(settings_));         // ...then the title, Header colour + bold
+            // ...and then the row itself, which is where the header lives
+            // (same as kRefRows: a category's title sits on its FIRST entry,
+            // not on a line of its own) -- falling through, not continue.
+        }
         std::string key;
-        if (rows[idx].first[0] == '#') {
-            key = rows[idx].first + 1;
+        if (r.action[0] == '#') {
+            key = r.action + 1;                            // literal key label, no hotkey to look up
         } else {
-            auto it = settings_.hotkeys.find(rows[idx].first);
+            auto it = settings_.hotkeys.find(r.action);
             key = (it != settings_.hotkeys.end() && !it->second.empty()) ? it->second : "-";
         }
-        std::string line = pad_right(key, 14) + rows[idx].second;
-        frame << box_line(line, W, border) << "\n";
+        // 20 columns, wide enough for the widest literal key ("D / DEL /
+        // BACKSPACE" is 19): pad_right() truncates instead of leaving a gap,
+        // which used to glue "ARROW_KEY_RIGH" / "D / DEL / BACKSP" straight
+        // onto their descriptions. A user binding even wider than that keeps
+        // its full text with two spaces behind it rather than being cut.
+        std::string key_col = (display_width(key) > 19) ? key + "  " : pad_right(key, 20);
+        emit(key_col + r.desc, "");
     }
+    while (shown < visible) { frame << box_line("", W, border) << "\n"; ++shown; }
+
     std::string bottom = "[? / ESC] close";
     if (max_scroll > 0) bottom += "  [\u2191\u2193] scroll " + std::to_string(cheatsheet_scroll_ + 1) + "/"
                                 + std::to_string(total);
