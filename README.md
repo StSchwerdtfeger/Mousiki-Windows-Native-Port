@@ -24,7 +24,7 @@
 
 </div>
 
-A native Windows port of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player for macOS/Linux built for people who prefer control, simplicity, and a keyboard. Note about the name: it is the greek word for music and is pronounced mousi-**key**! ;) All credits for the design, main feature set, and the vast majority of the code goes to the original author. Feel free to give feedback in the discussions and report issues you might experience using this modified port.
+A native Windows port (including a bunch of modifications and additions; design maintained) of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player for macOS/Linux built for people who prefer control, simplicity, and a keyboard. Note about the name: it is the greek word for music and is pronounced mousi-**key**! ;) All credits for the design, main feature set, and the vast majority of the code goes to the original author. Feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all — no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
