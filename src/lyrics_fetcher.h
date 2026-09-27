@@ -32,8 +32,9 @@ struct LyricsResult {
     std::string raw_lrc;   // the raw LRC text, kept so it can be cached to a sidecar file
 };
 
-// Priority chain: a local sidecar .lrc file next to `track_path` (checked
-// first, no subprocess spawned at all) -> the Python helper script
+// Priority chain: a local sidecar .lrc file in a "lyrics" subfolder of the
+// track's own folder (checked first, no subprocess spawned at all; a sidecar
+// left next to the track by an older build is still read as a fallback) -> the Python helper script
 // (scripts/fetch_lyrics.py), which tries Better Lyrics first (word-level
 // TTML, converted to enhanced LRC) and falls back to LRCLIB (line-synced
 // only) if Better Lyrics has nothing -- see scripts/lrc.py. Whatever

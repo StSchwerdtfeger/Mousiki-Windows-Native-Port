@@ -16,8 +16,19 @@ CacheManager::CacheManager() {
     // non-ASCII name produced a garbled base directory.
     fs::path base = home ? path_from_utf8(home) : fs::path(".");
     cache_dir_ = base / ".cache" / "mousiki";
+    download_dir_ = cache_dir_; // until Settings says otherwise (see set_download_dir)
     std::error_code ec;
     fs::create_directories(cache_dir_, ec); // ignore failure, we surface it on first write instead
+}
+
+void CacheManager::set_download_dir(const fs::path& dir) {
+    if (dir.empty() || dir == cache_dir_) {
+        download_dir_ = cache_dir_;
+        return;
+    }
+    std::error_code ec;
+    fs::create_directories(dir, ec); // a not-yet-existing folder is normal: this is where the next download goes
+    download_dir_ = dir;
 }
 
 // Turns a track title into a filename.
@@ -105,18 +116,31 @@ std::string CacheManager::legacy_sanitize(const std::string& raw) {
 }
 
 fs::path CacheManager::path_for(const std::string& title, const std::string& ext) const {
-    fs::path current = cache_dir_ / (sanitize(title) + "." + ext);
     std::error_code ec;
-    if (fs::exists(current, ec)) return current;
+    const std::string stem = sanitize(title);
+    const std::string legacy_stem = legacy_sanitize(title);
+    fs::path found;
 
-    // Nothing under the current scheme -- fall back to a file left behind by
-    // the old one, if there is one, so previously cached tracks keep playing.
-    std::string legacy_stem = legacy_sanitize(title);
-    if (legacy_stem != sanitize(title)) {
-        fs::path legacy = cache_dir_ / (legacy_stem + "." + ext);
-        if (fs::exists(legacy, ec)) return legacy;
+    auto existing_in = [&](const fs::path& dir, const std::string& s) {
+        if (!found.empty()) return;
+        fs::path p = dir / (s + "." + ext);
+        if (fs::exists(p, ec)) found = p;
+    };
+
+    // The download folder first -- current naming, then the pre-UTF-8 one.
+    existing_in(download_dir_, stem);
+    existing_in(download_dir_, legacy_stem);
+
+    // A folder configured LATER must not orphan what is already downloaded:
+    // before declaring a title never fetched, look in the default cache
+    // folder too (which is the only candidate when no folder is configured).
+    if (download_dir_ != cache_dir_) {
+        existing_in(cache_dir_, stem);
+        existing_in(cache_dir_, legacy_stem);
     }
-    return current;   // doesn't exist yet: this is the name a download writes
+
+    if (!found.empty()) return found;
+    return download_dir_ / (stem + "." + ext); // doesn't exist yet: this is the name a download writes
 }
 
 bool CacheManager::is_cached(const std::string& title, const std::string& ext) const {

@@ -778,6 +778,23 @@ static Settings load_from_config(const fs::path& path) {
             continue;
         }
 
+        // --- Download folder (single) ---
+        // Where yt-dlp writes its output: one folder, not a list. Empty
+        // stays empty on purpose -- an unset DownloadFolder means "the
+        // built-in cache folder", and keeping it unset (rather than
+        // materialising the default into the file) is what lets a changed
+        // default take effect without rewriting anyone's config.txt.
+        // Same ~ expansion as LocalMusicPath, above.
+        if (key == "DownloadFolder" || key == "download_folder") {
+            std::string path = trim(unquote(value));
+            if (!path.empty() && path[0] == '~') {
+                const char* home = std::getenv("HOME");
+                if (home) path = std::string(home) + path.substr(1);
+            }
+            if (!path.empty()) s.download_folder = path;
+            continue;
+        }
+
         // --- Hotkeys ---
         if (key.substr(0, 4) == "HKEY" || key.substr(0, 4) == "KHEY" || key.substr(0, 4) == "HKey") {
             s.hotkeys[key] = unquote(value);
@@ -1078,6 +1095,11 @@ void save_settings(const Settings& s) {
     out << "# and deleting uses the first one.\n";
     for (const auto& path : s.playlists_paths) {
         if (!path.empty()) out << "PlaylistsPath=" << path << "\n";
+    }
+    if (!s.download_folder.empty()) {
+        out << "\n# Where yt-dlp downloads go (one folder; unset means ~/.cache/mousiki).\n";
+        out << "# The folder below is also added to the local music paths automatically.\n";
+        out << "DownloadFolder=" << s.download_folder << "\n";
     }
 
     out << "\n# Navigation\n";

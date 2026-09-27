@@ -180,6 +180,13 @@ private:
     bool playlist_confirm_exit_ = false;  // "save before exiting?" Y/N prompt, shown in place of the hint line
     std::vector<PlaylistSummary> playlist_manage_view_; // tab 1's list
     int playlist_manage_selected_ = 0;
+    // Tab 1 got a search box of its own (the same caret/selection/clipboard
+    // treatment as every other text field -- see edit_text_key()). Focus
+    // decides who owns the keys: in the box, typing filters and Left/Right
+    // are caret keys; in the list, Up/Down/Enter/DEL work and Left/Right
+    // keep switching tabs.
+    std::string playlist_manage_query_; // filter behind playlist_manage_view_
+    int playlist_manage_focus_ = 0;     // 0=search box, 1=list -- cycled with Tab
     bool playlist_confirm_delete_ = false; // "really delete this playlist?" Y/N prompt (tab 1, DEL key)
     std::string playlist_status_; // shown at the bottom of the overlay; cleared on (re)entry
 
@@ -261,6 +268,13 @@ private:
     void meta_ensure_session_loaded(); // restores the autosaved session, once
     void meta_refresh_lib_view();
     void meta_toggle_resort();         // 'r', edited files to the top of the pane
+    // Missing-tag filters over the library pane: 0 = off, 1 = files with no
+    // metadata at all ('x'), 2 = missing title (Shift+T), 3 = missing artist
+    // (Shift+A), 4 = missing year (Shift+Y). Pressing the same key again
+    // clears it -- see meta_toggle_filter().
+    int meta_filter_ = 0;
+    void meta_toggle_filter(int filter);
+    const char* meta_filter_label() const;
     void meta_persist();               // save (or delete) the autosave backup file
     const MetaEditEntry* meta_entry(const std::string& path) const;
     MetaEditEntry& meta_touch_entry(const std::string& path); // create on first edit
@@ -639,15 +653,19 @@ private:
     // movement is quantised to UTF-8 codepoint boundaries (see le_*() in
     // app.cpp), so a multi-byte character is never split in half.
     //
-    // The pair is shared by the two editors that are never active at the
-    // same time: Mode::ColorEdit's buffer (caret reset to the end when
-    // editing starts) and the meta editor's field editor. The meta one is
-    // additionally tagged with edit_owner_ -- the path+field the offsets were
-    // last clamped against -- so switching files or rows retargets the caret
-    // instead of leaving it pointing into a different string.
+    // The pair is shared by every editor in the app, one at a time:
+    // Mode::ColorEdit's buffer, the meta editor's field editor, and the
+    // search/filter boxes (the main UI's "/", the meta editor's Search line,
+    // the playlist editor's name/library boxes and the playlist list's
+    // search). edit_owner_ tags the string the offsets were last clamped
+    // against, so switching to another field -- or another row, or the 'r'
+    // resort reordering the list -- retargets the caret instead of leaving
+    // it pointing into a different string. edit_focus() (app.cpp) is the one
+    // place that does the retarget.
     size_t edit_caret_ = 0;
     size_t edit_anchor_ = 0;
     std::string edit_owner_;
+    void edit_focus(const std::string& owner, const std::string& text);
     // Returns the current value of (tab, row, col) as plain text, for
     // display and as the starting buffer when editing.
     // Returns a pointer to the color field for (row, col) on the Colors
@@ -688,6 +706,11 @@ private:
         int sel = -1;              // selectable index, -1 for headers (unselectable)
         int path_index = -1;       // Path: index inside the owning vector
         bool playlist_path = false; // Path/AddPath: true = playlist paths, false = local music paths
+        // Path: the single DOWNLOAD FOLDER field. It reads/writes
+        // settings_.download_folder instead of either vector, hence the
+        // path_index = -1 that never reaches them -- every consumer
+        // switches on this flag first.
+        bool download_folder = false;
         const char* label = "";    // Toggle: field label; Header: section title; AddPath: "+ new path"
     };
     // Every display row of the ON/OFF tab, in paint order, with `sel`
@@ -782,6 +805,15 @@ private:
     std::string box_top(const std::string& label, int total_width, const std::string& border_ansi = "") const;
     std::string box_bottom(int total_width, const std::string& footer = "", const std::string& border_ansi = "") const;
     std::string box_line(const std::string& content, int total_width, const std::string& border_ansi = "") const;
+    // box_top()/box_line() for a row whose TAIL is a text field with a caret
+    // and a marked range: the field arrives already painted (it carries
+    // reverse-video escapes), so these two pad/measure against `field_cols`
+    // instead of running the rendered string through display_width(), which
+    // counts escape bytes as columns. `prefix` stays plain text.
+    std::string box_top_field(const std::string& prefix, const std::string& field, int field_cols,
+                              int total_width, const std::string& border_ansi = "") const;
+    std::string box_line_field(const std::string& prefix, const std::string& field, int field_cols,
+                               int total_width, const std::string& border_ansi = "") const;
 
     // panel builders
     std::vector<std::string> build_metadata_panel(int width) const;

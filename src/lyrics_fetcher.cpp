@@ -12,11 +12,14 @@
 
 namespace muisc {
 
-// Sidecar lyrics file lives next to the track, same stem, .lrc extension —
-// e.g. "Song Title.opus" -> "Song Title.lrc". Works for both a user's own
-// library and the yt-dlp cache dir (both are "the music folder" for
-// whatever track lives there), and is what lets a previously-fetched
-// track show lyrics offline.
+// Sidecar lyrics file lives in a "lyrics" folder INSIDE the folder the
+// track itself lives in, same stem, .lrc extension — e.g. "Music/Song
+// Title.opus" -> "Music/lyrics/Song Title.lrc". That keeps fetched lyrics
+// out of the track folder proper while staying per-track-folder, so two
+// artists can both have a "Track 01" without their lyrics overwriting each
+// other. Works for both a user's own library and the yt-dlp cache dir (both
+// are "the music folder" for whatever track lives there), and is what lets
+// a previously-fetched track show lyrics offline.
 static fs::path sidecar_path(const fs::path& track_path) {
     if (track_path.empty()) return {};
     // replace_extension() works entirely in the path's native encoding.
@@ -26,11 +29,22 @@ static fs::path sidecar_path(const fs::path& track_path) {
     // worker thread, where nothing caught it.
     fs::path p = track_path;
     p.replace_extension(".lrc");
+    fs::path parent = p.parent_path();
+    if (parent.empty()) return p; // a bare filename has no folder to nest under
+    return parent / "lyrics" / p.filename();
+}
+
+// The pre-"lyrics/" location: right next to the track. Read-only, so a
+// sidecar written by an older build still loads (and save_sidecar() then
+// rewrites it into the new folder on the next fetch).
+static fs::path legacy_sidecar_path(const fs::path& track_path) {
+    if (track_path.empty()) return {};
+    fs::path p = track_path;
+    p.replace_extension(".lrc");
     return p;
 }
 
-static bool load_sidecar(const fs::path& track_path, std::string& out_lrc) {
-    fs::path p = sidecar_path(track_path);
+static bool read_text_file(const fs::path& p, std::string& out_lrc) {
     if (p.empty()) return false;
     std::error_code ec;
     if (!fs::exists(p, ec)) return false;
@@ -42,9 +56,16 @@ static bool load_sidecar(const fs::path& track_path, std::string& out_lrc) {
     return !out_lrc.empty();
 }
 
+static bool load_sidecar(const fs::path& track_path, std::string& out_lrc) {
+    if (read_text_file(sidecar_path(track_path), out_lrc)) return true;
+    return read_text_file(legacy_sidecar_path(track_path), out_lrc);
+}
+
 static void save_sidecar(const fs::path& track_path, const std::string& lrc) {
     fs::path p = sidecar_path(track_path);
     if (p.empty() || lrc.empty()) return;
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec); // the "lyrics" folder on first fetch, ignored on failure
     std::ofstream out(p, std::ios::binary | std::ios::trunc);
     if (out.is_open()) out << lrc;
 }

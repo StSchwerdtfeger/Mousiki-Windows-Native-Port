@@ -189,6 +189,19 @@ struct Settings {
     // (~/Music and ~/disk/Music).
     std::vector<std::string> local_music_paths;
 
+    // --- download folder ------------------------------------------------
+    // Where yt-dlp writes what it downloads (one folder -- there is only
+    // ever one "where downloads go"). Empty (the default) means the
+    // built-in cache folder, $HOME/.cache/mousiki, which is where every
+    // download landed before this setting existed; it is NOT written into
+    // config.txt until it is actually changed, so an untouched install
+    // keeps the same config.txt byte for byte. Whichever folder it resolves
+    // to is also injected into local_music_paths (App::load_library() /
+    // rescan_library()), so downloads show up in the library without a
+    // second LocalMusicPath line. Editable from the ON/OFF tab's DOWNLOAD
+    // FOLDER row.
+    std::string download_folder;
+
     // --- playlists folder -----------------------------------------------
     // Where saved playlists (App::playlists_dir()) live. Empty (the
     // default) means "use local_music_paths[0]/playlists", which falls

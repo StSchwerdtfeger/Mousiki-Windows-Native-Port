@@ -213,6 +213,67 @@ static void le_paste(std::string& s, size_t& caret, size_t& anchor, const std::s
     caret = anchor = caret + t.size();
 }
 
+// One keystroke, every single-line text field in the app.
+//
+// Caret movement, Shift+arrows marking, Home/End, Ctrl+C/X/V and typing --
+// the same key set the Settings' ColorEdit and the meta editor's field editor
+// grew first, factored out here so the four search/filter boxes (the main
+// UI's "/", the meta editor's Search line, the playlist editor's name and
+// library boxes and the playlist list's own search) can offer exactly the
+// same thing instead of a fifth hand-rolled copy.
+//
+// Returns true only when the TEXT really changed, which is what tells the
+// caller to re-run whatever filter the box drives; pure caret/clipboard keys
+// return false. `status` (nullable) receives the short feedback these keys
+// produce ("COPIED"/"CUT"/"PASTED"), because a box with no status line of
+// its own should not go silent on a copy.
+static bool edit_text_key(std::string& buf, size_t& caret, size_t& anchor, int key,
+                          size_t limit, std::string* status) {
+    auto say = [&](const char* s) { if (status) *status = s; };
+    // Modifier combinations arrive as their own sentinel values
+    // (terminal_ui.h) precisely because the bare ones are already taken: an
+    // arrow press collapses to the letter it would otherwise type, and a
+    // typed 'c' has to stay a typed 'c' inside a word.
+    if (key == kKeyHome) { caret = anchor = 0; return false; }
+    if (key == kKeyEnd) { caret = anchor = buf.size(); return false; }
+    if (key == kKeyShiftLeft) { le_move(buf, caret, anchor, -1, true); return false; }
+    if (key == kKeyShiftRight) { le_move(buf, caret, anchor, +1, true); return false; }
+    if (key == kKeyDelete) { le_delete_forward(buf, caret, anchor); return true; }
+    if (key == kKeyCtrlC) {
+        size_t a = 0, b = 0;
+        le_range(caret, anchor, a, b);
+        std::string t = (a == b) ? buf : buf.substr(a, b - a);
+        clipboard_set(t);
+        say(t.empty() ? "nothing selected" : "COPIED");
+        return false;
+    }
+    if (key == kKeyCtrlX) {
+        size_t a = 0, b = 0;
+        le_range(caret, anchor, a, b);
+        if (a == b) return false; // no selection: cut must never empty the field
+        clipboard_set(buf.substr(a, b - a));
+        le_erase_selection(buf, caret, anchor);
+        say("CUT");
+        return true;
+    }
+    if (key == kKeyCtrlV) { le_paste(buf, caret, anchor, clipboard_get(), limit); say("PASTED"); return true; }
+    if (key == 127 || key == 8) { le_backspace(buf, caret, anchor); return true; }
+    // A genuinely typed A-D goes into the buffer ("C:\" has no way past this
+    // check otherwise), while an arrow press moves the caret Left/Right -- and
+    // Up/Down is dropped here: every field this is used on is a single line,
+    // and the boxes that DO want Up/Down for the list below them claim those
+    // keys before calling in.
+    if (last_key_was_arrow() && (key == 'A' || key == 'B')) return false;
+    if (last_key_was_arrow() && (key == 'C' || key == 'D')) {
+        le_move(buf, caret, anchor, key == 'D' ? -1 : +1, false);
+        return false;
+    }
+    if (is_text_key(key)) { le_insert(buf, caret, anchor, static_cast<char>(key), limit); return true; }
+    return false;
+}
+
+// (App::edit_focus() lives below, outside this anonymous namespace.)
+
 // What one field looks like on screen after all of that.
 struct EditPaint {
     std::string s;  // the windowed text, selection wrapped in reverse video
@@ -453,6 +514,46 @@ std::string App::box_line(const std::string& content, int total_width, const std
     if (border_ansi.empty()) return settings_.box_vertical + " " + padded + " " + settings_.box_vertical;
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     return bar + " " + padded + " " + bar;
+}
+
+// box_top() for a label whose tail is a live text field (caret + marked
+// range). `field` is already painted and therefore full of reverse-video
+// escapes, which display_width() -- UTF-8 aware, ANSI blind -- would count
+// as columns; so the dash fill is computed from `field_cols`, the number of
+// columns paint_edit_field() says it really occupies.
+std::string App::box_top_field(const std::string& prefix, const std::string& field, int field_cols,
+                               int total_width, const std::string& border_ansi) const {
+    const int dashes = std::max(0, total_width - display_width(prefix) - field_cols - 1);
+    std::string s = prefix + field;
+    for (int i = 0; i < dashes; ++i) s += settings_.box_horizontal; // a std::string, not a char
+    s += settings_.box_upper_right;
+    if (border_ansi.empty()) return s;
+    return border_ansi + s + "\x1b[0m";
+}
+
+// The same for box_line(): `prefix` plain, `field` painted, padded to
+// box_line()'s own inner width (total_width - 4).
+std::string App::box_line_field(const std::string& prefix, const std::string& field, int field_cols,
+                                int total_width, const std::string& border_ansi) const {
+    const int inner = std::max(0, total_width - 4);
+    const int fill = std::max(0, inner - display_width(prefix) - field_cols);
+    std::string padded = prefix + field + std::string(fill, ' ');
+    if (border_ansi.empty()) return settings_.box_vertical + " " + padded + " " + settings_.box_vertical;
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    return bar + " " + padded + " " + bar;
+}
+
+// Points the shared caret/selection (edit_caret_/edit_anchor_) at one
+// specific field: keeps the position while that same field is being typed
+// into continuously, and jumps to the end whenever a different field -- or
+// the same one, freshly focused -- takes over. Called once per key by each
+// box, right before edit_text_key() runs on it.
+void App::edit_focus(const std::string& owner, const std::string& text) {
+    if (edit_owner_ != owner) {
+        edit_owner_ = owner;
+        edit_caret_ = edit_anchor_ = text.size();
+    }
+    le_clamp(text, edit_caret_, edit_anchor_);
 }
 
 namespace {
@@ -764,6 +865,10 @@ void export_fpcalc_to_scripts() {
 
 App::App() {
     settings_ = load_settings();
+    // Point yt-dlp at the configured folder (if any) before anything can
+    // ask where a download would go. Empty config = default cache folder,
+    // which is what set_download_dir() restores on its own.
+    cache_.set_download_dir(path_from_utf8(settings_.download_folder));
     history_.load(); // listening history: a missing/corrupt file is not fatal (see HistoryStore::load)
     set_emoji_replacement(settings_.replace_emoji);
     player_.set_stereo(settings_.stereo);
@@ -803,6 +908,16 @@ App::App() {
     if (std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), cache_dir_str)
         == settings_.local_music_paths.end()) {
         settings_.local_music_paths.push_back(cache_dir_str);
+    }
+    // And the configured download folder, for the same reason: whatever
+    // yt-dlp writes has to be scannable without a second LocalMusicPath
+    // line, which is what the DOWNLOAD FOLDER setting promises. Skipped
+    // while it is still the default -- that IS the cache dir just above.
+    std::string download_dir_str = path_utf8(cache_.download_dir());
+    if (download_dir_str != cache_dir_str
+        && std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), download_dir_str)
+               == settings_.local_music_paths.end()) {
+        settings_.local_music_paths.push_back(download_dir_str);
     }
 
     all_local_tracks_ = local_source_.scan(settings_.local_music_paths, &local_scan_diagnostics_);
@@ -993,6 +1108,16 @@ void App::rescan_library() {
     if (std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), cache_dir_str)
         == settings_.local_music_paths.end()) {
         settings_.local_music_paths.push_back(cache_dir_str);
+    }
+    // And the configured download folder, for the same reason: whatever
+    // yt-dlp writes has to be scannable without a second LocalMusicPath
+    // line, which is what the DOWNLOAD FOLDER setting promises. Skipped
+    // while it is still the default -- that IS the cache dir just above.
+    std::string download_dir_str = path_utf8(cache_.download_dir());
+    if (download_dir_str != cache_dir_str
+        && std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), download_dir_str)
+               == settings_.local_music_paths.end()) {
+        settings_.local_music_paths.push_back(download_dir_str);
     }
 
     // A local diagnostics vector, not local_scan_diagnostics_ -- that one
@@ -2220,6 +2345,28 @@ std::vector<App::OnOffRow> App::build_onoff_rows() const {
     };
 
     add_path_section("LOCAL PATH", false);
+
+    // DOWNLOAD FOLDER: yt-dlp's single output folder, deliberately NOT run
+    // through add_path_section() -- there is only ever one place downloads
+    // land, so there is nothing to list and no "+ new path" to add. Reads
+    // and writes settings_.download_folder (see settings_get_value() /
+    // settings_commit_edit()) and is auto-injected into the local paths at
+    // load/rescan, so setting it is all it takes for downloads to appear
+    // in the library.
+    {
+        OnOffRow h;
+        h.kind = OnOffRow::Kind::Header;
+        h.label = "DOWNLOAD FOLDER";
+        rows.push_back(h);
+
+        OnOffRow d;
+        d.kind = OnOffRow::Kind::Path;
+        d.sel = sel++;
+        d.path_index = -1; // no vector index: d.download_folder says who owns it
+        d.download_folder = true;
+        rows.push_back(d);
+    }
+
     add_path_section("PLAYLIST PATH", true);
 
     return rows;
@@ -2323,6 +2470,14 @@ std::string App::settings_get_value(int row, int col) const {
         OnOffRow r = onoff_row(row);
         if (r.sel < 0) return "";
         if (r.kind == OnOffRow::Kind::Path) {
+            if (r.download_folder) {
+                // Show what is actually in effect: while nothing has been
+                // configured that is the default cache folder, and the point
+                // of this row is that you can see -- and change -- where
+                // downloads land, not that you face a blank field.
+                return settings_.download_folder.empty() ? path_utf8(cache_.cache_dir())
+                                                         : settings_.download_folder;
+            }
             const std::vector<std::string>& paths = r.playlist_path ? settings_.playlists_paths
                                                                     : settings_.local_music_paths;
             if (r.path_index >= 0 && r.path_index < static_cast<int>(paths.size()))
@@ -2460,6 +2615,25 @@ void App::settings_commit_edit() {
             if (!p.empty() && p[0] == '~') {
                 const char* home = std::getenv("HOME");
                 if (home) p = std::string(home) + p.substr(1);
+            }
+            if (r.download_folder) {
+                // One folder, never a list: store it (an emptied field goes
+                // back to the default cache folder), point yt-dlp at it right
+                // away, and -- when one is set -- add it to the local paths so
+                // the rescan below picks it up. That injection is the whole
+                // "no extra LocalMusicPath line needed" half of this setting.
+                settings_.download_folder = p;
+                cache_.set_download_dir(path_from_utf8(p));
+                if (p.empty()) {
+                    status_line_ = "download folder: default (cache dir)";
+                } else {
+                    if (std::find(settings_.local_music_paths.begin(), settings_.local_music_paths.end(), p)
+                        == settings_.local_music_paths.end())
+                        settings_.local_music_paths.push_back(p);
+                    status_line_ = "download folder: " + p;
+                }
+                rescan_library(); // a path row that does not rescan is a path row you have to restart for
+                return;
             }
             std::vector<std::string>& paths = r.playlist_path ? settings_.playlists_paths
                                                               : settings_.local_music_paths;
@@ -2728,6 +2902,7 @@ void App::handle_settings_key(int key) {
                 paths.push_back("");
                 color_edit_buffer_.clear();
                 edit_caret_ = edit_anchor_ = 0;
+                edit_owner_ = "settings"; // claim the shared caret -- see edit_focus()
                 mode_ = Mode::ColorEdit;
                 status_line_ = r.playlist_path
                     ? "new playlist path -- type it, ENTER to confirm"
@@ -2738,6 +2913,7 @@ void App::handle_settings_key(int key) {
         }
         color_edit_buffer_ = settings_get_value(settings_row_, settings_col_);
         edit_caret_ = edit_anchor_ = color_edit_buffer_.size(); // caret starts at the end, as usual
+        edit_owner_ = "settings"; // claim the shared caret -- see edit_focus()
         mode_ = Mode::ColorEdit;
         return;
     }
@@ -2935,27 +3111,19 @@ void App::handle_key(int key) {
             return;
         }
         if (key == '\r' || key == '\n') { submit_search(); mode_ = Mode::Browse; return; }
-        if (key == 127 || key == 8) {
-            pop_utf8_char(search_buffer_);
-            update_live_search_preview();
-            return;
-        }
-        // BUGFIX (pre-existing, not Windows-specific): arrow keys collapse
-        // to the same 'A'-'D' codes terminal_ui.h documents for Up/Down/
-        // Right/Left, which sit inside the printable ASCII range the catch
-        // below appends to the query -- so every arrow press was getting
-        // typed into the search box as a literal letter instead of doing
-        // anything. update_live_search_preview() already keeps local_view_
-        // fully populated and live as you type, using the same selected_/
-        // scroll_ state Browse mode does, so Up/Down here just navigates
-        // that same list; Right/Left mirror Browse mode's seek-by-5-seconds
-        // so you can still adjust playback without leaving the search box.
-        if (key == 'A') { // up
-            if (selected_ > 0) --selected_;
-            if (selected_ < scroll_) scroll_ = selected_;
-            return;
-        }
-        if (key == 'B') { // down
+        // Up/Down navigate the live preview below the box -- claimed before
+        // the caret keys because they are exactly the two arrow letters
+        // edit_text_key() would otherwise drop ("nowhere to go vertically"),
+        // and navigating the list you are filtering is worth more here than
+        // a second way to do nothing. Left/Right used to seek by 5 seconds
+        // from inside this box too; they are the caret keys now, since a
+        // text field needs them more and seek still works from Browse.
+        if (last_key_was_arrow() && (key == 'A' || key == 'B')) { // up / down
+            if (key == 'A') {
+                if (selected_ > 0) --selected_;
+                if (selected_ < scroll_) scroll_ = selected_;
+                return;
+            }
             // While actively typing "p:...", the live preview below is
             // already showing playlist_view_ (see update_live_search_preview())
             // -- navigate that instead of local_view_ in that case, same
@@ -2965,19 +3133,9 @@ void App::handle_key(int key) {
             if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
             return;
         }
-        if (key == 'C') { // right = seek forward
-            if (has_track_) player_.seek_relative(5.0);
-            return;
-        }
-        if (key == 'D') { // left = seek back
-            if (has_track_) player_.seek_relative(-5.0);
-            return;
-        }
-        if (is_text_key(key)) {
-            search_buffer_ += static_cast<char>(key);
-            update_live_search_preview();
-            return;
-        }
+        edit_focus("browse-search", search_buffer_);
+        const bool search_changed = edit_text_key(search_buffer_, edit_caret_, edit_anchor_, key, 120, &status_line_);
+        if (search_changed) update_live_search_preview();
         return;
     }
 
@@ -4096,7 +4254,7 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
 
     std::string content;
     if (mode_ == Mode::Search) {
-        content = "/" + search_buffer_ + "\u2588"; // block cursor
+        content.clear(); // caret/selection box built lower down
     } else if (list_source_ == ListSource::Online) {
         content = "/s:" + last_online_query_;
     } else if (list_source_ == ListSource::Playlist) {
@@ -4115,7 +4273,26 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
     // states is active, cycled with a single "m" press
     // (HKeyCyclePlayMode) rather than a separate toggle per mode.
     std::string mode_letter(1, play_mode_letter());
-    out.push_back(box_line(content, search_w, border_ansi) + border_ansi + settings_.box_vertical
+    std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    std::string line;
+    if (mode_ == Mode::Search) {
+        // Caret + selection + block cursor, where this used to be the query
+        // with a hard-coded block appended. This one row cannot go through
+        // box_line(): that pads with display_width(), which counts the
+        // reverse-video escapes of a marked range as columns, so every
+        // highlighted character would over-pad the line -- pad against
+        // paint_edit_field column count instead (it returns exactly what
+        // those escapes are worth).
+        const int inner = std::max(1, search_w - 4); // box_line inner width
+        EditPaint p = paint_edit_field(search_buffer_, edit_caret_, edit_anchor_, inner - 1, "", true);
+        std::string body = "/" + p.s;
+        const int fill = std::max(0, inner - (1 + p.cols));
+        std::string pad(static_cast<size_t>(fill), ' ');
+        line = bar + " " + body + pad + " " + bar;
+    } else {
+        line = box_line(content, search_w, border_ansi);
+    }
+    out.push_back(line + border_ansi + settings_.box_vertical
                   + " " + mode_letter + " " + settings_.box_vertical + "\x1b[0m");
     out.push_back(box_bottom(search_w, "", border_ansi_bottom) + border_ansi_bottom + "╰───╯\x1b[0m");
     return out;
@@ -4311,7 +4488,7 @@ void App::playlist_refresh_lib_view() {
 }
 
 void App::playlist_refresh_manage_view() {
-    playlist_manage_view_ = playlist_summaries();
+    playlist_manage_view_ = filter_playlists(playlist_manage_query_);
     playlist_manage_selected_ = std::clamp(playlist_manage_selected_, 0,
         std::max(0, static_cast<int>(playlist_manage_view_.size()) - 1));
 }
@@ -4335,6 +4512,8 @@ void App::playlist_open_editor() {
     playlist_edit_dirty_ = false;
     playlist_confirm_exit_ = false;
     playlist_confirm_delete_ = false;
+    playlist_manage_query_.clear();
+    playlist_manage_focus_ = 1; // land in the list: Enter/DEL work immediately; Tab goes to the search box
     playlist_refresh_lib_view();
     playlist_refresh_manage_view();
 }
@@ -4471,7 +4650,16 @@ void App::handle_playlist_key(int key) {
         if (playlist_tab_ == 0) playlist_save_current();
         return;
     }
-    if (key == 'C' || key == 'D') { // left/right arrow -- the only 2 top-level tabs, so either just toggles
+    // Arrows collapse to 'A'..'D' app-wide; last_key_was_arrow() is what
+    // tells a real arrow from a typed capital. Left/Right switch the two
+    // top-level tabs -- but only when no text field owns the caret: there
+    // they are the caret keys (same rule the meta editor applies), which
+    // is what makes marking and copy/paste work in the boxes below.
+    const bool arrow = last_key_was_arrow();
+    const bool caret_field =
+        (playlist_tab_ == 0 && playlist_edit_focus_ <= 1) ||
+        (playlist_tab_ == 1 && playlist_manage_focus_ == 0);
+    if (arrow && (key == 'C' || key == 'D') && !caret_field) { // left/right -- the only 2 top-level tabs, so either just toggles
         playlist_tab_ = (playlist_tab_ + 1) % 2;
         if (playlist_tab_ == 1) playlist_refresh_manage_view();
         return;
@@ -4480,11 +4668,32 @@ void App::handle_playlist_key(int key) {
     if (playlist_tab_ == 1) {
         // --- Tab 1: browse/manage saved playlists ---
         int total = static_cast<int>(playlist_manage_view_.size());
-        if (key == 'A') { // up
+        if (key == 9) { // Tab -- search box <-> list
+            playlist_manage_focus_ = (playlist_manage_focus_ == 0) ? 1 : 0;
+            return;
+        }
+        if (playlist_manage_focus_ == 0) { // search box -- filter, caret, marking, clipboard
+            // Up/Down keep walking the filtered list while the box is
+            // focused, same as the main UI's "/" search does.
+            if (arrow && (key == 'A' || key == 'B')) {
+                if (key == 'A') {
+                    if (playlist_manage_selected_ > 0) --playlist_manage_selected_;
+                    return;
+                }
+                if (total > 0 && playlist_manage_selected_ < total - 1) ++playlist_manage_selected_;
+                return;
+            }
+            if (key == '\r' || key == '\n') { playlist_manage_focus_ = 1; return; } // Enter: leave the box, take the list
+            edit_focus("playlist-manage-search", playlist_manage_query_);
+            if (edit_text_key(playlist_manage_query_, edit_caret_, edit_anchor_, key, 80, &playlist_status_))
+                playlist_refresh_manage_view();
+            return;
+        }
+        if (arrow && key == 'A') { // up
             if (playlist_manage_selected_ > 0) --playlist_manage_selected_;
             return;
         }
-        if (key == 'B') { // down
+        if (arrow && key == 'B') { // down
             if (total > 0 && playlist_manage_selected_ < total - 1) ++playlist_manage_selected_;
             return;
         }
@@ -4508,58 +4717,48 @@ void App::handle_playlist_key(int key) {
     }
 
     if (playlist_edit_focus_ == 0) { // name field
-        if (key == 127 || key == 8) { pop_utf8_char(playlist_edit_name_); playlist_edit_dirty_ = true; return; }
         if (key == '\r' || key == '\n') { playlist_edit_focus_ = 1; return; } // confirm name, jump to picking tracks
-        // Up/Down arrows collapse to 'A'/'B', which sit inside the
-        // printable-ASCII range is_text_key() below accepts -- without
-        // this they'd get typed as literal "A"/"B" characters (the same
-        // reason Mode::Search and Mode::BulkAdd filter them out too).
-        if (key == 'A' || key == 'B') return;
-        if (is_text_key(key) && playlist_edit_name_.size() < 80) {
-            playlist_edit_name_ += static_cast<char>(key);
+        edit_focus("playlist-name", playlist_edit_name_);
+        // Caret, marking, clipboard and typing in one call -- Up/Down
+        // arrows included (edit_text_key drops them, this box has no
+        // vertical anything to navigate), where the old code had to
+        // blacklist 'A'/'B' so they could not be typed either.
+        if (edit_text_key(playlist_edit_name_, edit_caret_, edit_anchor_, key, 80, &playlist_status_))
             playlist_edit_dirty_ = true;
-        }
         return;
     }
 
     if (playlist_edit_focus_ == 1) { // library picker -- typing filters live, same as the main search box
         int total = static_cast<int>(playlist_edit_lib_view_.size());
-        if (key == 'A') {
+        if (arrow && key == 'A') {
             if (playlist_edit_lib_selected_ > 0) --playlist_edit_lib_selected_;
             return;
         }
-        if (key == 'B') {
+        if (arrow && key == 'B') {
             if (total > 0 && playlist_edit_lib_selected_ < total - 1) ++playlist_edit_lib_selected_;
             return;
         }
         if (key == '\r' || key == '\n') { playlist_add_hovering_to_edit(); return; }
-        if (key == 127 || key == 8) {
-            pop_utf8_char(playlist_edit_lib_query_);
+        edit_focus("playlist-lib-search", playlist_edit_lib_query_);
+        if (edit_text_key(playlist_edit_lib_query_, edit_caret_, edit_anchor_, key, 120, &playlist_status_))
             playlist_refresh_lib_view();
-            return;
-        }
-        if (is_text_key(key)) {
-            playlist_edit_lib_query_ += static_cast<char>(key);
-            playlist_refresh_lib_view();
-            return;
-        }
         return;
     }
 
     // playlist_edit_focus_ == 2: the in-progress playlist's track list
     {
         int total = static_cast<int>(playlist_edit_tracks_.size());
-        if (key == 'A') {
+        if (arrow && key == 'A') {
             if (playlist_edit_track_selected_ > 0) --playlist_edit_track_selected_;
             return;
         }
-        if (key == 'B') {
+        if (arrow && key == 'B') {
             if (total > 0 && playlist_edit_track_selected_ < total - 1) ++playlist_edit_track_selected_;
             return;
         }
-        // DEL, Backspace, or 'd' (lowercase only -- uppercase 'D' is the
-        // globally-collapsed Left-arrow code, already intercepted above
-        // for tab switching, so it never reaches here).
+        // DEL, Backspace, or 'd' (lowercase only -- a typed capital C/D
+        // used to be intercepted above as the Left/Right arrow and now
+        // only reaches here as a genuine arrow, which does nothing).
         if (key == kKeyDelete || key == 127 || key == 8 || key == 'd') { playlist_remove_hovering_track(); return; }
         // 4/5 move the hovering track up/down -- same keys as the main
         // queue's HKeyQueueMoveUp/Down, kept as literal codes (like the
@@ -4580,8 +4779,25 @@ std::vector<std::string> App::build_playlist_library_panel(int total_width, int 
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     std::vector<std::string> out;
 
-    std::string label = "LIBRARY  /" + playlist_edit_lib_query_ + (playlist_edit_focus_ == 1 ? "\u2588" : "");
-    out.push_back(box_top(label, total_width, border_ansi));
+    {
+        // The query lives in the title row, with caret/selection while the
+        // library pane has focus -- built by hand, box_top() measures with
+        // display_width() and cannot see through the selection escapes.
+        const std::string prefix = settings_.box_upper_left + settings_.box_horizontal + " LIBRARY  /";
+        const int prefix_w = static_cast<int>(display_width(prefix));
+        std::string field;
+        int field_cols = 0;
+        if (playlist_edit_focus_ == 1) {
+            EditPaint p = paint_edit_field(playlist_edit_lib_query_, edit_caret_, edit_anchor_,
+                                           std::max(1, total_width - prefix_w - 1), "", true);
+            field = p.s;
+            field_cols = p.cols;
+        } else {
+            field = playlist_edit_lib_query_;
+            field_cols = static_cast<int>(display_width(field));
+        }
+        out.push_back(box_top_field(prefix, field, field_cols, total_width, border_ansi));
+    }
 
     int total = static_cast<int>(playlist_edit_lib_view_.size());
     int scroll = std::clamp(playlist_edit_lib_selected_ - height / 2, 0, std::max(0, total - height));
@@ -4709,7 +4925,24 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     std::vector<std::string> out;
-    out.push_back(box_top("SAVED PLAYLISTS", total_width, border_ansi));
+    {
+        // Tab 1 search box, living in the title row exactly like the
+        // LIBRARY one on tab 0 -- same caret/selection/clipboard keys.
+        const std::string prefix = settings_.box_upper_left + settings_.box_horizontal + " SAVED PLAYLISTS  /";
+        const int prefix_w = static_cast<int>(display_width(prefix));
+        std::string field;
+        int field_cols = 0;
+        if (playlist_manage_focus_ == 0) {
+            EditPaint p = paint_edit_field(playlist_manage_query_, edit_caret_, edit_anchor_,
+                                           std::max(1, total_width - prefix_w - 1), "", true);
+            field = p.s;
+            field_cols = p.cols;
+        } else {
+            field = playlist_manage_query_;
+            field_cols = static_cast<int>(display_width(field));
+        }
+        out.push_back(box_top_field(prefix, field, field_cols, total_width, border_ansi));
+    }
 
     int total = static_cast<int>(playlist_manage_view_.size());
     if (total == 0) {
@@ -4717,7 +4950,7 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
         for (int row = 0; row < height; ++row) {
             std::string content;
             if (row == mid) {
-                std::string text = apply_font_map("NO SAVED PLAYLISTS YET", settings_.font_map);
+                std::string text = apply_font_map(playlist_manage_query_.empty() ? "NO SAVED PLAYLISTS YET" : "NO MATCHING PLAYLISTS", settings_.font_map);
                 int left = std::max(0, (inner - display_width(text)) / 2);
                 content = std::string(left, ' ') + text;
             }
@@ -4797,10 +5030,22 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
 
     int fixed_rows = 3; // top border + tab strip + bottom border
     if (playlist_tab_ == 0) {
-        std::string cursor = (playlist_edit_focus_ == 0) ? "\u2588" : "";
-        std::string name_display = playlist_edit_name_.empty() ? "(untitled)" : playlist_edit_name_;
-        std::string dirty_mark = playlist_edit_dirty_ ? " *" : "";
-        frame << box_line("Name: " + name_display + cursor + dirty_mark, W, border) << "\n";
+        // Same hand-built row as the meta editor Search line.
+        const std::string prefix = "Name: ";
+        const std::string dirty_mark = playlist_edit_dirty_ ? " *" : "";
+        const int mark_w = static_cast<int>(dirty_mark.size());
+        std::string field;
+        int field_cols = 0;
+        if (playlist_edit_focus_ == 0) {
+            EditPaint p = paint_edit_field(playlist_edit_name_, edit_caret_, edit_anchor_,
+                                           std::max(1, W - 4 - static_cast<int>(prefix.size()) - mark_w), "", true);
+            field = p.s;
+            field_cols = p.cols;
+        } else {
+            field = playlist_edit_name_.empty() ? std::string("(untitled)") : playlist_edit_name_;
+            field_cols = static_cast<int>(display_width(field));
+        }
+        frame << box_line_field(prefix, field + dirty_mark, field_cols + mark_w, W, border) << "\n";
         fixed_rows += 1;
     }
     frame << box_bottom(W, "", border_bottom) << "\n";
@@ -4816,13 +5061,15 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     // clamp_output_rows() keeps term_rows_ - 1 lines and a full-width
     // prompt here can wrap, so never lay out taller than the screen.
     int budget = std::min(target_height, term_rows_ - 1);
-    // -4: the panel box's own top+bottom border rows (added by
+    // -5: the panel box's own top+bottom border rows (added by
     // build_playlist_*_panel(), which draw a box around the panel_h rows
-    // they're handed) plus the hint line + status line below it. The old
-    // "-2" forgot the border rows, which made the frame 1-2 lines too tall
-    // and chopped the green status line -- "removed ...", "deleted ...",
-    // "added ..." -- off every single frame.
-    int panel_h = std::clamp(budget - fixed_rows - 4, 8, 22);
+    // they're handed) plus the TWO legend lines + status line below it. The
+    // old "-2" forgot the border rows, which made the frame 1-2 lines too
+    // tall and chopped the green status line -- "removed ...", "deleted ...",
+    // "added ..." -- off every single frame. Keeping that sum exact is also
+    // what stops the second legend row (the text-field keys) from pushing
+    // the frame past term_rows_ - 1 and scrolling the terminal.
+    int panel_h = std::clamp(budget - fixed_rows - 5, 8, 22);
     if (playlist_tab_ == 0) {
         int left_w = W / 2;
         int right_w = W - left_w;
@@ -4858,6 +5105,11 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
                             "[DEL] Remove  | [4/5] Move \u2191\u2193 | [HOME] Save | [ESC] Exit";
         frame << "\x1b[90m" << hint << "\x1b[0m\n";
+        // Row 2: the text-field keys. Kept off row 1 so the whole legend
+        // still fits a 120-column terminal without wrapping (the meta
+        // editor splits its legend the same way) -- panel_h's budget above
+        // already accounts for this extra row.
+        frame << "\x1b[90m[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
     }
@@ -4931,6 +5183,7 @@ void App::meta_open() {
     meta_tab_ = 0;
     meta_focus_ = 0;
     meta_query_.clear();
+    meta_filter_ = 0; // a fresh open shows the whole library again
     meta_lib_selected_ = 0;
     meta_field_ = 0;
     meta_fetch_selected_ = 0;
@@ -4964,6 +5217,42 @@ void App::meta_refresh_lib_view() {
     if (meta_resort_edited_ && !meta_lib_view_.empty()) keep = meta_hovering_path();
 
     meta_lib_view_ = filter_and_rank_local(meta_query_);
+
+    // Missing-tag filter ('x' / Shift+T/A/Y). meta_row_meta() is a native,
+    // in-process tag read cached in row_meta_cache_, so the first pass costs
+    // one header parse per file and everything after that is a lookup --
+    // no ffprobe, no subprocess. A pending session edit counts as the value
+    // the file WOULD have, so filtering right after typing (or deleting) a
+    // title reflects what is on screen instead of what is on disk.
+    if (meta_filter_ != 0) {
+        auto value_of = [this](const LocalTrack& t, int field) -> std::string {
+            const std::string p = path_utf8(t.path);
+            const MetaEditEntry* e = meta_entry(p);
+            if (e && e->edited[field] && !e->value[field].empty()) return e->value[field];
+            RowMeta rm = meta_row_meta(t.path);
+            switch (field) {
+                case 1: return rm.artist;
+                case 2: return rm.title;
+                case 3: return rm.album;
+                case 4: return rm.year;
+                default: return t.title;
+            }
+        };
+        auto matches = [&](const LocalTrack& t) {
+            if (meta_filter_ == 1) { // "no meta data" = every tag field empty
+                for (int f = 1; f < kMetaFieldCount; ++f)
+                    if (!value_of(t, f).empty()) return false;
+                return true;
+            }
+            const int field = (meta_filter_ == 3) ? 1   // ARTIST
+                            : (meta_filter_ == 2) ? 2   // TITLE
+                            : 4;                        // YEAR
+            return value_of(t, field).empty();
+        };
+        meta_lib_view_.erase(std::remove_if(meta_lib_view_.begin(), meta_lib_view_.end(),
+                                            [&](const LocalTrack& t) { return !matches(t); }),
+                             meta_lib_view_.end());
+    }
 
     if (meta_resort_edited_) {
         // Strict "edited before not edited" on a stable sort is a stable
@@ -5011,6 +5300,30 @@ void App::meta_toggle_resort() {
     } else {
         meta_status_ = "library order: alphabetical again";
     }
+}
+
+const char* App::meta_filter_label() const {
+    switch (meta_filter_) {
+        case 1: return "NO META DATA";
+        case 2: return "MISSING TITLE";
+        case 3: return "MISSING ARTIST";
+        case 4: return "MISSING YEAR";
+        default: return "";
+    }
+}
+
+// 'x' / Shift+T / Shift+A / Shift+Y: narrow the library pane to files a
+// given tag is (or, for 'x', every tag is) missing. The same key clears it,
+// which is what keeps four keys enough for five states, and the status line
+// always says which filter is up and how much of the library survived it --
+// the pane's title carries the label too, so an active filter is never
+// something you have to remember.
+void App::meta_toggle_filter(int filter) {
+    meta_filter_ = (meta_filter_ == filter) ? 0 : filter;
+    meta_refresh_lib_view();
+    const std::string shown = std::to_string(meta_lib_view_.size());
+    if (meta_filter_ == 0) meta_status_ = "filter cleared - " + shown + " files";
+    else meta_status_ = std::string("filter: ") + meta_filter_label() + " - " + shown + " files (press again to clear)";
 }
 
 // The autosave: save whenever there is something to restore, remove the file
@@ -5471,17 +5784,16 @@ void App::handle_meta_key(int key) {
     }
 
     if (meta_focus_ == 0) { // --- search field ---
-        if (arrow) {
-            if (key == 'A' && meta_lib_selected_ > 0) --meta_lib_selected_;
-            else if (key == 'B' && meta_lib_selected_ + 1 < static_cast<int>(meta_lib_view_.size())) ++meta_lib_selected_;
-            return;
-        }
-        if (key == 127 || key == 8) { pop_utf8_char(meta_query_); meta_refresh_lib_view(); return; }
+        // Up/Down still walk the library while the box has focus (same
+        // convention as the main UI's "/" search); Left/Right are the caret
+        // now, which is what makes marking -- and therefore copy/paste --
+        // possible in here at all.
+        if (arrow && key == 'A') { if (meta_lib_selected_ > 0) --meta_lib_selected_; return; }
+        if (arrow && key == 'B') { if (meta_lib_selected_ + 1 < static_cast<int>(meta_lib_view_.size())) ++meta_lib_selected_; return; }
         if (key == '\r' || key == '\n') { meta_focus_ = 1; return; } // confirm the filter, jump to the list
-        if (is_text_key(key) && meta_query_.size() < 120) {
-            meta_query_ += static_cast<char>(key);
+        edit_focus("meta-search", meta_query_);
+        if (edit_text_key(meta_query_, edit_caret_, edit_anchor_, key, 120, &meta_status_))
             meta_refresh_lib_view();
-        }
         return;
     }
 
@@ -5496,6 +5808,14 @@ void App::handle_meta_key(int key) {
         }
         if (key == 'a') { meta_add_hovering_to_fetch(); return; } // queue it for AcoustID, like the main queue's 'a'
         if (key == 'r') { meta_toggle_resort(); return; } // toggle: edited files on top vs. alphabetical order
+        // Missing-tag filters. 'T'/'Y' have no other meaning here; 'A' is
+        // only the Up ARROW together with last_key_was_arrow(), which the
+        // two navigation keys above already claimed -- so a plain Shift+A
+        // typed here reaches this line.
+        if (key == 'x') { meta_toggle_filter(1); return; } // only files with no metadata at all
+        if (key == 'T') { meta_toggle_filter(2); return; } // SHIFT+T: missing title
+        if (key == 'A') { meta_toggle_filter(3); return; } // SHIFT+A: missing artist
+        if (key == 'Y') { meta_toggle_filter(4); return; } // SHIFT+Y: missing year
         if (key == kKeyDelete || key == 127 || key == 'd') { meta_remove_hovering(); return; }
         return; // every other printable key would be search input, and search lives in focus 0
     }
@@ -5591,8 +5911,13 @@ std::vector<std::string> App::build_meta_library_panel(int total_width, int heig
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     std::vector<std::string> out;
 
-    out.push_back(box_top("LIBRARY" + (meta_focus_ == 1 ? std::string(" \u25c0") : std::string()),
-                          total_width, border_ansi));
+    // The pane title carries the active missing-tag filter, so a list
+    // narrowed by 'x' or Shift+T/A/Y is never mistaken for the whole
+    // library (the status line repeats it with a count).
+    std::string lib_label = "LIBRARY";
+    if (meta_filter_ != 0) lib_label += std::string(" [") + meta_filter_label() + "]";
+    if (meta_focus_ == 1) lib_label += " \u25c0";
+    out.push_back(box_top(lib_label, total_width, border_ansi));
 
     int total = static_cast<int>(meta_lib_view_.size());
     if (total == 0) {
@@ -5600,8 +5925,10 @@ std::vector<std::string> App::build_meta_library_panel(int total_width, int heig
         for (int row = 0; row < height; ++row) {
             std::string content;
             if (row == mid) {
-                std::string text = apply_font_map(meta_query_.empty() ? "NO TRACKS FOUND" : "NO MATCHING TRACK",
-                                                  settings_.font_map);
+                std::string plain = (meta_filter_ != 0) ? "NO TRACKS MATCH THE FILTER"
+                                    : meta_query_.empty() ? "NO TRACKS FOUND"
+                                    : "NO MATCHING TRACK";
+                std::string text = apply_font_map(plain, settings_.font_map);
                 int left = std::max(0, (inner - display_width(text)) / 2);
                 content = std::string(left, ' ') + text;
             }
@@ -5860,10 +6187,23 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
 
     int fixed_rows = 3; // top border + tab strip + bottom border
     if (meta_tab_ == 0) {
-        std::string cursor = (meta_focus_ == 0) ? "\u2588" : "";
-        std::string q = meta_query_.empty() ? (meta_focus_ == 0 ? std::string() : "(type to filter)")
-                                            : meta_query_;
-        frame << box_line("Search: " + q + cursor, W, border) << "\n";
+        // Painted by hand: a marked range carries reverse-video escapes,
+        // and box_line() pads with display_width(), which counts escape
+        // bytes as columns. box_line_field() pads against what the field
+        // is really worth instead.
+        const std::string prefix = "Search: ";
+        std::string field;
+        int field_cols = 0;
+        if (meta_focus_ == 0) { // focus is in the box: caret + block cursor
+            EditPaint p = paint_edit_field(meta_query_, edit_caret_, edit_anchor_,
+                                           std::max(1, W - 4 - static_cast<int>(prefix.size())), "", true);
+            field = p.s;
+            field_cols = p.cols;
+        } else { // focus elsewhere: plain text, with the placeholder hint
+            field = meta_query_.empty() ? std::string("(type to filter)") : meta_query_;
+            field_cols = static_cast<int>(display_width(field));
+        }
+        frame << box_line_field(prefix, field, field_cols, W, border) << "\n";
         fixed_rows += 1;
     }
     frame << box_bottom(W, "", border_bottom) << "\n";
@@ -5926,7 +6266,7 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
     } else {
         std::string hint = (meta_tab_ == 0)
             ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [a] Fetch list | "
-              "[SHIFT+B] Fetch | [r] Edited first | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
+              "[SHIFT+B] Fetch | [r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
             : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | "
               "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit";
         // The legend is wider than the screen (tab 0: ~210 columns once the
@@ -6056,7 +6396,11 @@ void App::handle_history_key(int key) {
 
     // Tab strip: Left/Right or TAB cycles, 1/2/3 jumps outright.
     if ((arrow && (key == 'C' || key == 'D')) || key == 9) {
-        const int dir = (key == 'C') ? -1 : 1;
+        // 'D' is Left, 'C' is Right -- the same convention the seek keys and
+        // the caret movement above use (see handle_key()'s "key == 'D' //
+        // left = seek back"). Swapped here, every arrow press walked the tab
+        // strip backwards, which on a 3-tab strip looks like jumping 1->3.
+        const int dir = (key == 'D') ? -1 : 1;
         history_tab_ = (history_tab_ + dir + 3) % 3;
         history_selected_ = 0;
         history_scroll_ = 0;
@@ -6494,8 +6838,9 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 const bool sel = (r.sel == settings_row_ && mode_ != Mode::ColorEdit);
                 const bool ed = (r.sel == settings_row_ && mode_ == Mode::ColorEdit);
                 if (r.kind == OnOffRow::Kind::Path) {
-                    std::string lab = std::string(r.playlist_path ? "Playlist Path " : "Local Path ")
-                                      + std::to_string(r.path_index + 1);
+                    std::string lab = r.download_folder ? "Download Folder"
+                                      : std::string(r.playlist_path ? "Playlist Path " : "Local Path ")
+                                        + std::to_string(r.path_index + 1);
                     pos(y, 6, pad(lab, 25)); pos(y, 32, ":");
                     // The value column runs from col 35 right up to the border --
                     // a folder path is far longer than a toggle's 20 columns, and
@@ -6514,7 +6859,17 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                         // anywhere in a long path stays visible.
                         v = edit_paint(edit_field_width()).s;
                     } else {
-                        v = pad(truncate_str(settings_get_value(r.sel, 0), val_w), val_w);
+                        // The cursor highlight covers the entry, not the whole
+                        // column: a path is highlighted exactly as wide as what
+                        // is typed into it, the way a hotkey field highlights
+                        // its own key. An empty row -- a not-yet-typed new path
+                        // -- keeps the full-width bar instead, so there is a
+                        // visible place to start typing.
+                        std::string raw = settings_get_value(r.sel, 0);
+                        int w = raw.empty()
+                                ? val_w
+                                : std::clamp(static_cast<int>(display_width(truncate_str(raw, val_w))), 1, val_w);
+                        v = pad(truncate_str(raw, w), w);
                     }
                     pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                 } else if (r.kind == OnOffRow::Kind::AddPath) {
@@ -7653,8 +8008,15 @@ int App::run() {
         // of an edit, a prompt), and leaving the flag stuck would mean
         // Ctrl+C no longer quits the app. Same key set both platforms, see
         // win_poll_key()/poll_key() for how it arrives as kKeyCtrlC/X/V.
-        set_text_entry(mode_ == Mode::ColorEdit ||
-                       (mode_ == Mode::MetaEdit && meta_tab_ == 0 && meta_focus_ == 2));
+        const bool playlist_text_field =
+            mode_ == Mode::Playlist &&
+            ((playlist_tab_ == 0 && playlist_edit_focus_ <= 1) ||
+             (playlist_tab_ == 1 && playlist_manage_focus_ == 0));
+        set_text_entry(mode_ == Mode::Search ||
+                       mode_ == Mode::ColorEdit ||
+                       (mode_ == Mode::MetaEdit && meta_tab_ == 0 &&
+                        (meta_focus_ == 0 || meta_focus_ == 2)) ||
+                       playlist_text_field);
 
         for (int key = term.poll_key(); key != 0; key = term.poll_key()) {
             handle_key(key);
