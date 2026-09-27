@@ -5172,7 +5172,14 @@ std::vector<std::string> App::build_meta_library_panel(int total_width, int heig
             const MetaEditEntry* e = meta_entry(path_utf8(t.path));
             edited = e && e->any_edited();
         }
-        bool sel = (meta_focus_ == 1) && (idx == meta_lib_selected_);
+        // The selected row stays highlighted in EVERY focus, not just while
+        // the pane itself owns focus: arrows scroll the library from the
+        // search field too (see handle_meta_key(), focus 0), and without the
+        // highlight there was nothing on screen saying which row those arrows
+        // were moving. Matches build_list_panel() in Browse, which never gates
+        // its cursor on focus either -- the LIBRARY box's "◀" stays the focus
+        // marker, so there is still exactly one thing naming the focused pane.
+        bool sel = (idx == meta_lib_selected_);
         std::string padded = pad_right(truncate_str(content, inner), inner);
         std::string base;
         if (sel) {
