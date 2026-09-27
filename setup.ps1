@@ -9,10 +9,14 @@
     at runtime:
 
       ffmpeg  - decodes Opus (miniaudio's built-in decoders don't cover it,
-                and Opus is exactly what the yt-dlp cache stores), and ffprobe
-                supplies track metadata.
+                and Opus is exactly what the yt-dlp cache stores), supplies
+                ffprobe track metadata, and decodes the audio that fpcalc
+                fingerprints for the AcoustID fetch.
       yt-dlp  - online search, playlist listing and streaming.
-      python  - runs scripts/fetch_lyrics.py for synced lyrics.
+      python  - runs scripts/fetch_lyrics.py for synced lyrics and
+                scripts/fetch_meta.py for the AcoustID metadata fetch
+                (which drives fpcalc, the fingerprint helper CMake builds
+                from third_party/chromaprint/).
 
     None of those are optional if you want the corresponding feature, but all
     three are independent: mousiki runs local files fine with none installed.
