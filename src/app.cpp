@@ -5559,7 +5559,14 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
 
     pos(y, 1, "\x1b[90m[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [S] Save | [Q] Quit\x1b[0m");
     y++;
-    if (!status_line_.empty()) pos(y, 1, "\x1b[32m" + status_line_ + "\x1b[0m");
+    // The log/status line lives here now -- render_frame() deliberately no
+    // longer prints it under the Browse list (an untruncated message there
+    // could exceed the terminal width, wrap, and push a full-height frame
+    // into a scroll, which is what made the terminal's own scrollbar appear
+    // and shift the whole UI left by a column). This row sits on the panel's
+    // own last screen line, so it is truncated to the panel width: a long
+    // path or error message just ends early instead of wrapping.
+    if (!status_line_.empty()) pos(y, 1, "\x1b[32m" + truncate_str(status_line_, W - 2) + "\x1b[0m");
 
     // 4. In-place text editing cursor placement.
     if (mode_ == Mode::ColorEdit) {
@@ -6188,16 +6195,30 @@ std::string App::render_frame(TerminalIO& term) {
     // 110 characters -- wider than many terminals -- so instead of trusting
     // one physical line to hold it (which would wrap in the terminal and
     // push the whole frame into a scroll), it is wrapped here and as many
-    // rows as it actually needs are reserved for it, exactly like the normal
-    // single status row.
+    // rows as it actually needs are reserved for it, exactly like the single
+    // loading indicator row -- and, since neither of them is there most of
+    // the time, no row at all is reserved when both are absent (see below).
     std::vector<std::string> prompt_lines;
     if (meta_prompt_ != MetaPrompt::None && mode_ == Mode::Browse) {
         prompt_lines = wrap_lines(std::string(kMetaFetchDisclaimer) + "   [Y]es   [N]o   [ESC] cancel",
                                   std::max(10, W - 2), 2);
     }
-    int status_rows = std::max<int>(1, static_cast<int>(prompt_lines.size()));
+    // The ONLY things still drawn below the list box are the AcoustID
+    // prompt (wrapped, so as many rows as it actually needs) or -- mutually
+    // exclusive with it -- the live "resolving/downloading..." indicator.
+    // The log/status line that used to own this slot moved to the Settings
+    // screen, so when neither is present nothing is printed down there and
+    // therefore no row is reserved for it either: a row reserved only to
+    // sit blank adds an extra empty line under a frame that already ends at
+    // term_rows_ - 1, and it withholds a row the list/queue panes could
+    // show a track in. Since status_rows always equals the number of rows
+    // that will really be printed below the box (0, or the prompt's wrapped
+    // line count, or 1), the frame comes out term_rows_ - 1 tall in every
+    // case -- with or without a prompt/loading row, no jitter, no scroll.
+    const bool show_load_line = load_in_progress_.load() && load_stage_.load() == 1;
+    int status_rows = std::max<int>(static_cast<int>(prompt_lines.size()), show_load_line ? 1 : 0);
     int fixed_h = static_cast<int>(metadata_lines.size() + progress_lines.size() + search_lines.size())
-                + status_rows; // status/loading line (reserved even when empty, so it doesn't jitter frame to frame)
+                + status_rows; // rows really drawn under the list box (0 when none are)
     // Two things used to be missing from this budget, and together they made
     // the frame exactly 2 lines too tall on EVERY terminal:
     //   * build_list_panel()/build_queue_panel() draw a top and a bottom
@@ -6207,10 +6228,13 @@ std::string App::render_frame(TerminalIO& term) {
     // -- blank + status/loading -- were chopped off every single frame: no
     // Browse message ever reached the screen at all ("added to queue",
     // "queued 3 tracks", the SHIFT+B AcoustID question, ...). The blank
-    // line is gone (the status line sits directly under the list box now),
+    // line is gone (the last row sits directly under the list box now),
     // and the box's 2 border rows are subtracted from the room the list may
     // use, so the frame ends up exactly term_rows_ - 1 lines tall with the
-    // status line as its last one.
+    // prompt/loading row as its last one -- or, when there is no prompt and
+    // nothing is loading, with the list box's bottom border as its last one
+    // and the terminal's final row left blank. Ordinary status messages are
+    // no longer printed here at all -- see where that row is built below.
     // -1 extra margin: leave the terminal's very last row untouched so a
     // trailing '\n' after the final printed line can never itself force
     // a scroll (see clamp_output_rows()'s comment for the same reasoning
@@ -6243,21 +6267,43 @@ std::string App::render_frame(TerminalIO& term) {
         for (auto& l : build_list_panel(W, list_h)) frame << l << "\n";
     }
 
-    // No blank separator above the status line any more: with the list box's
-    // border rows now counted in available_for_list, dropping this row is
-    // what actually leaves room for the status line itself (see the comment
-    // there -- it used to be cut off by clamp_output_rows() every frame).
+    // No blank separator above this last row any more: with the list box's
+    // border rows now counted in available_for_list, dropping that row is
+    // what actually leaves room for it (see the comment there -- it used to
+    // be cut off by clamp_output_rows() every frame).
+    //
+    // The row is NOT the log/status line any more. status_line_ (written by
+    // log_event() and by every action's own message -- "added to queue",
+    // "SAVED", "searching online ...") was the one line in this frame that
+    // was printed raw: never width-limited, so a message longer than W
+    // wrapped in the terminal and added a physical row to an already
+    // full-height frame. One row too many is all it takes for the frame to
+    // scroll: the terminal's own scrollbar appears, that scrollbar costs
+    // the last text column, and then *every* full-width box row of the next
+    // frame wraps too -- the UI visibly shifts left and keeps scrolling.
+    // The log now lives on the Settings screen instead (see the status line
+    // at the bottom of build_settings_screen()), where a stray wrap is
+    // cosmetic and never touches this frame. So nothing is written into this
+    // slot when no prompt is up and nothing is loading -- and status_rows
+    // (above) reserves nothing in that case either, which is what keeps the
+    // frame at exactly term_rows_ - 1 lines instead of leaving one blank
+    // line short of the bottom while the panes above lose a row to it. When
+    // something IS drawn here, its rows are reserved up front, so the prompt
+    // and the loading indicator keep a fixed position and the layout never
+    // jitters.
     if (!prompt_lines.empty()) {
         // Same yellow-on-black as the meta menu's own confirmation footer.
+        // wrap_lines() already cut these to W - 2, and the " "+...+" "
+        // padding adds exactly the 2 columns that takes back, so the result
+        // is exactly W wide -- this line can never wrap either.
         for (const auto& l : prompt_lines) frame << "\x1b[43;30m " << l << " \x1b[0m\n";
-    } else if (load_in_progress_.load() && load_stage_.load() == 1) {
+    } else if (show_load_line) {
         // Only the online resolve/download step shows a live status —
         // local loads are probe-only now (near-instant) and deliberately
-        // silent, no "loading..." flash.
+        // silent, no "loading..." flash. Short, ASCII-only and seconds-
+        // limited, so it stays far inside any terminal width.
         double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - load_started_at_).count();
         frame << "  resolving/downloading... (" << static_cast<int>(secs) << "s)\n";
-    } else if (!status_line_.empty()) {
-        frame << "  " << status_line_ << "\n";
     }
 
     frame << "\x1b[0J";
