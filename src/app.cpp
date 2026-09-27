@@ -499,6 +499,65 @@ fs::path find_lyrics_script() { return find_scripts_file("fetch_lyrics.py"); }
 // normal, silent path for anyone who only has the core scripts installed.
 fs::path find_fast_search_script() { return find_scripts_file("fast_yt_search.py"); }
 
+// fpcalc is a BUILD product: CMake compiles tools/fpcalc.cpp and copies the
+// result next to mousiki.exe and into that exe's scripts/, so it exists only
+// beside the executable -- never in a checkout's scripts/ folder, and
+// find_scripts_file() can very well hand out exactly that one (the working
+// directory wins there on purpose, so edited .py files take effect without a
+// rebuild). fetch_meta.py resolves fpcalc next to the script IT was given
+// (resolve_fpcalc()), so with those two rules combined a fetch started from a
+// checkout's root dies with "fpcalc not found" even though this build has a
+// perfectly good helper next to its own exe. Handing that path down through
+// MOUSIKI_FPCLC -- the script's own documented override -- keeps both rules
+// intact, and never overwrites a path the user exported themselves.
+void export_fpcalc_to_scripts() {
+    if (std::getenv("MOUSIKI_FPCLC")) return; // an explicit override always wins
+#if defined(_WIN32)
+    const char* name = "fpcalc.exe";
+#else
+    const char* name = "fpcalc";
+#endif
+    fs::path exe_dir;
+#if defined(__APPLE__)
+    char exe_buf[4096];
+    uint32_t size = sizeof(exe_buf);
+    if (_NSGetExecutablePath(exe_buf, &size) == 0) {
+        std::error_code ec;
+        fs::path resolved = fs::canonical(fs::path(exe_buf), ec);
+        if (!ec) exe_dir = resolved.parent_path();
+    }
+#elif defined(_WIN32)
+    std::string exe = win_executable_path();
+    if (!exe.empty()) exe_dir = path_from_utf8(exe).parent_path();
+#else
+    char exe_buf[4096];
+    ssize_t n = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+    if (n > 0) {
+        exe_buf[n] = '\0';
+        exe_dir = fs::path(exe_buf).parent_path();
+    }
+#endif
+    if (exe_dir.empty()) return;
+    // The same ladder find_scripts_file() walks for scripts/: beside the exe,
+    // in its scripts/, then one and two levels up (a multi-config MSVC build
+    // puts the exe in build\Release\).
+    const fs::path dirs[] = {exe_dir, exe_dir / "scripts",
+                             exe_dir.parent_path() / "scripts",
+                             exe_dir.parent_path().parent_path() / "scripts"};
+    for (const fs::path& dir : dirs) {
+        std::error_code ec;
+        fs::path candidate = dir / name;
+        if (!fs::exists(candidate, ec)) continue;
+        std::string value = path_utf8(candidate);
+#if defined(_WIN32)
+        _putenv_s("MOUSIKI_FPCLC", value.c_str());
+#else
+        setenv("MOUSIKI_FPCLC", value.c_str(), 1);
+#endif
+        return;
+    }
+}
+
 } // namespace
 
 App::App() {
@@ -511,6 +570,7 @@ App::App() {
     lyrics_script_ = find_lyrics_script();
     fast_search_script_ = find_fast_search_script();
     meta_script_ = find_scripts_file("fetch_meta.py"); // AcoustID helper for Mode::MetaEdit
+    export_fpcalc_to_scripts(); // ...and the fpcalc it runs (see why there)
 
     // BUGFIX: the cache-dir injection below used to push_back()
     // unconditionally, every single launch -- and since save_settings()
