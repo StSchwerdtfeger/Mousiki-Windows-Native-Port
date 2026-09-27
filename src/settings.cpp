@@ -344,6 +344,11 @@ void apply_default_hotkeys(Settings& s) {
             // collapsed 'B' code by value alone, so it is matched directly
             // in handle_key() together with last_key_was_arrow() instead.)
             {"HKeyMetaEditor",                  "M"},
+            // Shift+H: the listening-history overlay (HISTORY / TOP TRACKS
+            // / HABITS). Same uppercase convention as M and P above --
+            // nothing claimed plain "h", but SHIFT+H is what the overlay is
+            // entered with.
+            {"HKeyHistory",                     "H"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -1083,7 +1088,7 @@ void save_settings(const Settings& s) {
         "HKeySeekForward", "HKeySeekBackward", "HKeyIncreaseVolume", "HKeyDecreaseVolume",
         "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
         "HKeyFilterForFolder", "HKeyClearFilter", "HKeyQuit", "HKeyResetPreference", "HKeyDownloadStream",
-        "HKeyToggleNormalize", "HKeyToggleMetaOnly", "HKeyMetaEditor",
+        "HKeyToggleNormalize", "HKeyToggleMetaOnly", "HKeyMetaEditor", "HKeyHistory",
     };
     for (const char* name : hkey_order) {
         auto it = s.hotkeys.find(name);

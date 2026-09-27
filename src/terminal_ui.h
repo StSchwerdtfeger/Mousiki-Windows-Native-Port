@@ -32,6 +32,22 @@ constexpr int kKeyDelete = 301;
 constexpr int kKeyCtrlShiftS = 302;
 constexpr int kKeyCtrlShiftD = 303;
 
+// Text-editing keys, the same idea again: Shift+Left/Right and Ctrl+C/X/V
+// are modifier combinations, so they can't be hotkey strings and they can't
+// be the bare 'A'-'D'/'c'/'x'/'v' values either (an arrow already collapsed
+// to those letters, and a typed capital must still be typable into a field).
+// They exist so the single-line editors (the meta editor's field editor and
+// the Settings ColorEdit buffer) can move a caret, mark a selection and use
+// the clipboard. They are ONLY ever meaningful inside those fields -- every
+// other handler simply ignores a value it doesn't know, exactly like
+// kKeyHome/kKeyDelete already do.
+constexpr int kKeyShiftLeft = 304;  // Shift+Left  -- extend the selection left
+constexpr int kKeyShiftRight = 305; // Shift+Right -- extend the selection right
+constexpr int kKeyCtrlC = 306;      // Ctrl+C      -- copy
+constexpr int kKeyCtrlX = 307;      // Ctrl+X      -- cut
+constexpr int kKeyCtrlV = 308;      // Ctrl+V      -- paste
+constexpr int kKeyEnd = 309;        // End (VK_END / xterm "ESC [ F")
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {
@@ -70,6 +86,29 @@ private:
 // using the value as-is, since every return path updates this flag in
 // step with what it returned.
 bool last_key_was_arrow();
+
+// ---------------------------------------------------------------------------
+// Text-entry mode + clipboard
+// ---------------------------------------------------------------------------
+//
+// While a single-line text field is being edited the console must deliver
+// Ctrl+C to the app instead of raising a CTRL_C_EVENT: on Windows
+// ENABLE_PROCESSED_INPUT swallows it (see win_raw_mode_enter()), on POSIX
+// ISIG turns it into SIGINT, and in both cases the keystroke never reaches
+// poll_key() -- so "copy" would be impossible. This flips exactly that one
+// switch off (and nothing else: echo/line-buffering stay as raw mode left
+// them), and the caller restores it by calling with false again. Safe to
+// call every frame with the same value.
+void set_text_entry(bool on);
+
+// The system clipboard as UTF-8, and the setter for it. Used by Ctrl+C/X/V
+// in the text fields, so a copied path or title can also be pasted OUTSIDE
+// the app. get() returns "" when the clipboard holds no text (or reading it
+// fails); control characters are stripped by the caller-side paste, not here.
+// On POSIX there is no portable system clipboard, so an in-process buffer is
+// used instead -- copy/paste still works within one run of the app.
+std::string clipboard_get();
+void clipboard_set(const std::string& utf8);
 
 // Truncates/right-pads (by byte length — good enough for the mostly-ASCII
 // UI text here; multi-byte titles may render slightly short) to exactly

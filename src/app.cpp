@@ -87,6 +87,208 @@ void pop_utf8_char(std::string& s) {
     s.erase(i);
 }
 
+// ---------------------------------------------------------------------------
+// Single-line text editing: caret, selection, and how a field is painted
+//
+// A text field in this app is a plain std::string plus two BYTE offsets (see
+// edit_caret_/edit_anchor_ in app.h): the caret, and the other end of the
+// selection -- equal to the caret when nothing is marked, which makes
+// "caret != anchor" the selection test itself. Offsets are in bytes because
+// that is what the buffers hold, but every movement and every deletion is
+// quantised to the codepoint boundaries below, so a multi-byte character is
+// never split in half.
+//
+// Two editors share this code and are never active at the same time:
+// Mode::ColorEdit (the Settings' in-place value editing) and the meta
+// editor's field editor. Both own their offsets and pass them in.
+// ---------------------------------------------------------------------------
+
+// Every byte offset at which `s` may be split without breaking UTF-8: 0,
+// then the start of each codepoint, then s.size() itself.
+static std::vector<size_t> utf8_cuts(const std::string& s) {
+    std::vector<size_t> cuts;
+    cuts.reserve(s.size() + 1);
+    cuts.push_back(0);
+    size_t i = 0;
+    while (i < s.size()) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t n = 1;
+        if ((c & 0xE0) == 0xC0) n = 2;
+        else if ((c & 0xF0) == 0xE0) n = 3;
+        else if ((c & 0xF8) == 0xF0) n = 4;
+        i += n;
+        if (i > s.size()) i = s.size(); // truncated lead byte: treat the tail as one char
+        cuts.push_back(i);
+    }
+    return cuts;
+}
+
+static size_t utf8_prev_cut(const std::string& s, size_t off) {
+    if (off == 0) return 0;
+    size_t best = 0;
+    for (size_t c : utf8_cuts(s)) {
+        if (c >= off) break;
+        best = c;
+    }
+    return best;
+}
+
+static size_t utf8_next_cut(const std::string& s, size_t off) {
+    if (off >= s.size()) return s.size();
+    for (size_t c : utf8_cuts(s)) if (c > off) return c;
+    return s.size();
+}
+
+static void le_clamp(const std::string& s, size_t& caret, size_t& anchor) {
+    if (caret > s.size()) caret = s.size();
+    if (anchor > s.size()) anchor = s.size();
+}
+
+static void le_range(size_t caret, size_t anchor, size_t& a, size_t& b) {
+    a = std::min(caret, anchor);
+    b = std::max(caret, anchor);
+}
+
+static bool le_has_sel(size_t caret, size_t anchor) { return caret != anchor; }
+
+static void le_erase_selection(std::string& s, size_t& caret, size_t& anchor) {
+    size_t a = 0, b = 0;
+    le_range(caret, anchor, a, b);
+    if (a == b) return;
+    s.erase(a, b - a);
+    caret = anchor = a;
+}
+
+// dir: -1 left, +1 right. shift keeps anchor where it was (marking), which
+// is exactly the difference between Shift+Left and Left.
+static void le_move(std::string& s, size_t& caret, size_t& anchor, int dir, bool shift) {
+    le_clamp(s, caret, anchor);
+    caret = (dir < 0) ? utf8_prev_cut(s, caret) : utf8_next_cut(s, caret);
+    if (!shift) anchor = caret;
+}
+
+static void le_backspace(std::string& s, size_t& caret, size_t& anchor) {
+    le_clamp(s, caret, anchor);
+    if (le_has_sel(caret, anchor)) { le_erase_selection(s, caret, anchor); return; }
+    size_t p = utf8_prev_cut(s, caret);
+    s.erase(p, caret - p);
+    caret = anchor = p;
+}
+
+static void le_delete_forward(std::string& s, size_t& caret, size_t& anchor) {
+    le_clamp(s, caret, anchor);
+    if (le_has_sel(caret, anchor)) { le_erase_selection(s, caret, anchor); return; }
+    size_t n = utf8_next_cut(s, caret);
+    s.erase(caret, n - caret);
+    anchor = caret;
+}
+
+// `limit` is the field's maximum byte length -- the same cap the old
+// "append at the end" code enforced with its inline size() checks.
+static void le_insert(std::string& s, size_t& caret, size_t& anchor, char c, size_t limit) {
+    le_clamp(s, caret, anchor);
+    le_erase_selection(s, caret, anchor);
+    if (s.size() >= limit) return;
+    s.insert(caret, 1, c);
+    caret = anchor = caret + 1;
+}
+
+// Paste. Clipboard text can be multi-line and arbitrary length: control
+// characters are dropped (a newline inside a single-line row would corrupt
+// the layout) and whatever still doesn't fit is trimmed, codepoint-aligned,
+// against the same limit.
+static void le_paste(std::string& s, size_t& caret, size_t& anchor, const std::string& text, size_t limit) {
+    le_clamp(s, caret, anchor);
+    le_erase_selection(s, caret, anchor);
+    std::string t;
+    t.reserve(text.size());
+    for (unsigned char c : text) {
+        if (c >= 32 && c != 127) t.push_back(static_cast<char>(c));
+    }
+    if (t.empty()) return;
+    const size_t room = (s.size() >= limit) ? 0 : limit - s.size();
+    while (t.size() > room && !t.empty()) t.erase(utf8_prev_cut(t, t.size()), std::string::npos);
+    if (t.empty()) return;
+    s.insert(caret, t);
+    caret = anchor = caret + t.size();
+}
+
+// What one field looks like on screen after all of that.
+struct EditPaint {
+    std::string s;  // the windowed text, selection wrapped in reverse video
+    int cols = 0;   // display columns s really occupies (ANSI escapes not counted)
+    int caret = 0;  // 0-based column of the caret inside that window
+};
+
+// Paints a field into `w` columns: a window scrolled so the caret stays
+// visible (the buffer can be far longer than the field), the selected range
+// in reverse video, and -- with `block` -- the caret itself drawn as a █,
+// which is how the meta editor shows a cursor. The Settings tabs instead move
+// the REAL terminal cursor to `caret` (they already do that today) and pass
+// block = false.
+//
+// `restore` is re-emitted after the selection so the field keeps its own
+// colour; it must be exactly the SGR the caller has already put in effect,
+// because display_width() cannot see through ANSI escapes -- colouring first
+// and measuring afterwards would miscount every row.
+static EditPaint paint_edit_field(const std::string& s, size_t caret, size_t anchor, int w,
+                                  const std::string& restore, bool block) {
+    EditPaint out;
+    if (w < 1) w = 1;
+    le_clamp(s, caret, anchor);
+    if (anchor > caret) std::swap(anchor, caret);
+
+    const std::vector<size_t> cuts = utf8_cuts(s);
+    std::vector<int> col(cuts.size(), 0); // col[i] = display column of cuts[i]
+    for (size_t i = 1; i < cuts.size(); ++i) {
+        col[i] = col[i - 1] + display_width(s.substr(cuts[i - 1], cuts[i] - cuts[i - 1]));
+    }
+    auto idx_of = [&](size_t off) -> size_t {
+        for (size_t i = 0; i < cuts.size(); ++i) if (cuts[i] == off) return i;
+        return cuts.size() - 1;
+    };
+    const size_t caret_i = idx_of(caret);
+    const size_t anchor_i = idx_of(anchor);
+
+    // The leftmost window that still keeps the caret inside it: starting any
+    // further left would push the caret past the right edge, starting further
+    // right would hide text the caret is sitting on.
+    const int caret_col = col[caret_i];
+    const int target = caret_col - (w - 1);
+    size_t lo_i = 0;
+    for (size_t i = 0; i <= caret_i; ++i) {
+        if (col[i] >= target) { lo_i = i; break; }
+        lo_i = caret_i;
+    }
+    size_t hi_i = lo_i;
+    while (hi_i + 1 < cuts.size() && col[hi_i + 1] - col[lo_i] <= w) ++hi_i;
+    if (hi_i < caret_i) hi_i = caret_i;
+
+    out.caret = caret_col - col[lo_i];
+    if (out.caret < 0) out.caret = 0;
+    if (out.caret > w - 1) out.caret = w - 1;
+
+    auto emit = [&](size_t from, size_t to, bool sel, const char* glyph) {
+        std::string body = glyph ? std::string(glyph) : s.substr(from, to - from);
+        if (body.empty()) return;
+        if (sel) out.s += "\x1b[7m" + body + "\x1b[0m" + restore;
+        else out.s += body;
+    };
+    for (size_t i = lo_i; i < hi_i; ++i) {
+        const bool sel = (i >= anchor_i && i < caret_i);
+        if (block && i == caret_i) emit(cuts[i], cuts[i + 1], sel, "\u2588");
+        else emit(cuts[i], cuts[i + 1], sel, nullptr);
+    }
+    // Caret at (or beyond) the end of the window: there is no character to
+    // replace, so the block is appended -- which only fits because the window
+    // above reserves the column (col[caret_i] - col[lo_i] <= w-1).
+    if (block && caret_i >= hi_i) emit(0, 0, false, "\u2588");
+
+    out.cols = col[hi_i] - col[lo_i];
+    if (block && caret_i >= hi_i) out.cols += 1;
+    return out;
+}
+
 std::string lower(std::string s) {
     return ascii_lower_str(std::move(s));
 }
@@ -562,6 +764,7 @@ void export_fpcalc_to_scripts() {
 
 App::App() {
     settings_ = load_settings();
+    history_.load(); // listening history: a missing/corrupt file is not fatal (see HistoryStore::load)
     set_emoji_replacement(settings_.replace_emoji);
     player_.set_stereo(settings_.stereo);
     player_.set_normalization(settings_.normalize,
@@ -1171,7 +1374,15 @@ void App::poll_pending_load() {
         // An automatic advance whose next track failed to load: the previous
         // track is over, so stop treating it as current (otherwise its
         // finished flag would immediately trigger another advance).
-        if (was_advancing) has_track_ = false;
+        if (was_advancing) {
+            has_track_ = false;
+            // ...and the play it left behind is over too -- nothing took its
+            // place, so close the record now (it was heard to the end; the
+            // next track simply never arrived). A FAILED manual selection is
+            // deliberately not recorded: whatever was playing keeps playing
+            // and its play must stay live.
+            history_end_current_play();
+        }
         return;
     }
 
@@ -1186,7 +1397,15 @@ void App::poll_pending_load() {
     current_is_local_ = pl.is_local;
     current_video_id_ = pl.video_id;
     has_track_ = true;
+    // Listening history, in this exact order: the play that just ended is
+    // closed BEFORE clear_finished() (its "was it heard to the end?" verdict
+    // reads player_.finished(), which the next line resets) and the new one
+    // is opened AFTER current_* have been reassigned (they are what
+    // history_begin_current_play() records). No history record exists for a
+    // failed load -- see the branch above.
+    history_end_current_play();
     player_.clear_finished(); // see clear_finished()'s comment — closes the race that caused the double-skip bug
+    history_begin_current_play();
     waveform_envelope_.clear();
     waveform_ready_ = false;
     waveform_pending_ready_ = false;
@@ -1454,11 +1673,18 @@ void App::advance_track() {
     if (settings_.play_mode == 1 /*loop*/) {
         launch_device_play_async(); // same track, already fully decoded, no reload needed
         has_track_ = true;
+        // One play of it just ended and looping it starts another one -- the
+        // record is closed (verdict still readable: clear_finished() is
+        // right below) and a fresh one opened, which is what makes a looped
+        // track count as a replay instead of one endless play.
+        history_end_current_play();
         player_.clear_finished();
+        history_begin_current_play();
         return;
     }
     if (settings_.play_mode == 3 /*stop*/) {
         has_track_ = false; // the only mode where "no track loaded" is the right message
+        history_end_current_play(); // playback really ends here: nothing follows it
         return; // no auto-advance -- queue or not
     }
 
@@ -1484,6 +1710,7 @@ void App::advance_track() {
     if (!load_in_progress_.load()) {
         advancing_ = false;
         has_track_ = false;
+        history_end_current_play(); // the finished track has no successor: close its record
     }
 }
 
@@ -1810,6 +2037,8 @@ static const RefHotkeyRow kRefRows[] = {
     {"PLAYLISTS", "HKeyPlaylist", "Open Playlist Editor"}, // opens the playlist create/manage screen
     // --- Meta editor ---
     {"META EDITOR", "HKeyMetaEditor", "Open Meta Editor"}, // edit file names/tags, AcoustID fetch
+    // --- Listening history ---
+    {"HISTORY", "HKeyHistory", "Open Listening History"}, // HISTORY / TOP TRACKS / HABITS overlay
     // --- Downloads ---
     {"DOWNLOADS", "HKeyDownloadStream", "Download Stream"},
     // --- System ---
@@ -1842,6 +2071,52 @@ static const RefHardcodedRow kRefHardcoded[] = {
 };
 static constexpr int kRefHardcodedCount = sizeof(kRefHardcoded) / sizeof(kRefHardcoded[0]);
 
+// ---------------------------------------------------------------------------
+// LOUDNESS NORMALIZATION -- the two parameters behind the "Normalize Volume"
+// toggle, editable on this tab between the hotkeys and the font map (rather
+// than buried in config.txt, where they used to be the only way to change
+// them). Their selectable row range sits between the read-only hardcoded
+// section and the read-only font-map section:
+//
+//     0 .. kRefRowCount-1             rebindable hotkeys
+//     kRefRowCount .. kNormStart-1    hardcoded keys (read-only)
+//     kNormStart .. kNormEnd-1        these three rows (editable)
+//     kNormEnd ..                     font-map rows (read-only)
+//
+// Every row-index translation on this tab (ref_display_row(), the scroll
+// window, settings_max_row(), the Enter-to-edit guard) has to go through
+// kNormStart/kNormEnd, which is exactly where they all used to assume a
+// single hard/soft split at kRefRowCount.
+// ---------------------------------------------------------------------------
+static const char* const kNormLabels[] = {
+    "Normalize Volume",    // bool, same setting as the ON/OFF tab's row
+    "Target Level (LUFS)", // -40..0, what every track is measured to
+    "Max Boost (dB)",      // 0..24, how much a quiet track may be lifted
+};
+static constexpr int kNormRowCount =
+    static_cast<int>(sizeof(kNormLabels) / sizeof(kNormLabels[0]));
+static constexpr int kNormStart = kRefRowCount + kRefHardcodedCount;
+static constexpr int kNormEnd = kNormStart + kNormRowCount;
+
+// "-16" instead of "-16.000000". These are the only two fractional values
+// on the tab, and settings_options_for() has to render its option list with
+// exactly this formatter -- settings_cycle() finds the current value by
+// string equality, so a mismatch would silently jump to the first option.
+static std::string fmt_loudness(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f", v);
+    std::string s(buf);
+    // Drop the ".0" of a whole number -- the '.' as well, not just the zero:
+    // a leftover "-16." is not what settings_options_for() offers, so
+    // settings_cycle() would never find it and every Left/Right would snap
+    // back to the first option instead of stepping from the current one.
+    if (s.size() > 2 && s.back() == '0' && s[s.size() - 2] == '.') {
+        s.pop_back(); // the zero
+        s.pop_back(); // ...and the point that only existed to show it
+    }
+    return s;
+}
+
 // The label column of every row on this tab is 25 cells wide with the
 // ":" barrier sitting right behind it, and pad() below deliberately does
 // NOT truncate (the reference renderer doesn't either) -- so a label
@@ -1860,21 +2135,25 @@ static std::vector<std::string> ref_label_lines(int hardcoded_index) {
 }
 
 // Maps a selectable row index -- 0..kRefRowCount-1 for hotkeys,
-// kRefRowCount..+kRefHardcodedCount-1 for the hardcoded rows, then the
-// font-map letters -- to the row it's actually drawn on, once the section
-// header/divider lines inserted along the way (one above each hotkey
-// category, one above the hardcoded section, one above the font map) and
-// the wrapped labels' continuation lines are accounted for. Used by both
+// kRefRowCount..kNormStart-1 for the hardcoded rows, kNormStart..kNormEnd-1
+// for the loudness parameters, then the font-map letters -- to the row it's
+// actually drawn on, once the section header/divider lines inserted along
+// the way (one above each hotkey category, one above the hardcoded section,
+// one above the loudness section, one above the font map) and the wrapped labels' continuation lines are accounted for. Used by both
 // the render block and the ColorEdit cursor placement below, so the two
 // always agree on where a given row lands.
 static int ref_display_row(int selectable_row) {
     int headers = 0, wrapped = 0;
     for (int i = 0; i <= selectable_row; ++i) {
-        if (i < kRefRowCount) { if (kRefRows[i].header) headers += 2; }
-        else {
-            if (i == kRefRowCount || i == kRefRowCount + kRefHardcodedCount) headers += 2;
-            if (i < kRefRowCount + kRefHardcodedCount) // a hardcoded row's label may span 2 lines
-                wrapped += static_cast<int>(ref_label_lines(i - kRefRowCount).size()) - 1;
+        if (i < kRefRowCount) {
+            if (kRefRows[i].header) headers += 2;
+        } else if (i < kNormStart) {
+            if (i == kRefRowCount) headers += 2; // "HARDCODED / NOT REBINDABLE"
+            wrapped += static_cast<int>(ref_label_lines(i - kRefRowCount).size()) - 1; // a label may span 2 lines
+        } else if (i < kNormEnd) {
+            if (i == kNormStart) headers += 2;   // "LOUDNESS NORMALIZATION"
+        } else {
+            if (i == kNormEnd) headers += 2;     // "FONT / CHARACTER MAP"
         }
     }
     return selectable_row + headers + wrapped;
@@ -2015,7 +2294,7 @@ int App::settings_max_row() const {
         case 3: {
             int letters = 0;
             for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) ++letters;
-            return kRefRowCount + kRefHardcodedCount + letters - 1; // rebindable hotkeys + hardcoded rows + N font-map rows
+            return kNormEnd + letters - 1; // hotkeys + hardcoded + loudness rows + N font-map rows
         }
         case 4: {
             int MAX_Y = std::max(term_rows_ - 2, 10);
@@ -2088,6 +2367,18 @@ std::string App::settings_get_value(int row, int col) const {
         auto it = settings_.hotkeys.find(kRefRows[row].action);
         return it != settings_.hotkeys.end() ? it->second : "";
     }
+    // LOUDNESS NORMALIZATION rows: same three values the ON/OFF tab's
+    // "Normalize Volume" toggle and config.txt expose -- the point of
+    // putting them here is that the numbers are finally reachable without
+    // editing a file, and fmt_loudness() is what keeps them looking like
+    // "-16" rather than "-16.000000".
+    if (settings_tab_ == 3 && row >= kNormStart && row < kNormEnd) {
+        switch (row - kNormStart) {
+            case 0: return settings_.normalize ? "true" : "false";
+            case 1: return fmt_loudness(settings_.normalize_target_lufs);
+            case 2: return fmt_loudness(settings_.normalize_max_boost_db);
+        }
+    }
     return "";
 }
 
@@ -2115,6 +2406,26 @@ std::vector<std::string> App::settings_options_for(int tab, int row) const {
             case 5: return {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
             case 6: return {"left", "center", "right"};
             case 7: return {"full", "word by word", "line by line", "letter by letter", "active line only", "active word only"};
+        }
+    }
+    if (tab == 3 && row >= kNormStart && row < kNormEnd) {
+        // The loudness rows are the one non-bool cyclable thing on the
+        // Reference tab: whole numbers only, rendered through the very same
+        // formatter settings_get_value() uses so the current value is
+        // found by settings_cycle()'s string compare instead of jumping
+        // back to the first option.
+        switch (row - kNormStart) {
+            case 0: return {"true", "false"};
+            case 1: {
+                std::vector<std::string> v;
+                for (int i = -40; i <= 0; ++i) v.push_back(std::to_string(i)); // LUFS target
+                return v;
+            }
+            case 2: {
+                std::vector<std::string> v;
+                for (int i = 0; i <= 24; ++i) v.push_back(std::to_string(i)); // max boost in dB
+                return v;
+            }
         }
     }
     return {};
@@ -2208,6 +2519,36 @@ void App::settings_commit_edit() {
         }
     } else if (settings_tab_ == 3 && settings_row_ >= 0 && settings_row_ < kRefRowCount) {
         settings_.hotkeys[kRefRows[settings_row_].action] = buf;
+    } else if (settings_tab_ == 3 && settings_row_ >= kNormStart && settings_row_ < kNormEnd) {
+        // LOUDNESS NORMALIZATION: clamped to the same ranges the option
+        // lists advertise (typing a stray letter must not derail a value),
+        // then pushed into the player immediately, exactly like the ON/OFF
+        // tab's "Normalize Volume" toggle does above -- otherwise the
+        // numbers would only take effect at the next restart.
+        switch (settings_row_ - kNormStart) {
+            case 0: {
+                std::string v = to_lower(buf);
+                if (v == "true") settings_.normalize = true;
+                else if (v == "false") settings_.normalize = false;
+                else return;
+                break;
+            }
+            case 1:
+                try { settings_.normalize_target_lufs = std::clamp(std::stod(buf), -40.0, 0.0); }
+                catch (...) { return; }
+                break;
+            case 2:
+                try { settings_.normalize_max_boost_db = std::clamp(std::stod(buf), 0.0, 24.0); }
+                catch (...) { return; }
+                break;
+            default: return;
+        }
+        player_.set_normalization(settings_.normalize,
+                                  static_cast<float>(settings_.normalize_target_lufs),
+                                  static_cast<float>(settings_.normalize_max_boost_db));
+        status_line_ = std::string("loudness: ") + (settings_.normalize ? "on, target " : "off, target ")
+                     + fmt_loudness(settings_.normalize_target_lufs) + " LUFS, boost max "
+                     + fmt_loudness(settings_.normalize_max_boost_db) + " dB";
     }
 }
 
@@ -2222,6 +2563,7 @@ void App::settings_cycle(int dir) {
     for (size_t i = 0; i < opts.size(); ++i) if (opts[i] == cur) { idx = static_cast<int>(i); break; }
     idx = (idx == -1) ? 0 : (idx + dir + static_cast<int>(opts.size())) % static_cast<int>(opts.size());
     color_edit_buffer_ = opts[idx];
+    edit_caret_ = edit_anchor_ = color_edit_buffer_.size(); // the buffer was replaced, not edited
     settings_commit_edit();
     status_line_ = "TOGGLED -> " + opts[idx];
     if (settings_tab_ == 2 && settings_row_ == 1) recompute_waveform_for_current_track();
@@ -2245,6 +2587,10 @@ void App::settings_cycle(int dir) {
 
 void App::handle_settings_key(int key) {
     if (mode_ == Mode::ColorEdit) {
+        // The caret can be stale by one keypress after the buffer was
+        // replaced wholesale (an option cycle, a rejected hotkey) -- clamp
+        // before anything reads it, exactly like the meta editor does.
+        le_clamp(color_edit_buffer_, edit_caret_, edit_anchor_);
         if (key == 27) { mode_ = Mode::Settings; return; } // cancel, discard buffer
         if (key == '\r' || key == '\n') {
             std::string key_name = (settings_tab_ == 3 && settings_row_ >= 0 && settings_row_ < kRefRowCount)
@@ -2261,6 +2607,7 @@ void App::handle_settings_key(int key) {
                 if (!conflict.empty()) {
                     status_line_ = "KEY \"" + color_edit_buffer_ + "\" ALREADY USED BY " + conflict + " -- try another key";
                     color_edit_buffer_.clear();
+                    edit_caret_ = edit_anchor_ = 0;
                     force_redraw_ = true;
                     return; // stay in ColorEdit: redraw and repeat
                 }
@@ -2276,7 +2623,43 @@ void App::handle_settings_key(int key) {
             mode_ = Mode::Settings;
             return;
         }
-        if (key == 127 || key == 8) { pop_utf8_char(color_edit_buffer_); return; }
+        // --- caret, selection, clipboard ---------------------------------
+        // Shift+arrows mark, Ctrl+C/X/V copy/cut/paste, Home/End jump. These
+        // are modifier combinations that arrive as their own sentinel values
+        // (terminal_ui.h) precisely because the bare ones are already taken:
+        // an arrow press collapses to the letter it would otherwise type, and
+        // a typed 'c' has to stay a typed 'c'.
+        if (key == kKeyHome) { edit_caret_ = edit_anchor_ = 0; return; }
+        if (key == kKeyEnd) { edit_caret_ = edit_anchor_ = color_edit_buffer_.size(); return; }
+        if (key == kKeyShiftLeft) { le_move(color_edit_buffer_, edit_caret_, edit_anchor_, -1, true); return; }
+        if (key == kKeyShiftRight) { le_move(color_edit_buffer_, edit_caret_, edit_anchor_, +1, true); return; }
+        if (key == kKeyDelete) { le_delete_forward(color_edit_buffer_, edit_caret_, edit_anchor_); return; }
+        if (key == kKeyCtrlC) {
+            size_t a = 0, b = 0;
+            le_range(edit_caret_, edit_anchor_, a, b);
+            std::string t = (a == b) ? color_edit_buffer_ : color_edit_buffer_.substr(a, b - a);
+            clipboard_set(t);
+            status_line_ = t.empty() ? "nothing selected" : "COPIED";
+            return;
+        }
+        if (key == kKeyCtrlX) {
+            size_t a = 0, b = 0;
+            le_range(edit_caret_, edit_anchor_, a, b);
+            if (a == b) return; // no selection: cut must never empty the field
+            clipboard_set(color_edit_buffer_.substr(a, b - a));
+            le_erase_selection(color_edit_buffer_, edit_caret_, edit_anchor_);
+            status_line_ = "CUT";
+            return;
+        }
+        if (key == kKeyCtrlV) {
+            // A path gets far more room than a color/hotkey field does --
+            // the same cap typing enforces below.
+            const int limit = (settings_tab_ == 1 && onoff_row_is_path(settings_row_)) ? 240 : 18;
+            le_paste(color_edit_buffer_, edit_caret_, edit_anchor_, clipboard_get(), static_cast<size_t>(limit));
+            status_line_ = "PASTED";
+            return;
+        }
+        if (key == 127 || key == 8) { le_backspace(color_edit_buffer_, edit_caret_, edit_anchor_); return; }
         // Arrow keys collapse to the letters 'A'-'D' (same collision as
         // Mode::Search below), which sit inside 32-126 and would otherwise
         // be typed as literal letters -- for a hotkey rebind that would
@@ -2285,11 +2668,19 @@ void App::handle_settings_key(int key) {
         // so ask the input layer instead: a genuinely typed A-D goes into
         // the buffer now (without it a Windows path could never be
         // entered -- "C:\" has no way past this check), while an arrow
-        // press is still dropped exactly as before.
-        if ((key == 'A' || key == 'B' || key == 'C' || key == 'D') && last_key_was_arrow()) return;
+        // press moves the caret instead (Left/Right) or is dropped (Up/Down
+        // -- a single line has nowhere to go vertically).
+        if (last_key_was_arrow() && (key == 'A' || key == 'B')) return;
+        if (last_key_was_arrow() && (key == 'C' || key == 'D')) {
+            le_move(color_edit_buffer_, edit_caret_, edit_anchor_, key == 'D' ? -1 : +1, false);
+            return;
+        }
         // A path needs far more room than a color/hotkey field does.
         const int edit_limit = (settings_tab_ == 1 && onoff_row_is_path(settings_row_)) ? 240 : 18;
-        if (is_text_key(key) && color_edit_buffer_.size() < edit_limit) color_edit_buffer_ += static_cast<char>(key);
+        if (is_text_key(key)) {
+            le_insert(color_edit_buffer_, edit_caret_, edit_anchor_, static_cast<char>(key),
+                      static_cast<size_t>(edit_limit));
+        }
         return;
     }
 
@@ -2315,7 +2706,14 @@ void App::handle_settings_key(int key) {
     }
 
     if (key == '\r' || key == '\n') {
-        if (settings_tab_ == 3 && settings_row_ >= kRefRowCount) return; // hardcoded/font-map rows are read-only display
+        // Reference tab: hotkeys (0..kRefRowCount-1) and the loudness rows
+        // (kNormStart..kNormEnd-1) are editable; the hardcoded-keys section
+        // and the font-map rows are read-only display and never enter
+        // ColorEdit at all.
+        if (settings_tab_ == 3 &&
+            ((settings_row_ >= kRefRowCount && settings_row_ < kNormStart) || settings_row_ >= kNormEnd)) {
+            return;
+        }
         if (settings_tab_ == 1) {
             OnOffRow r = onoff_row(settings_row_);
             if (r.kind == OnOffRow::Kind::AddPath) {
@@ -2329,6 +2727,7 @@ void App::handle_settings_key(int key) {
                                                                   : settings_.local_music_paths;
                 paths.push_back("");
                 color_edit_buffer_.clear();
+                edit_caret_ = edit_anchor_ = 0;
                 mode_ = Mode::ColorEdit;
                 status_line_ = r.playlist_path
                     ? "new playlist path -- type it, ENTER to confirm"
@@ -2338,6 +2737,7 @@ void App::handle_settings_key(int key) {
             }
         }
         color_edit_buffer_ = settings_get_value(settings_row_, settings_col_);
+        edit_caret_ = edit_anchor_ = color_edit_buffer_.size(); // caret starts at the end, as usual
         mode_ = Mode::ColorEdit;
         return;
     }
@@ -2402,6 +2802,11 @@ void App::handle_key(int key) {
 
     if (mode_ == Mode::MetaEdit) {
         handle_meta_key(key);
+        return;
+    }
+
+    if (mode_ == Mode::History) {
+        handle_history_key(key);
         return;
     }
 
@@ -2642,6 +3047,8 @@ void App::handle_key(int key) {
         playlist_open_editor();
     } else if (action == "HKeyMetaEditor") { // SHIFT+M: edit file names / tags, fetch metadata
         meta_open();
+    } else if (action == "HKeyHistory") { // SHIFT+H: listening history (HISTORY / TOP TRACKS / HABITS)
+        history_open();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
         queue_focus_ = !queue_focus_;
     } else if (action == "HKeyNavigateUp") {
@@ -5036,10 +5443,14 @@ void App::handle_meta_key(int key) {
     // tells a real arrow from a typed capital. Unlike the playlist editor
     // (where the name field only ever sees casual typing) these fields hold
     // real words, so capitals MUST stay typable here -- which is also why
-    // the tab switch below only fires for the arrow itself.
+    // the tab switch below only fires for the arrow itself. It is skipped
+    // entirely while a field is being edited: Left/Right are the caret keys
+    // there (see the field editor at the bottom), and bouncing to the fetch
+    // list on every arrow press is exactly what made marking text
+    // impossible.
     bool arrow = last_key_was_arrow();
 
-    if (arrow && (key == 'C' || key == 'D')) { // left/right: the only 2 tabs
+    if (arrow && (key == 'C' || key == 'D') && !(meta_tab_ == 0 && meta_focus_ == 2)) { // left/right: the only 2 tabs
         meta_tab_ = (meta_tab_ + 1) % 2;
         meta_focus_ = 0;
         meta_refresh_lib_view();
@@ -5093,6 +5504,28 @@ void App::handle_meta_key(int key) {
     {
         std::string path = meta_hovering_path();
         if (path.empty()) { meta_focus_ = 1; return; }
+
+        // The caret belongs to one specific (file, field) pair. If either
+        // changed since the last keypress -- a field move, another row, the
+        // 'r' resort reordering the list -- the offsets now point at a
+        // different string, so retarget them to the end of this one instead
+        // of letting them be clamped against the wrong text.
+        const MetaEditEntry* e = meta_entry(path);
+        std::string cur = meta_display_value(path, meta_field_, e);
+        const std::string owner = path + "#" + std::to_string(meta_field_);
+        if (edit_owner_ != owner) {
+            edit_owner_ = owner;
+            edit_caret_ = edit_anchor_ = cur.size();
+        }
+        le_clamp(cur, edit_caret_, edit_anchor_);
+        // meta_set_field() marks the file as edited and rewrites the
+        // autosave unconditionally, so it is only ever reached when the
+        // bytes really changed -- moving the caret must not make a file
+        // count as edited.
+        const std::string orig = cur;
+        auto commit = [&]() { if (cur != orig) meta_set_field(path, meta_field_, cur); };
+        const size_t limit = (meta_field_ == static_cast<int>(MetaField::FileName)) ? 200 : 160;
+
         if (arrow && key == 'A') { if (meta_field_ > 0) --meta_field_; return; }
         if (arrow && key == 'B') { if (meta_field_ + 1 < kMetaFieldCount) ++meta_field_; return; }
         if (key == '\r' || key == '\n') {
@@ -5103,21 +5536,49 @@ void App::handle_meta_key(int key) {
             if (meta_resort_edited_ && !meta_lib_view_.empty()) meta_refresh_lib_view();
             return;
         }
-        if (key == 127 || key == 8) {
-            const MetaEditEntry* e = meta_entry(path);
-            std::string cur = meta_display_value(path, meta_field_, e);
-            pop_utf8_char(cur);
-            meta_set_field(path, meta_field_, cur); // marks it edited -> header colour
+        // --- caret, selection, clipboard ---------------------------------
+        // Shift+arrows mark, Ctrl+C/X/V copy/cut/paste, Home/End jump. They
+        // arrive as their own sentinel values (terminal_ui.h) because the
+        // bare ones are already taken here: a plain arrow press collapses to
+        // the letter it would otherwise type, and a typed 'c' has to stay a
+        // typed 'c' inside a word.
+        if (key == kKeyHome) { edit_caret_ = edit_anchor_ = 0; return; }
+        if (key == kKeyEnd) { edit_caret_ = edit_anchor_ = cur.size(); return; }
+        if (key == kKeyShiftLeft) { le_move(cur, edit_caret_, edit_anchor_, -1, true); return; }
+        if (key == kKeyShiftRight) { le_move(cur, edit_caret_, edit_anchor_, +1, true); return; }
+        if (key == kKeyCtrlC) {
+            size_t a = 0, b = 0;
+            le_range(edit_caret_, edit_anchor_, a, b);
+            std::string t = (a == b) ? cur : cur.substr(a, b - a);
+            clipboard_set(t);
+            meta_status_ = t.empty() ? "nothing selected" : "COPIED";
+            return;
+        }
+        if (key == kKeyCtrlX) {
+            size_t a = 0, b = 0;
+            le_range(edit_caret_, edit_anchor_, a, b);
+            if (a == b) return; // never empty the field by accident
+            clipboard_set(cur.substr(a, b - a));
+            le_erase_selection(cur, edit_caret_, edit_anchor_);
+            commit();
+            meta_status_ = "CUT";
+            return;
+        }
+        if (key == kKeyCtrlV) {
+            le_paste(cur, edit_caret_, edit_anchor_, clipboard_get(), limit);
+            commit();
+            meta_status_ = "PASTED";
+            return;
+        }
+        if (key == kKeyDelete) { le_delete_forward(cur, edit_caret_, edit_anchor_); commit(); return; }
+        if (key == 127 || key == 8) { le_backspace(cur, edit_caret_, edit_anchor_); commit(); return; }
+        if (arrow && (key == 'C' || key == 'D')) { // plain Left/Right: move the caret, leave the tab alone
+            le_move(cur, edit_caret_, edit_anchor_, key == 'D' ? -1 : +1, false);
             return;
         }
         if (is_text_key(key)) {
-            const MetaEditEntry* e = meta_entry(path);
-            std::string cur = meta_display_value(path, meta_field_, e);
-            size_t limit = (meta_field_ == static_cast<int>(MetaField::FileName)) ? 200 : 160;
-            if (cur.size() < limit) {
-                cur += static_cast<char>(key);
-                meta_set_field(path, meta_field_, cur);
-            }
+            le_insert(cur, edit_caret_, edit_anchor_, static_cast<char>(key), limit);
+            commit();
         }
         return;
     }
@@ -5262,14 +5723,38 @@ std::vector<std::string> App::build_meta_fields_panel(int total_width, int heigh
                     : (meta_hover_resolved_ ? "(untagged)" : "(reading ...)");
         }
         bool sel = (meta_focus_ == 2) && (i == meta_field_);
-        if (sel) val_raw += "\u2588"; // block cursor on the field being typed into
-        std::string val = truncate_str(val_raw, std::max(4, inner - label_w));
-        int used = display_width(lab) + display_width(val);
-        std::string fill(std::max(0, inner - used), ' ');
         bool edited = entry && entry->edited[i];
+        const int val_w = std::max(4, inner - label_w);
 
         std::string base = sel ? cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color)
                                : (ansi_for(settings_.list_color, false) + bg_ansi_for(settings_.list_inactive_bg_color));
+
+        std::string val;
+        int used = 0;
+        if (sel) {
+            // The field being typed into is painted by paint_edit_field():
+            // the window scrolls so the caret stays inside the panel, the
+            // marked range is drawn in reverse video, and the caret itself
+            // is the block glyph this panel uses for a cursor (it renders
+            // whole frames, so there is no real terminal cursor to move --
+            // which is also why an arrow press used to be free to switch
+            // tabs while the text still had nowhere to go).
+            // The caret only belongs to this row if the offsets were last
+            // set against exactly this (file, field) pair -- see the field
+            // editor in handle_meta_key().
+            const std::string owner = path + "#" + std::to_string(i);
+            size_t c = val_raw.size(), a = val_raw.size();
+            if (edit_owner_ == owner) { c = edit_caret_; a = edit_anchor_; }
+            const std::string restore = base + (edited ? header_sgr(settings_) : std::string());
+            EditPaint p = paint_edit_field(val_raw, c, a, val_w, restore, /*block=*/true);
+            val = p.s;
+            used = display_width(lab) + p.cols; // p.cols already ignores the ANSI codes
+        } else {
+            val = truncate_str(val_raw, val_w);
+            used = display_width(lab) + display_width(val);
+        }
+        std::string fill(std::max(0, inner - used), ' ');
+
         std::string row_ansi = base + lab;
         if (edited) row_ansi += header_sgr(settings_); // bold + header colour: this field has been edited
         row_ansi += val;
@@ -5440,18 +5925,26 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
         }
     } else {
         std::string hint = (meta_tab_ == 0)
-            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | "
+            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [a] Fetch list | "
               "[SHIFT+B] Fetch | [r] Edited first | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
             : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | "
               "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit";
-        // The legend is wider than the screen (tab 0: 163 columns once [r]
-        // is in it, tab 1: 116), and truncate_str(hint, W) used to cut it
-        // mid-command at 120 -- the [CTRL+SHIFT+D] Discard half of it was
-        // simply never shown. Split it back into its " | "-separated entries
-        // and pack them greedily instead: an entry only moves to the second
-        // legend row when the row it would join is already full, so at 120
-        // columns Save | Discard | Exit become row two and every command
-        // stays readable -- never cut through the middle of a key name. Both
+        // The legend is wider than the screen (tab 0: ~210 columns once the
+        // selection/clipboard commands are in it, tab 1: 116), and
+        // truncate_str(hint, W) used to cut it mid-command at 120 -- the
+        // [CTRL+SHIFT+D] Discard half of it was simply never shown. Split it
+        // back into its " | "-separated entries and pack them greedily
+        // instead: an entry only moves to the second legend row when the row
+        // it would join is already full, so at 120 columns every command
+        // stays readable -- never cut through the middle of a key name.
+        // TWO rows is a hard limit, not just a preference: build_meta_screen()
+        // sizes the panels from "two legend rows + one status row", so a
+        // third row would make the overlay one line taller than the terminal
+        // budget and bring the scrollbar back. Anything that still doesn't
+        // fit is therefore joined onto row two and truncated there by the
+        // writer below; at the 120-column size this app targets nothing gets
+        // dropped (~114 + ~94 columns), the cap only guards narrower
+        // terminals, where the alternative used to be a growing footer. Both
         // tabs are padded to exactly two legend rows (+ the status row), so
         // the footer keeps one constant height: switching tabs, or a status
         // message appearing, can't jump the layout.
@@ -5463,7 +5956,7 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
                                                            : hint.substr(pos, sep - pos);
             std::string& cur = hint_lines.back();
             std::string joined = cur.empty() ? entry : cur + " | " + entry;
-            if (cur.empty() || display_width(joined) <= W) cur = joined;
+            if (cur.empty() || display_width(joined) <= W || hint_lines.size() >= 2) cur = joined;
             else hint_lines.push_back(entry);
             if (sep == std::string::npos) break;
             pos = sep + 3;
@@ -5479,6 +5972,332 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
         if (!meta_status_.empty()) frame << "\x1b[32m" << truncate_str(meta_status_, W) << "\x1b[0m\n";
         else frame << "\n";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Listening history overlay (Mode::History, HKeyHistory = Shift+H)
+//
+// Modelled on the two overlays above: same tab strip, same boxed panel, same
+// "two legend rows + one status row" footer, so its height never depends on
+// what it happens to be showing. Three tabs:
+//
+//   1 HISTORY     the last 100 plays, newest first, each with a PLAY / done /
+//                 skip marker (the live play is the top row while music runs)
+//   2 TOP TRACKS  one row per title -- length and play count -- sorted by play
+//                 count; 'r' flips between most- and least-played first
+//   3 HABITS      session / time-per-day / play-behaviour aggregates, every
+//                 category under a header_sgr() header, exactly like the
+//                 Settings section titles and the cheat sheet's categories
+//
+// It is a pure viewer: no key in here edits anything, and 'r' only flips an
+// in-memory sort order. The data is maintained outside this overlay -- see
+// history_end_current_play()/history_begin_current_play() below (called on
+// every playback hand-over) and the frame loop's history_.add_listened().
+// ---------------------------------------------------------------------------
+
+void App::history_open() {
+    mode_ = Mode::History;
+    history_tab_ = 0;
+    history_selected_ = 0;
+    history_scroll_ = 0;
+    history_status_.clear();
+    if (history_.plays().empty())
+        history_status_ = "nothing played yet in this installation";
+    history_refresh_top();
+    force_redraw_ = true; // full-screen takeover, same rule as entering Settings
+}
+
+void App::history_refresh_top() {
+    history_top_view_ = history_top(history_.plays(), history_most_first_);
+}
+
+// Closes the record of whatever is playing right now. Called on every
+// hand-over (a new track replacing it, playback running out, the app
+// quitting), never from anywhere that could see a record twice -- the store
+// itself refuses to close one that isn't live.
+void App::history_end_current_play() {
+    if (!history_.live()) return;
+    const HistoryPlay* p = history_.live_play();
+    const double len = p ? p->len_sec : 0.0;
+    const double heard = p ? p->listened_sec : 0.0;
+    // "Heard to the end" = the player ran out of track, or the listener got
+    // through 90% of it (which also covers seeking close to the end and then
+    // letting it run out). Everything else -- a skip, an app closed
+    // mid-track -- is not a completion, and that is what the Habits tab's
+    // completion rate is built on.
+    const bool completed = player_.finished() || (len > 0.0 && heard >= 0.9 * len);
+    history_.finish_live(completed);
+    history_.save(); // one small JSON write per finished track
+}
+
+// Opens a record for current_path_/current_video_id_/metadata_. Must only be
+// called once those three already describe the NEW track.
+void App::history_begin_current_play() {
+    if (!has_track_) return;
+    HistoryPlay p;
+    p.id = history_track_id(current_is_local_, path_utf8(current_path_), current_video_id_);
+    if (p.id.empty()) return; // nothing to aggregate by: record nothing rather than a phantom title
+    p.title = metadata_.name;
+    if (p.title.empty() || p.title == "-")
+        p.title = path_utf8(current_path_.stem()); // untagged local file
+    p.artist = (metadata_.artist == "-") ? std::string() : metadata_.artist;
+    p.len_sec = static_cast<double>(total_sec_);
+    p.started_at = static_cast<long long>(std::time(nullptr));
+    history_.begin_play(p);
+}
+
+void App::handle_history_key(int key) {
+    if (key == 0) return;
+    const bool arrow = last_key_was_arrow();
+
+    // Leaving: ESC, or SHIFT+H again -- the very key that opened this
+    // (nothing here is a text field, so an uppercase 'H' is always that key).
+    if (key == 27 || (key == 'H' && !arrow)) { mode_ = Mode::Browse; return; }
+
+    // Tab strip: Left/Right or TAB cycles, 1/2/3 jumps outright.
+    if ((arrow && (key == 'C' || key == 'D')) || key == 9) {
+        const int dir = (key == 'C') ? -1 : 1;
+        history_tab_ = (history_tab_ + dir + 3) % 3;
+        history_selected_ = 0;
+        history_scroll_ = 0;
+        history_status_.clear();
+        return;
+    }
+    if (key == '1' || key == '2' || key == '3') {
+        history_tab_ = key - '1';
+        history_selected_ = 0;
+        history_scroll_ = 0;
+        history_status_.clear();
+        return;
+    }
+
+    // Up/Down: a cursor on the two list tabs, plain scrolling on Habits
+    // (whose content has no cursor and is taller than the panel).
+    const int total = (history_tab_ == 0)
+        ? static_cast<int>(std::min<size_t>(100, history_.plays().size()))
+        : static_cast<int>(history_top_view_.size());
+    if (arrow && key == 'A') {
+        if (history_tab_ == 2) { if (history_scroll_ > 0) --history_scroll_; }
+        else if (history_selected_ > 0) --history_selected_;
+        return;
+    }
+    if (arrow && key == 'B') {
+        if (history_tab_ == 2) ++history_scroll_; // clamped against the real content while drawing
+        else if (history_selected_ + 1 < total) ++history_selected_;
+        return;
+    }
+
+    // 'r' flips the Top Tracks order: most played on top (the default) and
+    // least played on top. Nowhere else to do it, so it is a no-op there
+    // rather than a surprise.
+    if (key == 'r' || key == 'R') {
+        if (history_tab_ != 1) return;
+        history_most_first_ = !history_most_first_;
+        history_refresh_top();
+        if (history_selected_ >= static_cast<int>(history_top_view_.size()))
+            history_selected_ = std::max(0, static_cast<int>(history_top_view_.size()) - 1);
+        history_status_ = history_most_first_ ? "TOP TRACKS: most played first"
+                                              : "TOP TRACKS: least played first";
+        return;
+    }
+    if (key == 'q' || key == 'Q') mode_ = Mode::Browse;
+}
+
+void App::build_history_screen(std::ostringstream& frame, int W, int target_height) {
+    // Rebuilt every frame: a track can finish (and another start) while this
+    // overlay is on screen -- playback never pauses for it.
+    history_refresh_top();
+
+    if (W < 60) W = 60;
+    std::string border = ansi_for(settings_.border_color, false);
+    std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string HI = "\x1b[7m", R = "\x1b[0m";
+
+    frame << box_top("LISTENING HISTORY", W, border) << "\n";
+
+    // Tab strip, hand-built like the two overlays above (box_line() can't
+    // measure the reverse-video highlight before padding it).
+    {
+        std::string bar = border + settings_.box_vertical + R;
+        std::string p0 = " 1: HISTORY ", p1 = " 2: TOP TRACKS ", p2 = " 3: HABITS ";
+        std::string gap = "   ";
+        int inner = W - 4;
+        std::string plain_row = p0 + gap + p1 + gap + p2;
+        std::string seg0 = (history_tab_ == 0) ? (HI + p0 + R) : p0;
+        std::string seg1 = (history_tab_ == 1) ? (HI + p1 + R) : p1;
+        std::string seg2 = (history_tab_ == 2) ? (HI + p2 + R) : p2;
+        int pad_n = std::max(0, inner - display_width(plain_row));
+        frame << bar << " " << seg0 + gap + seg1 + gap + seg2 << std::string(pad_n, ' ') << " " << bar << "\n";
+    }
+
+    int fixed_rows = 3; // top border + tab strip + bottom border
+    frame << box_bottom(W, "", border_bottom) << "\n";
+
+    // Same two bounds build_meta_screen() sizes against: term_rows_ - 1 is
+    // what clamp_output_rows() keeps, target_height is what the other
+    // overlays use. 5 = the panel's own two border rows + the three footer rows.
+    int budget = std::min(target_height, term_rows_ - 1);
+    int panel_h = std::clamp(budget - fixed_rows - 5, 6, 22);
+    for (const auto& l : build_history_panel(W, panel_h)) frame << l << "\n";
+
+    // Footer: two legend rows + one status row, always exactly three, so a
+    // message appearing can never change the height of what sits above it.
+    const std::string hint =
+        "[\u2190\u2192/TAB] Tab | [1/2/3] Tab | [\u2191\u2193] Move | [r] Flip sort | [ESC] Exit";
+    std::vector<std::string> hint_lines(1);
+    size_t pos = 0;
+    for (;;) {
+        size_t sep = hint.find(" | ", pos);
+        std::string entry = (sep == std::string::npos) ? hint.substr(pos) : hint.substr(pos, sep - pos);
+        std::string& cur = hint_lines.back();
+        std::string joined = cur.empty() ? entry : cur + " | " + entry;
+        if (cur.empty() || display_width(joined) <= W || hint_lines.size() >= 2) cur = joined;
+        else hint_lines.push_back(entry);
+        if (sep == std::string::npos) break;
+        pos = sep + 3;
+    }
+    while (hint_lines.size() < 2) hint_lines.push_back(std::string());
+    for (const auto& l : hint_lines) {
+        if (l.empty()) frame << "\n";
+        else frame << "\x1b[90m" << truncate_str(l, W) << "\x1b[0m\n";
+    }
+    if (!history_status_.empty()) frame << "\x1b[32m" << truncate_str(history_status_, W) << "\x1b[0m\n";
+    else frame << "\n";
+}
+
+std::vector<std::string> App::build_history_panel(int total_width, int height) {
+    const int inner = std::max(20, total_width - 4);
+    const int body = std::max(1, height); // rows between box_top() and box_bottom()
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    const std::string R = "\x1b[0m";
+    std::vector<std::string> out;
+
+    static const char* kTabTitle[3] = {"HISTORY", "TOP TRACKS", "HABITS"};
+    std::string title = kTabTitle[history_tab_];
+    if (history_tab_ == 1)
+        title += history_most_first_ ? "  --  most played first" : "  --  least played first";
+    out.push_back(box_top(title, total_width, border_ansi));
+
+    // Column helpers. Both are only ever fed PLAIN text: display_width()
+    // counts escape bytes as columns, so a decorated string must be padded
+    // first and coloured after (same rule every other panel here follows).
+    auto L = [](const std::string& s, int n) { // right-align an ASCII value
+        if (static_cast<int>(s.size()) >= n) return s.substr(0, static_cast<size_t>(n));
+        return std::string(static_cast<size_t>(n - s.size()), ' ') + s;
+    };
+    auto T = [&](const std::string& s, int n) { // left-align, truncated at display width
+        std::string t = truncate_str(s, n);
+        const int fill = n - display_width(t);
+        return t + (fill > 0 ? std::string(static_cast<size_t>(fill), ' ') : std::string());
+    };
+    auto row = [&](const std::string& plain, const std::string& sgr) {
+        out.push_back(bar + " " + sgr + pad_right(truncate_str(plain, inner), inner) + R + " " + bar);
+    };
+    // A section header: only the title carries the colour, like every other
+    // header in the app -- a full-width bar would read as a selected row.
+    auto head = [&](const std::string& plain) {
+        std::string t = truncate_str(plain, inner);
+        out.push_back(bar + " " + header_sgr(settings_) + t + R +
+                      std::string(static_cast<size_t>(std::max(0, inner - display_width(t))), ' ') + " " + bar);
+    };
+    auto blank = [&]() { out.push_back(bar + " " + std::string(static_cast<size_t>(inner), ' ') + " " + bar); };
+
+    // text + style: 0 plain, 1 section header, 2 cursor row
+    std::vector<std::pair<std::string, int>> lines;
+    int cursor = -1; // index of the selected line, for the two list tabs
+
+    if (history_tab_ == 0) {
+        const auto& plays = history_.plays();
+        const int total = static_cast<int>(std::min<size_t>(100, plays.size()));
+        const int when_w = 11, len_w = 7, state_w = 5;
+        const int title_w = std::max(8, inner - when_w - 2 - len_w - 2 - state_w);
+        lines.push_back({T("WHEN", when_w) + "  " + T("TITLE", title_w) + L("LEN", len_w) + "  " + T("STATE", state_w), 1});
+        if (total == 0) {
+            lines.push_back({"nothing played yet -- plays show up here as soon as music runs", 0});
+        } else {
+            for (int i = 0; i < total; ++i) {
+                const HistoryPlay& p = plays[i];
+                std::string t = (p.artist.empty() || p.artist == "-") ? p.title
+                                                                     : p.artist + " - " + p.title;
+                if (t.empty() || t == "-") t = p.id;
+                const bool live = (i == 0 && history_.live());
+                lines.push_back({T(format_when(p.started_at), when_w) + "  " + T(t, title_w) +
+                                 L(format_mmss(p.len_sec), len_w) + "  " +
+                                 T(live ? "PLAY" : (p.finished ? "done" : "skip"), state_w),
+                                 0});
+            }
+            cursor = history_selected_ + 1; // +1 for the column header above the rows
+        }
+    } else if (history_tab_ == 1) {
+        const int len_w = 7, plays_w = 5;
+        const int title_w = std::max(8, inner - len_w - 2 - plays_w);
+        lines.push_back({T("TITLE", title_w) + L("LEN", len_w) + "  " + L("PLAYS", plays_w), 1});
+        if (history_top_view_.empty()) {
+            lines.push_back({"nothing played yet -- plays show up here as soon as music runs", 0});
+        } else {
+            for (int i = 0; i < static_cast<int>(history_top_view_.size()); ++i) {
+                const HistoryTopRow& r = history_top_view_[static_cast<size_t>(i)];
+                std::string t = r.title.empty() ? r.id : r.title;
+                lines.push_back({T(t, title_w) + L(format_mmss(r.len_sec), len_w) + "  " +
+                                 L(std::to_string(r.plays), plays_w), 0});
+            }
+            cursor = history_selected_ + 1; // +1 for the column header above the rows
+        }
+    } else {
+        // --- Habits: three categories, each under a highlighted header ---
+        const HistoryStats s = history_stats(history_.plays());
+        const int lbl_w = std::max(20, inner - 20);
+        auto num1 = [](double v) { char b[32]; std::snprintf(b, sizeof b, "%.1f", v); return std::string(b); };
+        auto pct = [](double v) { char b[32]; std::snprintf(b, sizeof b, "%.0f", v * 100.0); return std::string(b); };
+        auto cat = [&](const char* name) { lines.push_back({std::string(), 0}); lines.push_back({std::string(name), 1}); };
+        auto item = [&](const std::string& label, const std::string& value) {
+            lines.push_back({T(label, lbl_w) + value, 0});
+        };
+        cat("SESSIONS");
+        item("Sessions", std::to_string(s.sessions));
+        item("Average session length", format_len(s.avg_session_sec));
+        item("Tracks per session", num1(s.tracks_per_session));
+        cat("TIME PLAYED PER DAY");
+        item("Played today", format_len(s.today_sec));
+        item("Average day with music", format_len(s.avg_day_sec));
+        item("Days with music", std::to_string(s.days));
+        item("Total listened", format_len(s.total_sec));
+        cat("PLAY BEHAVIOUR");
+        item("Tracks played", std::to_string(s.plays));
+        item("Finished (played to the end)", std::to_string(s.finished));
+        item("Skipped", std::to_string(s.skipped));
+        item("Replays", std::to_string(s.replays));
+        item("Completion rate", pct(s.completion) + "%");
+        cursor = -1; // no cursor: this tab scrolls
+    }
+
+    // Window over the content: around the cursor on the two list tabs,
+    // from history_scroll_ on Habits (whose scroll offset is clamped here,
+    // where the real content height is finally known).
+    int start = 0;
+    if (cursor >= 0) {
+        start = std::clamp(cursor - (body - 1) / 2, 0, std::max(0, static_cast<int>(lines.size()) - body));
+    } else {
+        const int max_scroll = std::max(0, static_cast<int>(lines.size()) - body);
+        history_scroll_ = std::clamp(history_scroll_, 0, max_scroll);
+        start = std::min(history_scroll_, max_scroll);
+    }
+
+    int shown = 0;
+    for (int k = start; k < static_cast<int>(lines.size()) && shown < body; ++k, ++shown) {
+        const std::string& text = lines[static_cast<size_t>(k)].first;
+        const int style = lines[static_cast<size_t>(k)].second;
+        if (style == 1) head(text);
+        else if (style == 2 || k == cursor)
+            row(text, cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color));
+        else row(text, "");
+    }
+    while (shown < body) { blank(); ++shown; }
+
+    out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+    return out;
 }
 
 void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) const {
@@ -5517,6 +6336,35 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         if (ulen >= width) return s;
         std::string spaces(width - ulen, ' ');
         return left_align ? (s + spaces) : (spaces + s);
+    };
+
+    // --- in-place value editing (mode_ == Mode::ColorEdit) -----------------
+    // Width of the value field on the row currently being edited. The Colors
+    // and non-path rows keep their fixed 7/20 columns; a path row is 20
+    // columns minimum and grows with what has actually been typed, never
+    // past the panel's right edge -- it used to be painted at the full width
+    // all the time, so entering one drew a red bar to the far right even
+    // when it was still empty.
+    auto edit_field_width = [&]() -> int {
+        if (settings_tab_ == 0) return 7;
+        if (settings_tab_ == 1 && onoff_row_is_path(settings_row_)) {
+            const int edge = std::max(10, W - 36);
+            const int want = display_width(color_edit_buffer_) + 1;
+            return std::min(edge, std::max(20, want));
+        }
+        return 20;
+    };
+    // The painted value itself: selection reversed, window scrolled so the
+    // caret stays inside the field, then padded to the full field width.
+    // pad() cannot do this -- it measures with display_width(), which does
+    // not see through the ANSI codes paint_edit_field() emits, so the column
+    // count comes back with them included.
+    auto edit_paint = [&](int width) {
+        size_t c = std::min(edit_caret_, color_edit_buffer_.size());
+        size_t a = std::min(edit_anchor_, color_edit_buffer_.size());
+        EditPaint p = paint_edit_field(color_edit_buffer_, c, a, width, "\x1b[41;37m", false);
+        p.s += std::string(std::max(0, width - p.cols), ' ');
+        return p;
     };
 
     static const char* kTabNames[] = {"COLORS", "ON/OFF", "ANIMATION", "REFERENCE", "ABOUT APP"};
@@ -5570,7 +6418,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             {
                 bool sel = (i == settings_row_ && settings_col_ == 0 && mode_ != Mode::ColorEdit);
                 bool ed = (i == settings_row_ && settings_col_ == 0 && mode_ == Mode::ColorEdit);
-                std::string v = ed ? pad(color_edit_buffer_, 7) : pad(settings_get_value(i, 0), 7);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 7);
                 pos(y, 38, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
             }
 
@@ -5582,7 +6430,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 pos(y, 48, pad(l2n[i], 7, false)); pos(y, 56, ":");
                 bool sel = (i == settings_row_ && settings_col_ == 1 && mode_ != Mode::ColorEdit);
                 bool ed = (i == settings_row_ && settings_col_ == 1 && mode_ == Mode::ColorEdit);
-                std::string v = ed ? pad(color_edit_buffer_, 7) : pad(settings_get_value(i, 1), 7);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 1), 7);
                 pos(y, 59, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
             }
 
@@ -5657,9 +6505,14 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                     int val_w = std::max(10, W - 36);
                     std::string v;
                     if (ed) {
-                        v = color_edit_buffer_;
-                        if (display_width(v) > val_w) v = utf8_skip_take(v, display_width(v) - val_w, val_w);
-                        v = pad(v, val_w);
+                        // While editing the field is only as wide as what has
+                        // been typed (20 minimum, growing with the text, never
+                        // past the panel edge -- edit_field_width()), so an
+                        // empty "+ new path" line no longer draws a red bar all
+                        // the way to the right border. The window inside it
+                        // follows the caret, not the tail, so a selection
+                        // anywhere in a long path stays visible.
+                        v = edit_paint(edit_field_width()).s;
                     } else {
                         v = pad(truncate_str(settings_get_value(r.sel, 0), val_w), val_w);
                     }
@@ -5670,7 +6523,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                     if (sel) pos(y, 57, "\x1b[90m[ENTER] add a line\x1b[0m");
                 } else { // Toggle
                     pos(y, 6, pad(r.label, 25)); pos(y, 32, ":");
-                    std::string v = ed ? pad(color_edit_buffer_, 20) : pad(settings_get_value(r.sel, 0), 20);
+                    std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(r.sel, 0), 20);
                     pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                     if (sel && !settings_options_for(settings_tab_, r.sel).empty())
                         pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
@@ -5688,7 +6541,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
 
             bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
             bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
-            std::string v = ed ? pad(color_edit_buffer_, 20) : pad(settings_get_value(i, 0), 20);
+            std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
             pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
 
             if (sel && !settings_options_for(settings_tab_, i).empty()) pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
@@ -5697,7 +6550,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     } else if (settings_tab_ == 3) {
         // Reference tab: the rebindable hotkeys grouped under category
         // headers (kRefRows), then a read-only "HARDCODED / NOT
-        // REBINDABLE" section (kRefHardcoded), then a read-only display
+        // REBINDABLE" section (kRefHardcoded), then the editable LOUDNESS
+        // NORMALIZATION rows (kNormLabels), then a read-only display
         // of the font-mapping table (section 4 of the config, "A={A,a}"
         // style) loaded from config.txt -- as "A = A, a" rows. Combined
         // they're usually taller than the player view, so this scrolls as
@@ -5706,7 +6560,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         // how a selectable row maps to the row it's drawn on.
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-        int total_selectable = kRefRowCount + kRefHardcodedCount + static_cast<int>(letters.size());
+        int total_selectable = kRefRowCount + kRefHardcodedCount + kNormRowCount + static_cast<int>(letters.size());
         int display_count = ref_display_row(total_selectable - 1) + 1;
         int visible = std::max(1, MAX_Y - 3);
         int cur_display = ref_display_row(settings_row_);
@@ -5741,7 +6595,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 pos(y, 6, pad(kRefRows[i].label, 25)); pos(y, 32, ":");
                 bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
                 bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
-                std::string v = ed ? pad(color_edit_buffer_, 20) : pad(settings_get_value(i, 0), 20);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
                 pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                 y++;
             }
@@ -5769,6 +6623,24 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 disp++;
             }
         };
+        auto draw_norm_row = [&](int i) {
+            // LOUDNESS NORMALIZATION: same shape as a hotkey row, but the
+            // value is editable -- a bool for the first row, a formatted
+            // number for the other two -- with the "< <-> >" hint wherever
+            // Left/Right has a list to walk (settings_options_for()).
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, pad(kNormLabels[i - kNormStart], kRefLabelW)); pos(y, 32, ":");
+                bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
+                bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
+                pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                if (sel && !settings_options_for(settings_tab_, i).empty())
+                    pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
+                y++;
+            }
+            disp++;
+        };
         auto draw_font_row = [&](char c, int selectable_row) {
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
@@ -5787,9 +6659,11 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         }
         if (y < MAX_Y) draw_header("HARDCODED / NOT REBINDABLE");
         for (int i = 0; i < kRefHardcodedCount && y < MAX_Y; ++i) draw_hardcoded_row(i, kRefRowCount + i);
+        if (y < MAX_Y) draw_header("LOUDNESS NORMALIZATION");
+        for (int i = kNormStart; i < kNormEnd && y < MAX_Y; ++i) draw_norm_row(i);
         if (y < MAX_Y) draw_header("FONT / CHARACTER MAP");
         for (size_t li = 0; li < letters.size() && y < MAX_Y; ++li)
-            draw_font_row(letters[li], kRefRowCount + kRefHardcodedCount + static_cast<int>(li));
+            draw_font_row(letters[li], kNormEnd + static_cast<int>(li));
     } else if (settings_tab_ == 4) {
         // About App: shows settings_.about_app_lines (loaded verbatim
         // from config.txt's trailing ClassTextAboutApp={...}; block, not
@@ -5831,13 +6705,21 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
 
     // 4. In-place text editing cursor placement.
     if (mode_ == Mode::ColorEdit) {
+        // The caret column comes from the same window the renderer painted
+        // (edit_field_width() + paint_edit_field()), so it cannot disagree
+        // with what is on screen: byte length could -- a multi-byte
+        // character is one column but many bytes, and a path longer than the
+        // field is scrolled to the caret rather than showing its tail.
+        const size_t ec = std::min(edit_caret_, color_edit_buffer_.size());
+        const size_t ea = std::min(edit_anchor_, color_edit_buffer_.size());
+        const int caret_col = paint_edit_field(color_edit_buffer_, ec, ea, edit_field_width(), "", false).caret;
         if (settings_tab_ == 0) {
             int cy = 3 + settings_row_ + (settings_row_ >= 5 ? 1 : 0);
-            int cx = (settings_col_ == 0) ? 38 : 59;
-            frame << "\x1b[" << cy << ";" << (cx + static_cast<int>(color_edit_buffer_.size())) << "H\x1b[?25h";
+            int cx = ((settings_col_ == 0) ? 38 : 59) + caret_col;
+            frame << "\x1b[" << cy << ";" << cx << "H\x1b[?25h";
         } else {
             int cy = 3 + settings_row_;
-            int cx = 35 + static_cast<int>(color_edit_buffer_.size());
+            int cx = 35 + caret_col;
             if (settings_tab_ == 1) {
                 // The ON/OFF tab scrolls and its section headers aren't
                 // 1:1 with settings_row_, so 3 + row would put the cursor
@@ -5845,10 +6727,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 // path lists push it down. Recompute the exact scroll the
                 // renderer used -- same build_onoff_rows()/onoff_display_row()
                 // pair -- and place the cursor on the line that row was
-                // actually painted on. A path value is also wider than the
-                // fixed 20-column field, and the field itself is clamped to
-                // the panel width while editing, so keep the cursor at the
-                // end of what is really on screen.
+                // actually painted on. cx already accounts for a path row's
+                // caret-anchored window above.
                 int visible = std::max(1, MAX_Y - 3);
                 int display_count = 0;
                 for (const OnOffRow& r : build_onoff_rows())
@@ -5856,27 +6736,23 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 int cur_display = std::max(0, onoff_display_row(settings_row_));
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);
-                if (onoff_row_is_path(settings_row_)) {
-                    int val_w = std::max(10, W - 36);
-                    cx = 35 + std::min(display_width(color_edit_buffer_), val_w);
-                }
             } else if (settings_tab_ == 3) {
                 // Reference tab scrolls once its row list exceeds the
                 // visible window -- the common case, since it holds every
-                // rebindable hotkey plus the hardcoded-keys section and
-                // any font-map rows. Recompute the same scroll offset
-                // used when rendering (see the settings_tab_==3 branch
-                // above, and ref_display_row()) so the text cursor lands
-                // on the row actually drawn there instead of one that's
-                // already scrolled off-screen. Only ever reached with
-                // settings_row_ < kRefRowCount: the Enter handler blocks
-                // entering ColorEdit for the read-only hardcoded/font-map
-                // rows below that.
+                // rebindable hotkey plus the hardcoded-keys section, the
+                // loudness-normalization rows and any font-map rows.
+                // Recompute the same scroll offset used when rendering (see
+                // the settings_tab_==3 branch above, and ref_display_row())
+                // so the text cursor lands on the row actually drawn there
+                // instead of one that's already scrolled off-screen. Reached
+                // only for the rebindable hotkeys and the loudness rows --
+                // the Enter handler blocks ColorEdit for the read-only
+                // hardcoded/font-map rows.
                 int visible = std::max(1, MAX_Y - 3);
                 int cur_display = ref_display_row(settings_row_);
                 std::vector<char> letters;
                 for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-                int total_selectable = kRefRowCount + kRefHardcodedCount + static_cast<int>(letters.size());
+                int total_selectable = kRefRowCount + kRefHardcodedCount + kNormRowCount + static_cast<int>(letters.size());
                 int display_count = ref_display_row(total_selectable - 1) + 1;
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);
@@ -5976,6 +6852,11 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#SHIFT+B", "Fetch metadata for the hovered title (AcoustID)"},
         {nullptr, "#CTRL+SHIFT+S", "Apply the meta editor's pending edits to the files"},
         {nullptr, "#CTRL+SHIFT+D", "Discard the meta editor's pending edits"},
+        // --- Listening history ---
+        {"HISTORY", "HKeyHistory", "Listening history: last plays, top tracks, habits"},
+        {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
+        {nullptr, "#ARROWS", "History overlay: move the cursor / scroll Habits"},
+        {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
         // --- Downloads ---
         {"DOWNLOADS", "HKeyDownloadStream", "Download stream to 1st local path"},
         // --- System ---
@@ -6441,6 +7322,7 @@ std::string App::render_frame(TerminalIO& term) {
             case Mode::Cheatsheet: return 3;
             case Mode::Playlist: return 4;
             case Mode::MetaEdit: return 5;
+            case Mode::History: return 6;
         }
         return 0;
     };
@@ -6509,6 +7391,13 @@ std::string App::render_frame(TerminalIO& term) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_meta_screen(frame, W, overlay_budget(W));
+        return clamp_output_rows(frame.str(), term_rows_);
+    }
+
+    if (mode_ == Mode::History) {
+        std::ostringstream frame;
+        frame << "\x1b[2J\x1b[H\x1b[?25l";
+        build_history_screen(frame, W, overlay_budget(W));
         return clamp_output_rows(frame.str(), term_rows_);
     }
 
@@ -6755,6 +7644,18 @@ int App::run() {
         // has a complete, valid buffer. This never blocks waiting for
         // more input: poll_key() is non-blocking and returns 0 the
         // moment nothing already-received is left to hand back.
+        // A single-line text field is being edited right now: hand Ctrl+C /
+        // Ctrl+X / Ctrl+V to the app as keystrokes instead of letting the
+        // console treat Ctrl+C as "kill this process" (Windows, where the
+        // ENABLE_PROCESSED_INPUT bit is what does that) or swallow it via
+        // ISIG (POSIX). Re-derived every frame rather than toggled on mode
+        // entry/exit: mode_ can change in ways that skip a hand-off (ESC out
+        // of an edit, a prompt), and leaving the flag stuck would mean
+        // Ctrl+C no longer quits the app. Same key set both platforms, see
+        // win_poll_key()/poll_key() for how it arrives as kKeyCtrlC/X/V.
+        set_text_entry(mode_ == Mode::ColorEdit ||
+                       (mode_ == Mode::MetaEdit && meta_tab_ == 0 && meta_focus_ == 2));
+
         for (int key = term.poll_key(); key != 0; key = term.poll_key()) {
             handle_key(key);
         }
@@ -6782,8 +7683,17 @@ int App::run() {
         // Disk only spins while something is actually playing — frozen
         // when idle or paused, per instruction.
         if (has_track_ && !player_.is_paused()) {
-            angle_ = std::fmod(angle_ + kAngularVelocity * settings_.disk_rotation_speed * dt,
+            angle_ = std::fmod(angle_ + kAngularVelocity *settings_.disk_rotation_speed * dt,
                                2.0 * 3.14159265358979323846);
+        }
+        // Listening history: accrue what was actually heard this frame.
+        // Paused time never counts (that's the is_paused() check), and neither
+        // does the handover gap between two tracks -- there advancing_ is set
+        // or a device handoff is in flight while nothing is really sounding.
+        // No-op when no play is live, so it can be called unconditionally.
+        if (has_track_ && !player_.is_paused() && !advancing_ &&
+            device_play_pending_gen_.load() == 0) {
+            history_.add_listened(dt);
         }
 
         std::string frame_str = render_frame(term);
@@ -6797,6 +7707,13 @@ int App::run() {
         // battery concern.
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
     }
+
+    // One play may still be open: quitting mid-track is not "heard to the
+    // end", so it closes as a skip (history_end_current_play() reads
+    // player_.finished(), which stop_device_worker() below would clear) and
+    // the file gets its final write for this session.
+    history_end_current_play();
+    history_.save();
 
     // Tell the worker to stop taking new requests before touching player_
     // directly here -- if it's mid-play() this waits (briefly) on

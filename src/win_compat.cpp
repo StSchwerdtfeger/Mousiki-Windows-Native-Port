@@ -184,6 +184,10 @@ struct ConsoleState {
 ConsoleState g_con;
 std::atomic<bool> g_initialized{false};
 std::atomic<bool> g_restored{false};
+// Text-entry mode: while true, Ctrl+C is delivered to win_poll_key() as a
+// keystroke instead of raising CTRL_C_EVENT (see win_set_text_entry()).
+// Written only from the main thread, re-read on every win_raw_mode_enter().
+bool g_text_entry = false;
 Utf8ConsoleStreambuf* g_cout_buf = nullptr;
 std::streambuf* g_cout_orig_buf = nullptr;
 
@@ -307,8 +311,22 @@ void win_raw_mode_enter() {
     // that's the only thing that actually has to change here.
     DWORD mode = g_con.orig_in_mode;
     mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
-    mode |=  ENABLE_PROCESSED_INPUT;   // keep Ctrl+C working, as ISIG does on POSIX
+    if (g_text_entry) {
+        // Text field open: hand Ctrl+C to win_poll_key() as a key event
+        // (copy) instead of letting the system raise CTRL_C_EVENT (quit).
+        // ENABLE_ECHO_INPUT/LINE_INPUT stay off exactly as above, so this
+        // changes nothing except who sees Ctrl+C.
+        mode &= ~ENABLE_PROCESSED_INPUT;
+    } else {
+        mode |= ENABLE_PROCESSED_INPUT;   // keep Ctrl+C working, as ISIG does on POSIX
+    }
     SetConsoleMode(g_con.in, mode);
+}
+
+void win_set_text_entry(bool on) {
+    if (g_text_entry == on) return;
+    g_text_entry = on;
+    win_raw_mode_enter(); // apply now; every later poll re-derives it from the flag
 }
 
 void win_raw_mode_exit() {
@@ -380,12 +398,23 @@ int win_poll_key() {
     // ESC-[-X decoder and the old _getch()-based path both used, so
     // nothing downstream of this function (app.cpp's key handling) has to
     // know or care which platform it's running on.
+    // SHIFT+Left/Right are a different key for a text field (extend the
+    // selection) than a bare Left/Right (move the caret, or in this app's
+    // menus, switch tabs) -- the modifier bit is only visible here on the
+    // event itself, so it has to be split out at the source. Left/Right
+    // with SHIFT keep the sentinel values documented in terminal_ui.h;
+    // Up/Down are unaffected (nothing in the UI marks with them) and keep
+    // collapsing to 'A'/'B' either way.
+    const bool shifted = (k.dwControlKeyState & SHIFT_PRESSED) != 0;
     switch (k.wVirtualKeyCode) {
         case VK_UP:    g_last_key_was_arrow = true;  return 'A';
         case VK_DOWN:  g_last_key_was_arrow = true;  return 'B';
-        case VK_RIGHT: g_last_key_was_arrow = true;  return 'C';
-        case VK_LEFT:  g_last_key_was_arrow = true;  return 'D';
+        case VK_RIGHT: if (shifted) { g_last_key_was_arrow = false; return kKeyShiftRight; }
+                       g_last_key_was_arrow = true; return 'C';
+        case VK_LEFT:  if (shifted) { g_last_key_was_arrow = false; return kKeyShiftLeft; }
+                       g_last_key_was_arrow = true; return 'D';
         case VK_HOME:  g_last_key_was_arrow = false; return kKeyHome;
+        case VK_END:   g_last_key_was_arrow = false; return kKeyEnd;
         case VK_DELETE: g_last_key_was_arrow = false; return kKeyDelete;
         default: break;
     }
@@ -402,6 +431,30 @@ int win_poll_key() {
         if (ctrl && (st & SHIFT_PRESSED) != 0) {
             if (k.wVirtualKeyCode == 'S') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
             if (k.wVirtualKeyCode == 'D') { g_last_key_was_arrow = false; return kKeyCtrlShiftD; }
+        }
+    }
+
+    // Ctrl+C / Ctrl+X / Ctrl+V -- the clipboard keys of the single-line text
+    // fields. Identified by the CONTROL CHARACTER rather than by the
+    // virtual-key code alone, because with Ctrl held the character already
+    // *is* the control code (C -> 0x03, X -> 0x18, V -> 0x16) while a plain
+    // AltGr+letter on a European layout also reports the Ctrl bit -- and
+    // AltGr+C must stay the letter the user typed. Both guards are applied:
+    // the exact control code, and "no Alt held".
+    //
+    // Ctrl+C only ever gets here while text-entry mode is on (see
+    // win_set_text_entry()): with ENABLE_PROCESSED_INPUT set the console
+    // raises CTRL_C_EVENT instead of queueing a key event, so outside a text
+    // field it still means "quit", exactly as before.
+    {
+        DWORD st = k.dwControlKeyState;
+        bool ctrl = (st & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+        bool alt = (st & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+        if (ctrl && !alt && (st & SHIFT_PRESSED) == 0) {
+            wchar_t wc_ctrl = k.uChar.UnicodeChar;
+            if (k.wVirtualKeyCode == 'C' && (wc_ctrl == 0x03 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlC; }
+            if (k.wVirtualKeyCode == 'X' && (wc_ctrl == 0x18 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlX; }
+            if (k.wVirtualKeyCode == 'V' && (wc_ctrl == 0x16 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlV; }
         }
     }
 
@@ -698,6 +751,55 @@ int win_codepoint_width(uint32_t cp) {
     if (in_ranges(cp, kZeroWidth, std::size(kZeroWidth))) return 0;
     if (in_ranges(cp, kWide, std::size(kWide))) return 2;
     return 1;
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard -- CF_UNICODETEXT, never CP_ACP.
+//
+// Every value this UI lets you select (a path, an artist/title, a hotkey
+// string) is UTF-8 in memory, so both directions convert through UTF-16
+// directly: reading a copied German umlaut or a CJK title through CP_ACP
+// would hand the editor a mangled byte string, and writing one back would
+// mangle it on the way out.
+// ---------------------------------------------------------------------------
+
+std::string win_clipboard_get() {
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) return std::string();
+    if (!OpenClipboard(nullptr)) return std::string();
+    std::string out;
+    HANDLE h = GetClipboardData(CF_UNICODETEXT);
+    if (h != nullptr) {
+        const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h));
+        if (p != nullptr) {
+            out = win_path_to_utf8(std::wstring(p));
+            GlobalUnlock(h);
+        }
+    }
+    CloseClipboard();
+    return out;
+}
+
+void win_clipboard_set(const std::string& utf8) {
+    if (!OpenClipboard(nullptr)) return;
+    EmptyClipboard();
+    std::wstring wide = win_utf8_to_wide(utf8);
+    // CF_UNICODETEXT wants a double-NUL-terminated block; the extra NUL is
+    // part of the allocation size, not just the terminator after the text.
+    SIZE_T bytes = (wide.size() + 2) * sizeof(wchar_t);
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (mem == nullptr) { CloseClipboard(); return; }
+    wchar_t* dst = static_cast<wchar_t*>(GlobalLock(mem));
+    if (dst == nullptr) {
+        GlobalFree(mem);
+        CloseClipboard();
+        return;
+    }
+    if (!wide.empty()) memcpy(dst, wide.data(), wide.size() * sizeof(wchar_t));
+    dst[wide.size()] = L'\0';
+    dst[wide.size() + 1] = L'\0';
+    GlobalUnlock(mem);
+    if (SetClipboardData(CF_UNICODETEXT, mem) == nullptr) GlobalFree(mem); // on success the system owns it
+    CloseClipboard();
 }
 
 } // namespace muisc

@@ -18,6 +18,10 @@ namespace muisc {
 
 #if !defined(_WIN32)
 static struct termios g_orig_termios;
+// Text-entry mode (see set_text_entry()): while true, ISIG stays cleared so
+// Ctrl+C reaches poll_key() as a keystroke instead of a SIGINT.
+static bool g_text_entry = false;
+static std::string g_clipboard; // no portable system clipboard on POSIX
 #endif
 
 TerminalIO::TerminalIO() {
@@ -94,6 +98,11 @@ void TerminalIO::reassert_raw_mode() {
 #else
     struct termios raw = g_orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
+    // Text-entry mode: keep SIGINT off the keyboard so Ctrl+C reaches the
+    // editor as a key (copy) rather than as a signal (quit). Re-derived here
+    // rather than applied once, because this runs on every poll.
+    if (g_text_entry) raw.c_lflag &= ~ISIG;
+    else raw.c_lflag |= ISIG;
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
@@ -107,6 +116,39 @@ void TerminalIO::reassert_raw_mode() {
 static bool g_last_key_was_arrow = false;
 
 bool last_key_was_arrow() { return g_last_key_was_arrow; }
+
+// ---------------------------------------------------------------------------
+// Text-entry mode + clipboard (see terminal_ui.h)
+//
+// The flag is what survives the per-poll reassert below: every call to
+// poll_key() re-applies raw mode, so toggling ISIG/ENABLE_PROCESSED_INPUT
+// once and walking away would silently undo itself on the very next key.
+// Both platforms therefore keep the requested state and re-derive the
+// console's mode from it every time.
+// ---------------------------------------------------------------------------
+void set_text_entry(bool on) {
+#if defined(_WIN32)
+    win_set_text_entry(on);
+#else
+    g_text_entry = on;
+#endif
+}
+
+std::string clipboard_get() {
+#if defined(_WIN32)
+    return win_clipboard_get();
+#else
+    return g_clipboard;
+#endif
+}
+
+void clipboard_set(const std::string& utf8) {
+#if defined(_WIN32)
+    win_clipboard_set(utf8);
+#else
+    g_clipboard = utf8;
+#endif
+}
 
 int TerminalIO::poll_key() {
     reassert_raw_mode();
@@ -129,6 +171,7 @@ int TerminalIO::poll_key() {
                 case 'C': g_last_key_was_arrow = true; return 'C';
                 case 'D': g_last_key_was_arrow = true; return 'D';
                 case 'H': g_last_key_was_arrow = false; return kKeyHome; // most xterm-likes send ESC [ H for Home
+                case 'F': g_last_key_was_arrow = false; return kKeyEnd;  // ...and ESC [ F for End
                 case '3': { // ESC [ 3 ~ -- Delete key
                     unsigned char tail = 0;
                     if (read(STDIN_FILENO, &tail, 1) == 1 && tail == '~') { g_last_key_was_arrow = false; return kKeyDelete; }
@@ -165,11 +208,37 @@ int TerminalIO::poll_key() {
                     if (code == 'S' || code == 's') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
                     if (code == 'D' || code == 'd') { g_last_key_was_arrow = false; return kKeyCtrlShiftD; }
                 }
+                // "1;<mod> A" -- an arrow (or Home/End) pressed WITH a
+                // modifier, which is how xterm-style terminals report
+                // Shift+Left/Right: "ESC [ 1 ; 2 D". mod is
+                // 1 + shift*1 + alt*2 + ctrl*4, so the shift bit is bit 0
+                // of (mod - 1). Only the shift variants are consumed here;
+                // every other modified arrow keeps today's behaviour of
+                // falling through as a plain Escape rather than starting to
+                // navigate on Ctrl/Alt+Arrow.
+                if (tail == 'A' || tail == 'B' || tail == 'C' || tail == 'D' ||
+                    tail == 'H' || tail == 'F') {
+                    int csi = 0, m = 1;
+                    if (std::sscanf(body.c_str(), "%d;%d", &csi, &m) == 2 && m >= 1) {
+                        bool shift = (((m - 1) & 1) != 0);
+                        if (shift && tail == 'D') { g_last_key_was_arrow = false; return kKeyShiftLeft; }
+                        if (shift && tail == 'C') { g_last_key_was_arrow = false; return kKeyShiftRight; }
+                        if (shift && tail == 'H') { g_last_key_was_arrow = false; return kKeyHome; }
+                        if (shift && tail == 'F') { g_last_key_was_arrow = false; return kKeyEnd; }
+                    }
+                }
             }
         }
         g_last_key_was_arrow = false;
         return 27;
     }
+    // Ctrl+C / Ctrl+X / Ctrl+V arrive as control bytes in raw mode. Ctrl+C
+    // only ever gets here while text-entry mode has ISIG cleared (otherwise
+    // the terminal itself turns it into SIGINT before we see a byte) --
+    // see set_text_entry().
+    if (c == 0x03) { g_last_key_was_arrow = false; return kKeyCtrlC; }
+    if (c == 0x18) { g_last_key_was_arrow = false; return kKeyCtrlX; }
+    if (c == 0x16) { g_last_key_was_arrow = false; return kKeyCtrlV; }
     g_last_key_was_arrow = false;
     return c;
 #endif

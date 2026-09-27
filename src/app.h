@@ -12,6 +12,7 @@
 
 #include "disk_art.h"
 #include "fft_visualizer.h"
+#include "history.h"
 #include "local_source.h"
 #include "lyrics_fetcher.h"
 #include "meta_editor.h"
@@ -31,7 +32,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History };
 enum class ListSource { Local, Online, Playlist };
 
 struct QueueItem {
@@ -284,6 +285,35 @@ private:
     std::vector<std::string> build_meta_library_panel(int width, int height) const;
     std::vector<std::string> build_meta_fields_panel(int width, int height) const;
     std::vector<std::string> build_meta_fetch_panel(int width, int height) const;
+
+    // --- listening history overlay (Mode::History, HKeyHistory = Shift+H) ---
+    // Three tabs in the shape of the two overlays above: 1 HISTORY (the last
+    // 100 plays, newest first), 2 TOP TRACKS (per title, sorted by play count
+    // -- 'r' flips between most- and least-played first), 3 HABITS (session
+    // and play-behaviour aggregates, each category under a header_sgr()
+    // header). The data itself lives in HistoryStore history_ (appended to on
+    // the main thread only, persisted to ~/.cache/mousiki/history/history.json
+    // after every finished track and again at shutdown).
+    int history_tab_ = 0;              // 0=History, 1=Top Tracks, 2=Habits
+    int history_selected_ = 0;         // cursor within tabs 0/1
+    int history_scroll_ = 0;           // manual scroll offset (tab 2's content)
+    bool history_most_first_ = true;   // 'r' on the Top Tracks tab
+    std::vector<HistoryTopRow> history_top_view_; // rebuilt by history_refresh_top()
+    std::string history_status_;       // footer status line, set by 'r'
+    HistoryStore history_;             // the store itself (also used outside this overlay)
+
+    void history_open();               // HKeyHistory entry point
+    void history_refresh_top();        // rebuilds history_top_view_ from history_
+    void handle_history_key(int key);
+    // Both non-const: they clamp history_selected_/history_scroll_ against the
+    // content they actually ended up drawing (see the window code at the end
+    // of build_history_panel()).
+    void build_history_screen(std::ostringstream& frame, int W, int player_h);
+    std::vector<std::string> build_history_panel(int width, int height);
+    // Play bookkeeping: called from poll_pending_load()/advance_track() when a
+    // track starts or is handed over, and from the frame loop to accrue time.
+    void history_end_current_play();   // closes the live record (no-op if none) + saves
+    void history_begin_current_play(); // opens one for current_path_/metadata_
 
     // --- now playing ---
     bool has_track_ = false;
@@ -600,6 +630,24 @@ private:
     int settings_row_ = 0;   // resets to 0 on every tab switch
     int settings_col_ = 0;   // 0 or 1 -- only the Colors tab has 2-cell rows
     std::string color_edit_buffer_;      // live text while mode_==ColorEdit
+
+    // --- caret / selection for the single-line text fields ----------------
+    // Two BYTE offsets into whichever field is being edited right now:
+    // edit_caret_ is where the next typed byte lands, edit_anchor_ is the
+    // other end of the selection (equal to the caret when there is none, so
+    // `caret != anchor` IS the selection test). Byte offsets, but every
+    // movement is quantised to UTF-8 codepoint boundaries (see le_*() in
+    // app.cpp), so a multi-byte character is never split in half.
+    //
+    // The pair is shared by the two editors that are never active at the
+    // same time: Mode::ColorEdit's buffer (caret reset to the end when
+    // editing starts) and the meta editor's field editor. The meta one is
+    // additionally tagged with edit_owner_ -- the path+field the offsets were
+    // last clamped against -- so switching files or rows retargets the caret
+    // instead of leaving it pointing into a different string.
+    size_t edit_caret_ = 0;
+    size_t edit_anchor_ = 0;
+    std::string edit_owner_;
     // Returns the current value of (tab, row, col) as plain text, for
     // display and as the starting buffer when editing.
     // Returns a pointer to the color field for (row, col) on the Colors

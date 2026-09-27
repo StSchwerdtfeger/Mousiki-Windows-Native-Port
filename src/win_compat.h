@@ -78,6 +78,22 @@ int win_poll_key();
 // see last_key_was_arrow() in terminal_ui.h for the platform-neutral view.
 bool win_last_key_was_arrow();
 
+// Text-entry mode. While `on`, ENABLE_PROCESSED_INPUT is cleared from the
+// input handle, which is the one console setting that decides whether Ctrl+C
+// is swallowed by the system (CTRL_C_EVENT -> the ctrl_handler above, i.e.
+// "quit") or handed to win_poll_key() as an ordinary key event. A text field
+// needs the latter so Ctrl+C can mean "copy"; everywhere else it stays off so
+// Ctrl+C keeps meaning "quit", exactly as it always has. win_raw_mode_enter()
+// re-derives the mode from this flag on every poll, so the state survives the
+// per-frame raw-mode reassert.
+void win_set_text_entry(bool on);
+
+// The Windows clipboard as UTF-8 (CF_UNICODETEXT -- never CP_ACP, which would
+// mangle exactly the paths/titles this UI is full of). get() returns "" when
+// the clipboard holds no text or cannot be opened.
+std::string win_clipboard_get();
+void win_clipboard_set(const std::string& utf8);
+
 int win_term_rows();
 int win_term_cols();
 
