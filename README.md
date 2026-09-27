@@ -169,7 +169,7 @@ for the playlist and meta data editor menu can be viewed within the app settings
 | **Filename / Meta Data** | `SHIFT + n` | Toggle to show meta data only in lists |
 | **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
 | **Volume** | `1` / `2` | Decrease / Increase in-app volume |
-| **Stereo** | `v` | Toggle Stereo/Mono mode |
+| **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab |
 | **Change Play-/Cyclemode** | `m` | Toggle Playmode (shuffle, stop, repeat queue, loop, list) |
 | **Toggle Lyrics** | `+` | Turn Lyrics on/off |
 
