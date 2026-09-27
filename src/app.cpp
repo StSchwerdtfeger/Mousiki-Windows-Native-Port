@@ -1008,6 +1008,40 @@ std::string App::list_row_title(const fs::path& path, const std::string& filenam
     return filename_title;
 }
 
+std::string App::playlist_row_label(const fs::path& path, const std::string& filename_title) const {
+    std::lock_guard<std::mutex> lk(row_meta_mutex_);
+    auto it = row_meta_cache_.find(path_utf8(path));
+    if (it != row_meta_cache_.end() && !it->second.title.empty() && it->second.title != filename_title) {
+        return filename_title + "  \u2014 " + it->second.title; // em dash separator
+    }
+    return filename_title;
+}
+
+std::string App::marquee_or_truncate(const std::string& text, int width, int row_idx,
+                                      int& tracked_idx, std::chrono::steady_clock::time_point& since) const {
+    if (row_idx != tracked_idx) {
+        tracked_idx = row_idx;
+        since = std::chrono::steady_clock::now();
+    }
+    if (display_width(text) <= width) return pad_right(truncate_str(text, width), width);
+
+    const double hold_secs = 1.2;    // pause on the title's start before scrolling
+    const double cols_per_sec = 4.0; // scroll speed
+    const std::string gap = "    ";  // seam between one loop and the next
+    std::string loop_text = text + gap;
+    int period = display_width(loop_text);
+    double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - since).count();
+    int start_col = 0;
+    if (elapsed > hold_secs && period > 0) {
+        double scrolled = (elapsed - hold_secs) * cols_per_sec;
+        start_col = static_cast<int>(scrolled) % period;
+    }
+    // Three repeats guarantee a full-width window is always available no
+    // matter where start_col lands in the cycle.
+    std::string doubled = loop_text + loop_text + loop_text;
+    return pad_right(utf8_skip_take(doubled, start_col, width), width);
+}
+
 std::vector<LocalTrack> App::filter_and_rank_local(const std::string& query) const {
     if (query.empty()) {
         auto result = all_local_tracks_;
@@ -2192,7 +2226,7 @@ static const RefHardcodedRow kRefHardcoded[] = {
     {"HOME", "Save Playlist"}, // playlist editor's save-and-exit, checked as a raw key like the rows above
     {"SHIFT+B", "Fetch Metadata For Hovering Title"}, // Meta editor (also in Browse); can't be a hotkey -- see handle_key()
     {"CTRL+SHIFT+S", "Apply Meta Edit Session To Files"},
-    {"CTRL+SHIFT+D", "Discard Meta Edit Session"},
+    {"CTRL+SHIFT+X", "Discard Meta Edit Session"},
 };
 static constexpr int kRefHardcodedCount = sizeof(kRefHardcoded) / sizeof(kRefHardcoded[0]);
 
@@ -2934,7 +2968,15 @@ void App::handle_settings_key(int key) {
 void App::start_local_track(const LocalTrack& track) {
     if (load_in_progress_.load()) { status_line_ = "still loading the previous track ..."; return; }
     fs::path parent = track.path.parent_path().filename();
-    launch_load_async(track.path, track.title, track.folder_artist == "-" ? "" : track.folder_artist,
+    // folder_artist is only a cheap guess for the browse-list Artist column
+    // (see LocalTrack's comment in local_source.h) -- it's the same string
+    // as the Location field below (both are just the parent folder name),
+    // so feeding it in here as the fallback artist made an untagged file's
+    // metadata panel show the folder path twice, once as "Artist" and once
+    // as "Location". Pass "" instead: probe_metadata() already falls back
+    // to "-" when there's no real artist tag, same as start_online_track
+    // does for YouTube tracks below.
+    launch_load_async(track.path, track.title, "",
                        path_utf8(parent) + "/", /*is_local=*/true, /*video_id=*/"");
 }
 
@@ -4309,17 +4351,6 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
     std::string border_ansi = ansi_for(settings_.border_color, false);
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
 
-    // Whenever the hovered row changes, restart the marquee clock -- this
-    // runs unconditionally (not just when the new row's title overflows)
-    // so that hovering away and back to a long title always begins its
-    // scroll from the start again, rather than resuming mid-scroll from
-    // whatever an earlier visit had reached. Only meaningful for the
-    // local list's title column (see below), so only tracked there.
-    if (list_source_ == ListSource::Local && selected_ != marquee_row_idx_) {
-        marquee_row_idx_ = selected_;
-        marquee_since_ = std::chrono::steady_clock::now();
-    }
-
     std::vector<std::string> out;
     out.push_back(box_top(label, total_width, border_ansi));
 
@@ -4365,7 +4396,17 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                     auto it = row_meta_cache_.find(path_utf8(t.path));
                     if (it != row_meta_cache_.end()) {
                         dur = it->second.duration_sec;
-                        if (!it->second.artist.empty()) artist = it->second.artist;
+                        if (!it->second.artist.empty()) {
+                            artist = it->second.artist;
+                        } else if (it->second.tags_resolved) {
+                            // A real probe already ran and confirmed this file
+                            // has no artist tag -- same distinction the
+                            // metadata panel now makes (see start_local_track).
+                            // Without this, an untagged file kept showing the
+                            // folder-name guess forever instead of "-", which
+                            // just relocated the original bug into this list.
+                            artist = "-";
+                        }
                     }
                 }
                 std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
@@ -4377,27 +4418,9 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                 // is actually too long to fit -- every other row still
                 // gets the same static truncate_str() as before, so
                 // nothing about the rest of the list changes.
-                std::string title_shown;
-                if (idx == selected_ && display_width(t_title) > title_w) {
-                    const double hold_secs = 1.2;    // pause on the title's start before scrolling
-                    const double cols_per_sec = 4.0; // scroll speed
-                    const std::string gap = "    ";  // seam between one loop and the next
-                    std::string loop_text = t_title + gap;
-                    int period = display_width(loop_text);
-                    double elapsed = std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - marquee_since_).count();
-                    int start_col = 0;
-                    if (elapsed > hold_secs && period > 0) {
-                        double scrolled = (elapsed - hold_secs) * cols_per_sec;
-                        start_col = static_cast<int>(scrolled) % period;
-                    }
-                    // Three repeats guarantee a full-width window is always
-                    // available no matter where start_col lands in the cycle.
-                    std::string doubled = loop_text + loop_text + loop_text;
-                    title_shown = pad_right(utf8_skip_take(doubled, start_col, title_w), title_w);
-                } else {
-                    title_shown = truncate_str(t_title, title_w);
-                }
+                std::string title_shown = (idx == selected_)
+                    ? marquee_or_truncate(t_title, title_w, idx, marquee_row_idx_, marquee_since_)
+                    : pad_right(truncate_str(t_title, title_w), title_w);
                 content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
                         + pad_right(title_shown, title_w) + settings_.list_separator + " "
                         + pad_right(truncate_str(t_artist, artist_w), artist_w) + settings_.list_separator + " "
@@ -4809,7 +4832,12 @@ std::vector<std::string> App::build_playlist_library_panel(int total_width, int 
             const auto& t = playlist_edit_lib_view_[idx];
             int title_w = std::max(5, inner - idx_w - 2);
             std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
-            std::string t_title = apply_font_map(list_row_title(t.path, t.title), settings_.font_map);
+            // Shows the filename plus the real embedded title tag (once
+            // resolved), unlike list_row_title()'s either/or: this panel has
+            // no separate Artist/Duration columns and no "meta data only"
+            // toggle to fall back on, so both pieces of information need to
+            // fit in the one column that exists.
+            std::string t_title = apply_font_map(playlist_row_label(t.path, t.title), settings_.font_map);
             // Every column padded to its own fixed width *before*
             // concatenating (rather than truncating the assembled whole
             // afterward) -- matches build_list_panel()'s row construction.
@@ -4819,8 +4847,12 @@ std::vector<std::string> App::build_playlist_library_panel(int total_width, int 
             // padding that follows it), which visibly shifts every
             // border to its right; padding each piece independently
             // can't drift the same way.
+            bool row_focused_sel = (playlist_edit_focus_ == 1) && (idx == playlist_edit_lib_selected_);
+            std::string title_shown = row_focused_sel
+                ? marquee_or_truncate(t_title, title_w, idx, marquee_pl_lib_row_idx_, marquee_pl_lib_since_)
+                : pad_right(truncate_str(t_title, title_w), title_w);
             content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
-                    + pad_right(truncate_str(t_title, title_w), title_w);
+                    + pad_right(title_shown, title_w);
         }
         bool sel = (playlist_edit_focus_ == 1) && (idx == playlist_edit_lib_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
@@ -4895,12 +4927,16 @@ std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int h
         if (idx < total) {
             const auto& t = playlist_edit_tracks_[idx];
             int title_w = std::max(5, inner - idx_w - 2);
-            std::string base = list_row_title(t.path, t.title);
+            std::string base = playlist_row_label(t.path, t.title);
             std::string shown = t.missing ? (base + " [missing]") : base;
             std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
             std::string t_title = apply_font_map(shown, settings_.font_map);
+            bool row_focused_sel = (playlist_edit_focus_ == 2) && (idx == playlist_edit_track_selected_);
+            std::string title_shown = row_focused_sel
+                ? marquee_or_truncate(t_title, title_w, idx, marquee_pl_track_row_idx_, marquee_pl_track_since_)
+                : pad_right(truncate_str(t_title, title_w), title_w);
             content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
-                    + pad_right(truncate_str(t_title, title_w), title_w);
+                    + pad_right(title_shown, title_w);
         }
         bool sel = (playlist_edit_focus_ == 2) && (idx == playlist_edit_track_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
@@ -5161,7 +5197,7 @@ static std::string header_sgr(const Settings& s) {
 //  2. Leaving is always safe. ESC, quitting, crashing between two edits --
 //     none of that loses work: the backup is reloaded next run by
 //     meta_ensure_session_loaded(), and it is only ever deleted when the
-//     session is applied or explicitly discarded with Ctrl+Shift+D.
+//     session is applied or explicitly discarded with Ctrl+Shift+X.
 //  3. What changed stays visible. A field that was touched -- typed OR
 //     filled in by AcoustID -- is drawn in header_sgr(), the same bold
 //     header colour the Settings section titles use, so "what will
@@ -5673,7 +5709,7 @@ void App::meta_apply_session() {
     log_event(msg);
 }
 
-// Ctrl+Shift+D -> Y. The audio files were never written to by an edit, so
+// Ctrl+Shift+X -> Y. The audio files were never written to by an edit, so
 // discarding only means throwing the pending values (and their backup file)
 // away.
 void App::meta_discard_session() {
@@ -5738,7 +5774,7 @@ void App::handle_meta_key(int key) {
         meta_prompt_ = MetaPrompt::Save;
         return;
     }
-    if (key == kKeyCtrlShiftD) {
+    if (key == kKeyCtrlShiftX) {
         if (meta_session_.empty() && meta_fetch_list_.empty()) { meta_status_ = "nothing to discard"; return; }
         meta_prompt_ = MetaPrompt::Discard;
         return;
@@ -6266,13 +6302,13 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
     } else {
         std::string hint = (meta_tab_ == 0)
             ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [a] Fetch list | "
-              "[SHIFT+B] Fetch | [r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
+              "[SHIFT+B] Fetch | [r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit"
             : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | "
-              "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit";
+              "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit";
         // The legend is wider than the screen (tab 0: ~210 columns once the
         // selection/clipboard commands are in it, tab 1: 116), and
         // truncate_str(hint, W) used to cut it mid-command at 120 -- the
-        // [CTRL+SHIFT+D] Discard half of it was simply never shown. Split it
+        // [CTRL+SHIFT+X] Discard half of it was simply never shown. Split it
         // back into its " | "-separated entries and pack them greedily
         // instead: an entry only moves to the second legend row when the row
         // it would join is already full, so at 120 columns every command
@@ -7206,7 +7242,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#r", "Meta editor: toggle edited files on top of the library pane"},
         {nullptr, "#SHIFT+B", "Fetch metadata for the hovered title (AcoustID)"},
         {nullptr, "#CTRL+SHIFT+S", "Apply the meta editor's pending edits to the files"},
-        {nullptr, "#CTRL+SHIFT+D", "Discard the meta editor's pending edits"},
+        {nullptr, "#CTRL+SHIFT+X", "Discard the meta editor's pending edits"},
         // --- Listening history ---
         {"HISTORY", "HKeyHistory", "Listening history: last plays, top tracks, habits"},
         {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
@@ -8102,7 +8138,7 @@ int App::run() {
     // paced python subprocess), apply whatever it answered into the
     // session, then write the autosave backup one last time. Quitting with
     // unsaved edits is *supposed* to leave them on disk -- the session file
-    // IS the backup, and only Ctrl+Shift+S or Ctrl+Shift+D ever clears it.
+    // IS the backup, and only Ctrl+Shift+S or Ctrl+Shift+X ever clears it.
     if (meta_fetch_thread_.joinable()) meta_fetch_thread_.join();
     poll_pending_meta_fetch();
     meta_persist();

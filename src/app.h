@@ -216,7 +216,7 @@ private:
     // Everything typed or fetched here goes into meta_session_ -- a pending
     // edit session that is autosaved to disk after every change (meta_editor.h)
     // but is NEVER written to the audio files on its own. Ctrl+Shift+S applies
-    // it, Ctrl+Shift+D throws it away, and simply leaving (ESC or quitting)
+    // it, Ctrl+Shift+X throws it away, and simply leaving (ESC or quitting)
     // keeps the autosave backup, so no amount of editing can lose work by
     // accident.
     int meta_tab_ = 0;
@@ -290,7 +290,7 @@ private:
     void meta_start_fetch();
     void poll_pending_meta_fetch();
     void meta_apply_session();  // Ctrl+Shift+S, after Y
-    void meta_discard_session();// Ctrl+Shift+D, after Y
+    void meta_discard_session();// Ctrl+Shift+X, after Y
     // True if a confirmation was up and the key was consumed by it (incl. the
     // swallow-everything-else case). Checked first thing in handle_key().
     bool handle_meta_prompt_key(int key);
@@ -364,6 +364,15 @@ private:
     // of resuming wherever the previous row's animation had reached.
     mutable int marquee_row_idx_ = -1;
     mutable std::chrono::steady_clock::time_point marquee_since_;
+    // Same idea, kept separate because the playlist editor's LIBRARY and
+    // TRACKS panels are two independent lists with their own selection
+    // cursor, visible on screen at the same time -- sharing one row/clock
+    // pair between them would make switching focus between the two panels
+    // restart (or skip restarting) the wrong one's scroll.
+    mutable int marquee_pl_lib_row_idx_ = -1;
+    mutable std::chrono::steady_clock::time_point marquee_pl_lib_since_;
+    mutable int marquee_pl_track_row_idx_ = -1;
+    mutable std::chrono::steady_clock::time_point marquee_pl_track_since_;
 
     // --- lyrics (background-fetched) ---
     mutable std::mutex lyrics_mutex_;
@@ -735,6 +744,23 @@ private:
     // for that file, and falls back to the filename when there is no tag
     // (or none resolved yet), so an untagged library still renders rows.
     std::string list_row_title(const fs::path& path, const std::string& filename_title) const;
+    // Playlist LIBRARY/TRACKS panels have no separate Artist/Duration
+    // columns and no "Show meta data only" toggle to pick one representation
+    // over the other, so unlike list_row_title() above this always shows
+    // both: the filename, plus the embedded title tag appended after it
+    // once/if that tag has been resolved and actually differs from the
+    // filename. Untagged or not-yet-resolved files just show the filename,
+    // same as before.
+    std::string playlist_row_label(const fs::path& path, const std::string& filename_title) const;
+    // Shared marquee-scroll math used by the LOCAL AUDIO FILES pane and the
+    // playlist LIBRARY/TRACKS panels: scrolls `text` within `width` columns
+    // once it no longer fits, restarting from the beginning whenever
+    // `row_idx` (the row currently being drawn) differs from whatever
+    // `tracked_idx` last recorded -- so switching the hovered row always
+    // resumes the animation from the start rather than mid-scroll. Returns
+    // `text` truncated/padded to `width` unmodified when it already fits.
+    std::string marquee_or_truncate(const std::string& text, int width, int row_idx,
+                                     int& tracked_idx, std::chrono::steady_clock::time_point& since) const;
 
     // Re-runs LocalSource::scan() over the current
     // settings_.local_music_paths and rebuilds local_view_ -- called when

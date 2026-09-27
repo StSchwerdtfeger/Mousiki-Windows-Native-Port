@@ -20,7 +20,7 @@ constexpr int kKeyHome = 300;
 // delete/remove action.
 constexpr int kKeyDelete = 301;
 
-// Ctrl+Shift+S and Ctrl+Shift+D -- the meta editor's "apply this editing
+// Ctrl+Shift+S and Ctrl+Shift+X -- the meta editor's "apply this editing
 // session to the files" and "throw this editing session away" commands.
 // These are modifier COMBINATIONS, so unlike a plain letter they can't be
 // expressed as a hotkey string (hotkey_string_to_key() has no representation
@@ -29,8 +29,13 @@ constexpr int kKeyDelete = 301;
 // sentinel values rather than through settings_.hotkeys. On Windows they
 // come from win_poll_key() reading dwControlKeyState; on POSIX from the
 // xterm modifyOtherKeys/CSI-u encoding of a modified key.
+// NOTE: the discard command used to be Ctrl+Shift+D, but on Windows
+// Terminal that combination is the built-in "duplicate tab" shortcut, which
+// intercepts the keystroke before it ever reaches this app -- pressing it
+// just opened a second terminal window instead of discarding anything.
+// Moved to Ctrl+Shift+X, which isn't a default Windows Terminal binding.
 constexpr int kKeyCtrlShiftS = 302;
-constexpr int kKeyCtrlShiftD = 303;
+constexpr int kKeyCtrlShiftX = 303;
 
 // Text-editing keys, the same idea again: Shift+Left/Right and Ctrl+C/X/V
 // are modifier combinations, so they can't be hotkey strings and they can't

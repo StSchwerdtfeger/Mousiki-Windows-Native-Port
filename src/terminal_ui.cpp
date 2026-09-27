@@ -183,7 +183,7 @@ int TerminalIO::poll_key() {
             // modifyOtherKeys form "ESC [ 27 ; <mod> ; <code> ~" and the
             // kitty/CSI-u form "ESC [ <code> ; <mod> u", which is how a
             // terminal reports a key pressed WITH modifiers -- notably the
-            // Ctrl+Shift+S / Ctrl+Shift+D sentinels the meta editor uses
+            // Ctrl+Shift+S / Ctrl+Shift+X sentinels the meta editor uses
             // (mod = 1 + shift*1 + alt*2 + ctrl*4, so Ctrl+Shift = 6).
             // Only ever reached for a sequence whose final byte hasn't been
             // consumed by the arrow/Home/Delete cases above.
@@ -206,7 +206,7 @@ int TerminalIO::poll_key() {
                 }
                 if (mod == 6) { // Ctrl+Shift
                     if (code == 'S' || code == 's') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
-                    if (code == 'D' || code == 'd') { g_last_key_was_arrow = false; return kKeyCtrlShiftD; }
+                    if (code == 'X' || code == 'x') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
                 }
                 // "1;<mod> A" -- an arrow (or Home/End) pressed WITH a
                 // modifier, which is how xterm-style terminals report
