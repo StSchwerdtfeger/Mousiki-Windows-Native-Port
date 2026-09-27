@@ -281,7 +281,7 @@ A few things added on top of the original design rather than required to run it 
 
 - **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most palyed tracks on top" second sort ist "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
 
-<img width="2293" height="1015" alt="grafik" src="https://github.com/user-attachments/assets/55a20505-e4f5-493c-a7ba-a8d70561f71b" />
+<img width="2295" height="1009" alt="grafik" src="https://github.com/user-attachments/assets/9e1b1971-5223-4f0d-b3d6-02e9da4874ba" />
 
 <img width="2280" height="1016" alt="grafik" src="https://github.com/user-attachments/assets/7b69dd69-81e2-4a15-a6ae-16f6d08d0f02" />
 
