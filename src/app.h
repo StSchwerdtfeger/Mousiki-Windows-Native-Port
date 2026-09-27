@@ -536,6 +536,20 @@ private:
     std::mutex device_request_mutex_;
     std::condition_variable device_request_cv_;
     std::atomic<int> device_gen_{0}; // incremented each launch; guards against a stale request read racing a newer post
+    // Generation of the device handoff currently in flight: set the moment a
+    // request is posted, cleared by the worker once player_.play() has
+    // actually swapped the new track in (0 = none in flight). While this is
+    // nonzero the main loop must NOT act on player_.finished(): until play()
+    // runs, the PREVIOUS pcm is still the installed one, so a track that
+    // already ended keeps re-latching finished_ from the audio callback every
+    // few milliseconds. clear_finished() in poll_pending_load() erases it
+    // once, but the old device immediately set it again -- which made a freshly
+    // loaded track flip straight back to "no track loaded" (advance_track() ->
+    // Stop mode -> has_track_ = false) a frame later, while its own audio
+    // started a few hundred ms after that. Pressing play again "fixed" it only
+    // because by then the installed pcm was the *playing* track, which can't
+    // latch the flag. This holds the stale flag off for the whole handoff.
+    std::atomic<int> device_play_pending_gen_{0};
     bool device_worker_stop_ = false;
     bool device_request_ready_ = false;
     struct DevicePlayRequest {

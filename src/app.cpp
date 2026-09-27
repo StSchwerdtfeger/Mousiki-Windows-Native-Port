@@ -1215,6 +1215,10 @@ void App::poll_pending_load() {
 
 void App::launch_device_play_async() {
     int my_gen = ++device_gen_;
+    // Raise the handoff guard BEFORE the request is visible to the worker:
+    // from here until player_.play() returns, finished_ still describes the
+    // old track and must not drive advance_track() (see device_play_pending_gen_).
+    device_play_pending_gen_.store(my_gen);
     auto pcm = current_pcm_;
     int vol = player_.volume() > 0 ? player_.volume() : 70;
     // One-shot resume position from a restored snapshot -- consumed
@@ -1279,6 +1283,12 @@ void App::device_worker_loop() {
             std::lock_guard<std::mutex> lk(player_mutex_);
             player_.play(req.pcm, req.start_sec, req.volume, &fft_);
         });
+        // The new track is in and the old pcm (and its latching finished_
+        // flag) is gone, so the main loop may look at finished_ again. Only
+        // clear if no newer handoff has been posted meanwhile -- that one is
+        // still in flight and owns the guard now.
+        int expected = req.generation;
+        device_play_pending_gen_.compare_exchange_strong(expected, 0);
     }
 }
 
@@ -6757,7 +6767,10 @@ int App::run() {
 
         if (has_track_) {
             player_.poll_elapsed();
-            if (!advancing_ && player_.finished()) advance_track();
+            // No auto-advance while a device handoff is still in flight:
+            // finished_ belongs to the previous track until play() swaps the
+            // new one in (see device_play_pending_gen_).
+            if (!advancing_ && device_play_pending_gen_.load() == 0 && player_.finished()) advance_track();
         }
         // Disk only spins while something is actually playing — frozen
         // when idle or paused, per instruction.
