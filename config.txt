@@ -212,6 +212,14 @@ LocalMusicPath=%USERPROFILE%\Music
 #PlaylistsPath=C:\Users\YOUR NAME!!!!!!\Music\playlists
 #PlaylistsPath=D:\Backups\playlists
 
+# Download folder (optional, single -- not a list): where yt-dlp writes what
+# it downloads. Leaving it out means the built-in cache folder,
+# %USERPROFILE%\.cache\mousiki, which is also what Settings shows in this
+# field by default. The folder below is added to the local music paths
+# automatically, so there is no need to repeat it as a LocalMusicPath= line.
+# Editable live in Settings -> ON/OFF ("DOWNLOAD FOLDER").
+#DownloadFolder=D:\Downloads\mousiki
+
 # Navigation
 HKeyNavigateUp="ARROW_KEY_UP"
 HKeyNavigateDown="ARROW_KEY_DOWN"
@@ -294,8 +302,10 @@ Email    : itz.ender5820@gmail.com
 Version  : orignal and final v1.0        Licence  : Apache licence 2.0
 
 Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
-Adjusted to run on Windows, added some features; done with the help of AI tools.
-Added playlist menu, several new hot keys... See Readme.md for full list of
-additions and changes along the win native port. 
+Adjusted to run on Windows. A couple of features and modifications where
+added, the general design remained. Additions: playlist menu, metat data 
+editor incl. fetch meta data function via AcoustID, several new hot keys 
+and then some... See Readme.md for full list of additions and changes 
+along the win native port. Done with the help of AI tools.
 
 };
