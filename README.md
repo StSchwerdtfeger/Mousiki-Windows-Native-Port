@@ -108,7 +108,7 @@ All of these are independent of each other and of the core player. With none of 
 
 MinGW-w64 (MSYS2 UCRT64) also builds this — configure with `-G "MinGW Makefiles"`. The code guards on `_WIN32`, not on `_MSC_VER`, except where MSVC genuinely differs (noted inline where it matters).
 
-`third_party/` (miniaudio v0.11.25, kissfft) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if either is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause (see the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy.
+`third_party/` (miniaudio v0.11.25, kissfft, chromaprint for AcoustID meta data fetch) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if either is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause (see the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included).
 
 ## Use Windows Terminal
 
