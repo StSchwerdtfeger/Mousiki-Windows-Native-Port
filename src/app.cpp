@@ -4400,11 +4400,61 @@ void App::meta_ensure_session_loaded() {
 }
 
 void App::meta_refresh_lib_view() {
+    // With the 'r' resort on, this rebuild re-orders the pane underneath the
+    // cursor, so remember the hovered row by PATH first: clamping the old
+    // INDEX would silently point the picker -- and with it the fields panel,
+    // which is what the user is editing -- at a different track.
+    std::string keep;
+    if (meta_resort_edited_ && !meta_lib_view_.empty()) keep = meta_hovering_path();
+
     meta_lib_view_ = filter_and_rank_local(meta_query_);
+
+    if (meta_resort_edited_) {
+        // Strict "edited before not edited" on a stable sort is a stable
+        // partition: every file with a pending edit moves into one block at
+        // the top, and both blocks keep the exact order the pane already had
+        // -- the normal alphabetical/scan order, or the fuzzy ranking while
+        // a search is active (so a query's relevance order is never thrown
+        // away). Toggling 'r' off simply rebuilds without this step, i.e.
+        // straight back to that order.
+        std::stable_sort(meta_lib_view_.begin(), meta_lib_view_.end(),
+                         [this](const LocalTrack& a, const LocalTrack& b) {
+                             auto edited = [this](const LocalTrack& t) {
+                                 const MetaEditEntry* e = meta_entry(path_utf8(t.path));
+                                 return e && e->any_edited();
+                             };
+                             return edited(a) && !edited(b);
+                         });
+        if (!keep.empty()) {
+            for (size_t i = 0; i < meta_lib_view_.size(); ++i) {
+                if (path_utf8(meta_lib_view_[i].path) == keep) {
+                    meta_lib_selected_ = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+    }
+
     meta_lib_selected_ = std::clamp(meta_lib_selected_, 0,
         std::max(0, static_cast<int>(meta_lib_view_.size()) - 1));
     meta_fetch_selected_ = std::clamp(meta_fetch_selected_, 0,
         std::max(0, static_cast<int>(meta_fetch_list_.size()) - 1));
+}
+
+// 'r': flip the library pane between its normal order and "every file with
+// pending edits on top". Nothing else about the list changes -- same rows,
+// same filter, same selection (meta_refresh_lib_view() follows it by path).
+void App::meta_toggle_resort() {
+    meta_resort_edited_ = !meta_resort_edited_;
+    meta_refresh_lib_view();
+    if (meta_resort_edited_) {
+        int n = 0;
+        for (const auto& e : meta_session_) if (e.any_edited()) ++n;
+        meta_status_ = "library resorted: " + std::to_string(n) + " edited file"
+                     + (n == 1 ? "" : "s") + " on top";
+    } else {
+        meta_status_ = "library order: alphabetical again";
+    }
 }
 
 // The autosave: save whenever there is something to restore, remove the file
@@ -4885,6 +4935,7 @@ void App::handle_meta_key(int key) {
             return;
         }
         if (key == 'a') { meta_add_hovering_to_fetch(); return; } // queue it for AcoustID, like the main queue's 'a'
+        if (key == 'r') { meta_toggle_resort(); return; } // toggle: edited files on top vs. alphabetical order
         if (key == kKeyDelete || key == 127 || key == 'd') { meta_remove_hovering(); return; }
         return; // every other printable key would be search input, and search lives in focus 0
     }
@@ -4895,7 +4946,14 @@ void App::handle_meta_key(int key) {
         if (path.empty()) { meta_focus_ = 1; return; }
         if (arrow && key == 'A') { if (meta_field_ > 0) --meta_field_; return; }
         if (arrow && key == 'B') { if (meta_field_ + 1 < kMetaFieldCount) ++meta_field_; return; }
-        if (key == '\r' || key == '\n') { meta_focus_ = 1; return; } // "done with this field"
+        if (key == '\r' || key == '\n') {
+            meta_focus_ = 1; // "done with this field"
+            // With the 'r' resort on, the file just edited has (re)joined the
+            // edited block: move it up now, while the cursor is still on it --
+            // meta_refresh_lib_view() follows the row by path.
+            if (meta_resort_edited_ && !meta_lib_view_.empty()) meta_refresh_lib_view();
+            return;
+        }
         if (key == 127 || key == 8) {
             const MetaEditEntry* e = meta_entry(path);
             std::string cur = meta_display_value(path, meta_field_, e);
@@ -5134,8 +5192,8 @@ std::vector<std::string> App::build_meta_fetch_panel(int total_width, int height
 
 // Full-screen meta editor, assembled exactly like build_playlist_screen():
 // header box, tab strip, optional search row, boxed panels, then a footer
-// that is ALWAYS two lines (prompt, or legend + status) so switching
-// states never makes the layout jump.
+// that is ALWAYS three lines (prompt padded to two + status, or legend's
+// two rows + status) so switching states never makes the layout jump.
 void App::build_meta_screen(std::ostringstream& frame, int W, int target_height) const {
     if (W < 60) W = 60;
     std::string border = ansi_for(settings_.border_color, false);
@@ -5175,10 +5233,11 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
     // while player_view_height() is what the other overlays are sized to --
     // except on a short terminal, where the Browse view's metadata/progress/
     // search panels don't shrink and that value is several rows taller than
-    // the screen. total = fixed_rows + (panel_h + 2) + 2 must fit the
-    // smaller of the two.
+    // the screen. total = fixed_rows + (panel_h + 2) + 3 must fit the
+    // smaller of the two: 2 for the panel's own border rows, 3 for the
+    // footer (two legend rows + status -- see where it's written below).
     int budget = std::min(target_height, term_rows_ - 1);
-    int panel_h = std::clamp(budget - fixed_rows - 4, 6, 22);
+    int panel_h = std::clamp(budget - fixed_rows - 5, 6, 22);
     if (meta_tab_ == 0) {
         int left_w = W / 2;
         int right_w = W - left_w;
@@ -5211,9 +5270,12 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
             colors = "\x1b[41;97m"; // red, same as its delete prompt
         }
         auto lines = wrap_lines(text, std::max(10, W - 2), 2);
-        while (lines.size() < 2) lines.push_back(std::string());
+        // Padded to the same three rows the legend footer always uses, so a
+        // prompt appearing (or going away) can never change the height of
+        // what sits above it.
+        while (lines.size() < 3) lines.push_back(std::string());
         for (const auto& l : lines) {
-            // The second row is reserved (so the footer never changes
+            // The trailing row is reserved (so the footer never changes
             // height between a prompt and a hint/status), but a reserved
             // row stays bare: a full-width empty color bar reads as a
             // rendering glitch, not as an empty status line.
@@ -5223,10 +5285,41 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
     } else {
         std::string hint = (meta_tab_ == 0)
             ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | "
-              "[SHIFT+B] Fetch | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
+              "[SHIFT+B] Fetch | [r] Edited first | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit"
             : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | "
               "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+D] Discard | [ESC] Exit";
-        frame << "\x1b[90m" << truncate_str(hint, W) << "\x1b[0m\n";
+        // The legend is wider than the screen (tab 0: 163 columns once [r]
+        // is in it, tab 1: 116), and truncate_str(hint, W) used to cut it
+        // mid-command at 120 -- the [CTRL+SHIFT+D] Discard half of it was
+        // simply never shown. Split it back into its " | "-separated entries
+        // and pack them greedily instead: an entry only moves to the second
+        // legend row when the row it would join is already full, so at 120
+        // columns Save | Discard | Exit become row two and every command
+        // stays readable -- never cut through the middle of a key name. Both
+        // tabs are padded to exactly two legend rows (+ the status row), so
+        // the footer keeps one constant height: switching tabs, or a status
+        // message appearing, can't jump the layout.
+        std::vector<std::string> hint_lines(1);
+        size_t pos = 0;
+        for (;;) {
+            size_t sep = hint.find(" | ", pos);
+            std::string entry = (sep == std::string::npos) ? hint.substr(pos)
+                                                           : hint.substr(pos, sep - pos);
+            std::string& cur = hint_lines.back();
+            std::string joined = cur.empty() ? entry : cur + " | " + entry;
+            if (cur.empty() || display_width(joined) <= W) cur = joined;
+            else hint_lines.push_back(entry);
+            if (sep == std::string::npos) break;
+            pos = sep + 3;
+        }
+        while (hint_lines.size() < 2) hint_lines.push_back(std::string());
+        for (const auto& l : hint_lines) {
+            // An empty row is written bare: a full-width colour bar over an
+            // empty line reads as a rendering glitch, not as a blank row
+            // (same reasoning as in the prompt branch above).
+            if (l.empty()) frame << "\n";
+            else frame << "\x1b[90m" << truncate_str(l, W) << "\x1b[0m\n";
+        }
         if (!meta_status_.empty()) frame << "\x1b[32m" << truncate_str(meta_status_, W) << "\x1b[0m\n";
         else frame << "\n";
     }
@@ -5700,6 +5793,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"#SHIFT+B",                        "Fetch metadata for the hovered title (AcoustID)"},
         {"#CTRL+SHIFT+S",                   "Apply the meta editor's pending edits to the files"},
         {"#CTRL+SHIFT+D",                   "Discard the meta editor's pending edits"},
+        {"#r",                              "Meta editor: toggle edited files on top of the library pane"},
         {"HKeyToggleNormalize",             "Toggle loudness normalization"},
     };
 
@@ -6068,7 +6162,11 @@ int App::player_view_height(int w) const {
     h += list_visible_rows_;
     h += 2; // the list/queue box's own top+bottom border rows (build_list_panel()/
             // build_queue_panel() add them ON TOP of the content rows they're given)
-    h += 1; // status/loading line -- reserved even when currently empty, so this doesn't jitter frame to frame
+    h += 1; // the row Browse draws the AcoustID prompt / loading indicator in
+            // (idle Browse no longer prints anything there -- the log moved to
+            // Settings -- but overlays still size to this taller frame: it is
+            // the worst case, and overlay_budget() caps the result at
+            // term_rows_ - 1 anyway)
     return h;
 }
 

@@ -215,6 +215,11 @@ private:
     int meta_focus_ = 0; // 0=search field, 1=library picker, 2=field editor -- cycled with Tab
     std::string meta_query_;
     std::vector<LocalTrack> meta_lib_view_;  // filter_and_rank_local(meta_query_)
+    // 'r' in the library pane: park every file that carries a pending edit
+    // at the top of the pane. Off by default, so merely opening the editor
+    // never reorders the list behind the user's back -- see
+    // meta_refresh_lib_view(), which does the sorting on every refresh.
+    bool meta_resort_edited_ = false;
     int meta_lib_selected_ = 0;
     int meta_field_ = 0; // hovered row of the field editor (0=FILE .. 4=YEAR)
     std::vector<MetaEditEntry> meta_session_;          // the pending edits
@@ -254,6 +259,7 @@ private:
     void meta_open();                  // HKeyMetaEditor entry point
     void meta_ensure_session_loaded(); // restores the autosaved session, once
     void meta_refresh_lib_view();
+    void meta_toggle_resort();         // 'r', edited files to the top of the pane
     void meta_persist();               // save (or delete) the autosave backup file
     const MetaEditEntry* meta_entry(const std::string& path) const;
     MetaEditEntry& meta_touch_entry(const std::string& path); // create on first edit
