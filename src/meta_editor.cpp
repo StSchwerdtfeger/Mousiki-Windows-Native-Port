@@ -232,8 +232,13 @@ bool apply_meta_entry(const MetaEditEntry& e, std::string* err, std::string* new
                      e.edited[static_cast<int>(MetaField::Album)] ||
                      e.edited[static_cast<int>(MetaField::Year)];
     if (want_tags) {
+        // path_from_utf8() here, not a bare fs::path(std::string) / operator/ --
+        // see path_utf8.h's RULE. Without it, this silently round-trips the
+        // correct UTF-8 stem through the Windows ANSI code page, mangling any
+        // non-ASCII (CJK, full-width, accented, ...) filename into a
+        // different, garbled temp name -- ASCII-only titles never showed it.
         fs::path tmp = old_path.parent_path() /
-                       (path_utf8(old_path.stem()) + ".mousiki-tmp" + ext);
+                       path_from_utf8(path_utf8(old_path.stem()) + ".mousiki-tmp" + ext);
         // -map 0 keeps every stream (including embedded cover art); explicit
         // -map_metadata 0 copies the existing tags so only the keys passed
         // below are replaced -- an edit to ARTIST can't wipe the album.
