@@ -273,11 +273,12 @@ A few things added on top of the original design rather than required to run it 
 
 <img width="2294" height="1077" alt="grafik" src="https://github.com/user-attachments/assets/f04a4225-f4d1-48c4-a8c5-8ff9adf80a0a" />
 
-- **Editable path lists in the settings panel** — Settings → ON/OFF now has a **LOCAL PATH** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
+- **Editable path lists in the settings panel** — Settings → ON/OFF now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
   - are *live*: committing a local path rescans the library on the spot instead of waiting for the next launch;
   - take effect for playlists too — playlist folders are now searched across **all** configured `PlaylistsPath=` lines (listed/loaded from every one of them, saved/deleted in the first), instead of only a single one.
+  - yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
     
-<img width="1595" height="776" alt="grafik" src="https://github.com/user-attachments/assets/56baf7e7-bff9-4674-b42e-996ab47968ad" />
+<img width="2301" height="1046" alt="grafik" src="https://github.com/user-attachments/assets/43241d83-9cdb-41f4-ad37-8793d2fae580" />
 
 - **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most palyed tracks on top" second sort ist "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
 
@@ -291,7 +292,6 @@ A few things added on top of the original design rather than required to run it 
 ### Minor Additions / Modifications
 
 - **Copy/Paste/Cut in Search and Path Fields** All search fields now allow copy/paste/cut and the necessary marking. Same for fields to add local path.
-- ** Change Path Downloadfolder,  Playlist folder** yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
 - **Fetched Lyrics Folder** is now placed in an extra folder such that lyrics of song_a in folder_a are located in folder_a/lyrics/ and are not placed directly next to track files. Note that changing the name of the file may trigger a new lyrics fetch process (did not find a reasonable solution for that since filenames can eventually also be changed via the Windows explorer or other programs such as Midnight commander or Yazi... Hard to keep track of...
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
 - **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab.
@@ -305,6 +305,7 @@ A few things added on top of the original design rather than required to run it 
 - **Categorized cheat sheet** available via `?`.
 
   <img width="2286" height="964" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" />
+  
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown...
 - **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
 
