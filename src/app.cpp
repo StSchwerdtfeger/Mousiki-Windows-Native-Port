@@ -5687,6 +5687,21 @@ void App::meta_apply_session() {
         std::string err, new_path;
         if (apply_meta_entry(e, &err, &new_path)) {
             ++ok;
+            {
+                // The tags on disk just changed, but row_meta_cache_ is
+                // keyed by path and only ever filled in once per path (see
+                // meta_row_meta() and rescan_library()'s background sweep,
+                // which explicitly SKIPS any path already cached). Left
+                // alone, a title-only edit -- same path, so rescan_library()
+                // never re-resolves it -- would keep showing the pre-edit
+                // tags (including "missing title") forever, even though the
+                // file itself now has the new title. Dropping the cache
+                // entry here (old path, and the new one if renamed) is what
+                // makes the next read actually hit the file again.
+                std::lock_guard<std::mutex> lk(row_meta_mutex_);
+                row_meta_cache_.erase(e.path);
+                if (!new_path.empty() && new_path != e.path) row_meta_cache_.erase(new_path);
+            }
             if (!new_path.empty() && new_path != e.path) {
                 // The file was renamed: keep every in-app reference pointed
                 // at the new name so playback/queue/lyrics don't break.
