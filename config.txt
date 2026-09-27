@@ -59,7 +59,16 @@ ElimentWaveForm=true
 ElimentLyrics=true
 LyricsPlaceholderBall=false
 Visualizer=true
+
+# What a row in the (search-)lists shows:
 MetaDataOnly=false
+## false = filename AND metadata (the filename stem as the title, plus the
+##         artist/duration columns)
+## true  = metadata only: the embedded title tag is shown instead of the
+##         filename (files without a title tag keep their filename, so an
+##         untagged library never turns into a blank list)
+## Toggleable live in this panel ("Show meta data only") or with
+## HKeyToggleMetaOnly (Shift+N by default).
 
 ##-------------------------------------------
 ##             PANEL 3: ANIMATION
@@ -187,17 +196,21 @@ HKeySetting="s"
 
 # Local Music Paths
 # Windows paths and ~ expansion both work; forward and backward slashes
-# are both fine. Add/edit these while mousiki is closed -- the library is
-# scanned once at startup, there's no live rescan.
+# are both fine. Several paths are fine too (one line each). Edit them live
+# in Settings -> ON/OFF ("LOCAL PATH", or "+ new path" to add a line):
+# committing a change rescans the library right away. Editing the file by
+# hand still works -- do that while mousiki is closed, or rescan afterwards.
 LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=%USERPROFILE%\Music
 
-# Playlists folder (optional). By default, saved playlists live in
+# Playlists folder(s) (optional). By default, saved playlists live in
 # <first LocalMusicPath above>\playlists -- and if no LocalMusicPath is
 # set at all, that silently falls back to %USERPROFILE%\.cache\mousiki\
-# playlists. Uncomment and set this to pin them somewhere specific
-# instead:
+# playlists. One line per folder: playlists are listed and loaded from all
+# of them, while saving/deleting always uses the first. Editable live in
+# Settings -> ON/OFF ("PLAYLIST PATH", plus "+ new path" for another line).
 #PlaylistsPath=C:\Users\YOUR NAME!!!!!!\Music\playlists
+#PlaylistsPath=D:\Backups\playlists
 
 # Navigation
 HKeyNavigateUp="ARROW_KEY_UP"
@@ -233,8 +246,26 @@ HKeyToggleWaveform="w"
 HKeyCycleSortMode="T"
 HKeySearchPlaylist="/p:"
 HKeyPlaylist="P"
-HKeyToggleMetaOnly="N"
+# Turns loudness normalization on/off (see NormalizeVolume below) -- handy for
+# comparing a track with and without it.
 HKeyToggleNormalize="v"
+# Show metadata only (no filename) in the lists. Deliberately the UPPERCASE
+# letter: plain "n" stays bound to "next track", so Shift+N is this toggle.
+HKeyToggleMetaOnly="N"
+# Meta/tag editor: edit a file's name plus its artist/title/album/year tags,
+# queue titles for an AcoustID lookup (audio fingerprint via Chromaprint),
+# then apply or throw the pending edits away. Deliberately the UPPERCASE
+# letter: plain "m" is "cycle play mode", so Shift+M is this menu.
+HKeyMetaEditor="M"
+# Three keys of that editor are NOT bindable here and are matched directly
+# in the code instead (rebinding them would collide with the arrow keys,
+# which the input layer reports as the letters A/B/C/D):
+#   SHIFT+B            fetch metadata for the hovered title (AcoustID)
+#   CTRL+SHIFT+S       apply the pending edits to the files (asks first)
+#   CTRL+SHIFT+D       discard the pending edits (asks first)
+# Simply exiting the menu keeps the autosaved edit session -- only
+# Ctrl+Shift+S or Ctrl+Shift+D ever changes or clears it.
+# Move track in queue/playlist up/down:
 HKeyQueueMoveUp="4"
 HKeyQueueMoveDown="5"
 
