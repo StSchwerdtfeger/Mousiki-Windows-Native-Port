@@ -163,7 +163,7 @@ See `?` for the cheat sheet with all commands.
 | **Shuffle Next** | `#` | Shuffle to a next song |
 | **Filename / Meta Data** | `SHIFT + n` | Toggle to show meta data only in lists |
 | **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
-| **Volume** | `1` / `2` | Decrease / Increase in-app volume |
+| **Volume** | `1` / `2` |  Increase / Decrease in-app volume |
 | **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab |
 | **Change Play-/Cyclemode** | `m` | Toggle Playmode (shuffle, stop, repeat queue, loop, list) |
 | **Toggle Lyrics** | `+` | Turn Lyrics on/off |
@@ -196,7 +196,8 @@ Changing Fonts: In the config.txt you will also see liens like A = A, a. This is
 
 ## Playlist and Meta Data UI Behavior
 
-The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB and the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking textinput... In the meta data menu, the tabs can be changed via left and right. I guess the handling of the meta data menu needs some practive, since it is rather complex task to perform. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane. It is a little tricky but it works. Any suggestions how to improve it are welcome.      
+The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB and the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking text input... 
+In the meta data menu, the tabs can be changed via `ALT + left / right`. I guess the handling of the meta data menu needs some practice, since it is rather complex task to perform, however after fitting in it works well. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane and then use `x/T/A/Y` for all missing, title missing, artist missing, year missing. Using metatogger can be a bit faster, however it is not the Mousi-**key** way of doing things! Gotta love the terminal. 
 
 ## What had to change
 
