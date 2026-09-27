@@ -53,6 +53,20 @@ constexpr int kKeyCtrlX = 307;      // Ctrl+X      -- cut
 constexpr int kKeyCtrlV = 308;      // Ctrl+V      -- paste
 constexpr int kKeyEnd = 309;        // End (VK_END / xterm "ESC [ F")
 
+// Alt+Left / Alt+Right -- the playlist editor's "switch tab" command.
+// Plain Left/Right had to stay the caret keys in every one of that
+// screen's text fields (name field, both search boxes) and its track
+// list uses them for nothing at all, which meant a bare arrow could only
+// ever switch tabs from the one pane that doesn't own a caret -- tabs
+// were unreachable from the name field entirely. This was originally
+// Ctrl+Arrow, but several terminals (Windows Terminal among them) claim
+// Ctrl+Left/Right for their own word-navigation/tab shortcuts and never
+// pass the keystroke through at all; Alt+Arrow isn't commonly bound that
+// way, so it's used instead. Still a modifier combination no field
+// claims for anything, same reasoning as kKeyCtrlShiftS/X above.
+constexpr int kKeyAltLeft = 310;
+constexpr int kKeyAltRight = 311;
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {

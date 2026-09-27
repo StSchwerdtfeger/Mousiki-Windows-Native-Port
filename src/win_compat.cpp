@@ -406,12 +406,21 @@ int win_poll_key() {
     // Up/Down are unaffected (nothing in the UI marks with them) and keep
     // collapsing to 'A'/'B' either way.
     const bool shifted = (k.dwControlKeyState & SHIFT_PRESSED) != 0;
+    // Alt held (without Shift) on Left/Right -- the playlist editor's tab
+    // switch (see kKeyAltLeft/Right in terminal_ui.h). Checked the same
+    // way as the Ctrl+Shift+S/X guard further down: dwControlKeyState is
+    // the only place a held modifier is visible on this event. Alt rather
+    // than Ctrl because Windows Terminal (and others) claim Ctrl+Left/Right
+    // for their own shortcuts and the console never sees the keystroke.
+    const bool alt_held = (k.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
     switch (k.wVirtualKeyCode) {
         case VK_UP:    g_last_key_was_arrow = true;  return 'A';
         case VK_DOWN:  g_last_key_was_arrow = true;  return 'B';
         case VK_RIGHT: if (shifted) { g_last_key_was_arrow = false; return kKeyShiftRight; }
+                       if (alt_held) { g_last_key_was_arrow = false; return kKeyAltRight; }
                        g_last_key_was_arrow = true; return 'C';
         case VK_LEFT:  if (shifted) { g_last_key_was_arrow = false; return kKeyShiftLeft; }
+                       if (alt_held) { g_last_key_was_arrow = false; return kKeyAltLeft; }
                        g_last_key_was_arrow = true; return 'D';
         case VK_HOME:  g_last_key_was_arrow = false; return kKeyHome;
         case VK_END:   g_last_key_was_arrow = false; return kKeyEnd;

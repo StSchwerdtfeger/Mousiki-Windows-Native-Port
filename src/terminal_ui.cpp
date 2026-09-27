@@ -221,10 +221,18 @@ int TerminalIO::poll_key() {
                     int csi = 0, m = 1;
                     if (std::sscanf(body.c_str(), "%d;%d", &csi, &m) == 2 && m >= 1) {
                         bool shift = (((m - 1) & 1) != 0);
+                        // Alt bit is bit 1 of (mod - 1) (mod = 1 + shift*1 +
+                        // alt*2 + ctrl*4); the playlist editor's tab switch
+                        // (see kKeyAltLeft/Right). Only the plain Alt (no
+                        // Shift) combination is consumed -- Alt+Shift+Arrow
+                        // isn't bound to anything and falls through as today.
+                        bool alt = (((m - 1) & 2) != 0);
                         if (shift && tail == 'D') { g_last_key_was_arrow = false; return kKeyShiftLeft; }
                         if (shift && tail == 'C') { g_last_key_was_arrow = false; return kKeyShiftRight; }
                         if (shift && tail == 'H') { g_last_key_was_arrow = false; return kKeyHome; }
                         if (shift && tail == 'F') { g_last_key_was_arrow = false; return kKeyEnd; }
+                        if (alt && !shift && tail == 'D') { g_last_key_was_arrow = false; return kKeyAltLeft; }
+                        if (alt && !shift && tail == 'C') { g_last_key_was_arrow = false; return kKeyAltRight; }
                     }
                 }
             }

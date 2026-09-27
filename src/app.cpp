@@ -4674,15 +4674,19 @@ void App::handle_playlist_key(int key) {
         return;
     }
     // Arrows collapse to 'A'..'D' app-wide; last_key_was_arrow() is what
-    // tells a real arrow from a typed capital. Left/Right switch the two
-    // top-level tabs -- but only when no text field owns the caret: there
-    // they are the caret keys (same rule the meta editor applies), which
-    // is what makes marking and copy/paste work in the boxes below.
+    // tells a real arrow from a typed capital.
     const bool arrow = last_key_was_arrow();
-    const bool caret_field =
-        (playlist_tab_ == 0 && playlist_edit_focus_ <= 1) ||
-        (playlist_tab_ == 1 && playlist_manage_focus_ == 0);
-    if (arrow && (key == 'C' || key == 'D') && !caret_field) { // left/right -- the only 2 top-level tabs, so either just toggles
+    // Alt+Left/Right switch the two top-level tabs. This used to be plain
+    // Left/Right, but this screen starts in the name field (focus 0) where
+    // Left/Right has to stay the caret key -- and since the only way to
+    // move focus off the name field is Tab, which cycles within a tab
+    // rather than switching one, a plain arrow could only ever reach tab 1
+    // from the track list pane. Alt+Arrow is a modifier combination none
+    // of this screen's fields claims for anything (Shift+Left/Right marks
+    // text instead), so it now switches tabs the same way from every pane.
+    // (Ctrl+Arrow was tried first, but several terminals intercept
+    // Ctrl+Left/Right for their own shortcuts before the app ever sees it.)
+    if (key == kKeyAltLeft || key == kKeyAltRight) {
         playlist_tab_ = (playlist_tab_ + 1) % 2;
         if (playlist_tab_ == 1) playlist_refresh_manage_view();
         return;
@@ -4961,29 +4965,38 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     std::vector<std::string> out;
+    out.push_back(box_top("SAVED PLAYLISTS", total_width, border_ansi));
+
     {
-        // Tab 1 search box, living in the title row exactly like the
-        // LIBRARY one on tab 0 -- same caret/selection/clipboard keys.
-        const std::string prefix = settings_.box_upper_left + settings_.box_horizontal + " SAVED PLAYLISTS  /";
-        const int prefix_w = static_cast<int>(display_width(prefix));
+        // Search field, on its own row now -- it used to be crammed into
+        // the title row above ("SAVED PLAYLISTS  / <query>"), which left
+        // barely any width to actually see what had been typed once that
+        // label had eaten most of the box. A dedicated line (the same
+        // box_line_field() shape the meta editor's "Search: " row uses)
+        // gives it real room; the list below gives up exactly one row to
+        // it (see list_height) so the panel's total height -- and the
+        // whole playlist screen's -- doesn't change.
+        const std::string prefix = "Search: ";
         std::string field;
         int field_cols = 0;
-        if (playlist_manage_focus_ == 0) {
+        if (playlist_manage_focus_ == 0) { // focus is in the box: caret + block cursor
             EditPaint p = paint_edit_field(playlist_manage_query_, edit_caret_, edit_anchor_,
-                                           std::max(1, total_width - prefix_w - 1), "", true);
+                                           std::max(1, total_width - 4 - static_cast<int>(prefix.size())), "", true);
             field = p.s;
             field_cols = p.cols;
-        } else {
-            field = playlist_manage_query_;
+        } else { // focus elsewhere: plain text, with the placeholder hint
+            field = playlist_manage_query_.empty() ? std::string("(type to filter)") : playlist_manage_query_;
             field_cols = static_cast<int>(display_width(field));
         }
-        out.push_back(box_top_field(prefix, field, field_cols, total_width, border_ansi));
+        out.push_back(box_line_field(prefix, field, field_cols, total_width, border_ansi));
     }
+
+    const int list_height = std::max(1, height - 1);
 
     int total = static_cast<int>(playlist_manage_view_.size());
     if (total == 0) {
-        int mid = height / 2;
-        for (int row = 0; row < height; ++row) {
+        int mid = list_height / 2;
+        for (int row = 0; row < list_height; ++row) {
             std::string content;
             if (row == mid) {
                 std::string text = apply_font_map(playlist_manage_query_.empty() ? "NO SAVED PLAYLISTS YET" : "NO MATCHING PLAYLISTS", settings_.font_map);
@@ -4998,9 +5011,9 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
         return out;
     }
 
-    int scroll = std::clamp(playlist_manage_selected_ - height / 2, 0, std::max(0, total - height));
+    int scroll = std::clamp(playlist_manage_selected_ - list_height / 2, 0, std::max(0, total - list_height));
     const int idx_w = 3;
-    for (int row = 0; row < height; ++row) {
+    for (int row = 0; row < list_height; ++row) {
         int idx = scroll + row;
         std::string content;
         if (idx < total) {
@@ -5025,7 +5038,7 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
         }
     }
     std::string footer;
-    int remaining = total - (scroll + height);
+    int remaining = total - (scroll + list_height);
     if (remaining > 0) footer = "( " + std::to_string(remaining) + " more )";
     out.push_back(box_bottom(total_width, footer, border_ansi_bottom));
     return out;
@@ -5138,14 +5151,16 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         frame << "\x1b[41;97m " << prompt << " \x1b[0m\n";
         frame << "\n";
     } else {
-        std::string hint = "[\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
-                            "[DEL] Remove  | [4/5] Move \u2191\u2193 | [HOME] Save | [ESC] Exit";
+        std::string hint = "[Alt+\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
+                            "[DEL] Remove | [4/5] Move \u2191\u2193 | [HOME] Save";
         frame << "\x1b[90m" << hint << "\x1b[0m\n";
-        // Row 2: the text-field keys. Kept off row 1 so the whole legend
-        // still fits a 120-column terminal without wrapping (the meta
-        // editor splits its legend the same way) -- panel_h's budget above
-        // already accounts for this extra row.
-        frame << "\x1b[90m[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste\x1b[0m\n";
+        // Row 2: the text-field keys, plus Exit. Kept off row 1 so each row
+        // fits comfortably inside a 120-column terminal without wrapping
+        // (the meta editor splits its legend the same way) -- panel_h's
+        // budget above already accounts for exactly these two rows. [ESC]
+        // Exit used to sit at the end of row 1, but that pushed row 1 past
+        // the wrap width and cost a spurious third line; it lives here now.
+        frame << "\x1b[90m[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [ESC] Exit\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
     }
@@ -5781,7 +5796,13 @@ void App::handle_meta_key(int key) {
     }
     // SHIFT+B for the hovered title -- raw 'B' with no arrow behind it (see
     // handle_key()'s Browse branch for why this can't be a normal hotkey).
-    if (key == 'B' && !last_key_was_arrow()) {
+    // Only fires while the current focus has no caret of its own to type
+    // into: the library picker (focus 1) and the whole of tab 1's fetch
+    // list, neither of which is a text field. On tab 0 with the search box
+    // (focus 0) or the field editor (focus 2) focused, a capital B must
+    // still be typable, so this hotkey is skipped there and 'B' falls
+    // through to the normal text-entry handling below instead.
+    if (key == 'B' && !last_key_was_arrow() && (meta_tab_ == 1 || meta_focus_ == 1)) {
         std::string path = meta_hovering_path();
         if (path.empty()) meta_status_ = "no title selected";
         else meta_prompt_single_fetch(path);
