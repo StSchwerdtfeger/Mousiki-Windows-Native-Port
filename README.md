@@ -40,10 +40,10 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
 
-## Current Status of the Port and Modification (Release v2.0.0)
+## Current Status of the Port and Modification (Release v1.9.0, 28.09.2026)
 
-For now the Mousiki port works well and also includes everything I at least wanted and made sense to me, so there might be no further major releases that add new features. I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
-Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
+For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
+Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creater would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
 ## Quick start (port was tested with PowerShell 7.6.6 and 5.1)
 
@@ -132,21 +132,16 @@ LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=~/Music
 ```
 Playlists folder (optional -- overrides the `LocalMusicPath[0]/playlists` default). Default is located in `C:\Users\YOUR NAME\.cache\mousiki\playlists` 
+You can now add folders in the settings (`s`). 
 
 ```
 PlaylistsPath=C:\Users\YOUR NAME !!!!!!!\Music\playlists
 ```
 
-
-There's no in-app UI for adding a folder — that isn't a Windows-port limitation, the original never had one either; `config.txt` is the only way, on every platform. The library is scanned once at startup, so add or edit `LocalMusicPath=` lines while mousiki is closed; there's no live rescan.
-
 ## Default Keybindings
 
-Configurable in `C:\Users\USER\.config\mousiki\config.txt`.
-
-What's new: Shuffle next key and lyrics on/off key (when off, sphere visualization is shown). 
-References with in settings is now categorized. Some keys are not rebindable! Other key commands
-for the playlist and meta data editor menu can be viewed within the app settings under Reference
+Configurable in `C:\Users\USER\.config\mousiki\config.txt` or in the settings. Some commands are hard coded.
+See `?` for the cheat sheet with all commands.
 
 ### Key Commands Overview
 | Action | Keybinding | Description |
@@ -195,9 +190,13 @@ for the playlist and meta data editor menu can be viewed within the app settings
 
 </div>
 
-Every editable/rebindable hotkey can also be found in the config.txt and — for an overview — in the in-app cheat sheet overview (`?`). Not every key was set to be rebindable. Rebinding can be done in the config.txt file and  under Settings → Reference in the app itself.
+Every editable/rebindable hotkey can also be found in the config.txt and — for an overview — in the in-app cheat sheet overview (`?`). Not every key was set to be rebindable. Rebinding can also be done in the config.txt file and  under Settings → Reference in the app itself.
 
 Changing Fonts: In the config.txt you will also see liens like A = A, a. This is used so you can re-font the UI without changing the font of the terminal, e.g. via A={𝓐,𝓪}.... 
+
+## Playlist and Meta Data UI Behavior
+
+The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB and the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking textinput... In the meta data menu, the tabs can be changed via left and right. I guess the handling of the meta data menu needs some practive, since it is rather complex task to perform. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane. It is a little tricky but it works. Any suggestions how to improve it are welcome.      
 
 ## What had to change
 
@@ -263,7 +262,7 @@ A few things added on top of the original design rather than required to run it 
   - Note that "year" and "album" is not fetched since it becomes rather complicated for a lot of albums, considering re-releases such as remasterd album versions. MusicBrainz (which could be added) would be necessary for that and an option to choose between different possible years and album names that were fetched. Since this makes the process of meta data editing rather complex, I discarded the idea to include it. It also might not work well with titles fetched from you tube via yt-dlp. 
   - **API key**: every AcoustID request is signed with an application key that is hard-coded as `API_KEY` at the top of `scripts/fetch_meta.py` — deliberately *not* a setting, because an AcoustID key belongs to one registered application rather than to a user, and the account-key/application-key mix-up is exactly what the service answers with *"invalid API key"*. A highly modified or rebranded build should maybe register its own application (its free!) at <https://acoustid.org/new-application> and change that one line; an invalid key fails with a status line that says so (`NO_KEY`) instead of guessing from the file name.
   - **Always-autosaved session**: the pending edits are written to `~/.cache/mousiki/meta_session/session.json` after every keystroke, so ESC, quitting or crashing keeps them as a backup — the audio files themselves are *never* touched by merely editing.
-  - `CTRL+SHIFT+S` applies the session (asks *"Want to save?"*) — tags go through an `ffmpeg -c copy` remux into a temp file that is renamed over the original (audio stays bit-for-bit identical), a name edit becomes a plain rename; `CTRL+SHIFT+D` throws the pending edits away (asks *"Want to discard changes?"*). Failed entries stay in the session so they can be retried. These two are deliberately **not** rebindable: the input layer reports the arrow keys as the letters A/B/C/D, so a rebindable `"B"`/`"S"` would race the arrows — the same reason `SHIFT+B` is matched directly too.
+  - `CTRL+SHIFT+S` applies the session (asks *"Want to save?"*) — tags go through an `ffmpeg -c copy` remux into a temp file that is renamed over the original (audio stays bit-for-bit identical), a name edit becomes a plain rename; `CTRL+SHIFT+X` throws the pending edits away (asks *"Want to discard changes?"*). Failed entries stay in the session so they can be retried. These two are deliberately **not** rebindable: the input layer reports the arrow keys as the letters A/B/C/D, so a rebindable `"B"`/`"S"` would race the arrows — the same reason `SHIFT+B` is matched directly too.
 
 <img width="1794" height="873" alt="grafik" src="https://github.com/user-attachments/assets/01642720-6e02-4fb2-a7be-a030a16ca1f6" />
 
@@ -307,7 +306,7 @@ A few things added on top of the original design rather than required to run it 
   <img width="2286" height="964" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" />
   
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown...
-- **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
+- **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Also applies to the field between the disk animation and lyrics/sphere. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
 
 - **Scrollable settings panel** — ON/OFF (with its path sections) and REFERENCE now scroll with the cursor instead of growing past the panel, so the tab stays usable on a short terminal (32 rows and below).
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
