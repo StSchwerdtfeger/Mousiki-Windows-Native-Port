@@ -98,11 +98,14 @@ def emit(obj):
 def resolve_fpcalc():
     """Locate the fingerprinting helper.
 
-    Tried in order: MOUSIKI_FPCLC (explicit override), the install
-    directory of this script's parent (fpcalc.exe ships next to mousiki.exe,
-    and scripts/ sits next to that), the script's own directory, and finally
-    PATH -- so a packaged install works without configuration and a manual
-    Chromaprint install is still picked up.
+    Tried in order: MOUSIKI_FPCLC (explicit override -- mousiki itself
+    exports this with the fpcalc.exe next to its own exe, because this
+    script may have been resolved from a checkout's scripts/ that never
+    gets a copy of the helper), the install directory of this script's
+    parent (fpcalc.exe ships next to mousiki.exe, and scripts/ sits next
+    to that), the script's own directory, and finally PATH -- so a
+    packaged install works without configuration and a manual Chromaprint
+    install is still picked up.
     """
     name = "fpcalc.exe" if os.name == "nt" else "fpcalc"
     override = os.environ.get("MOUSIKI_FPCLC")
@@ -120,8 +123,13 @@ def fingerprint(path):
     """(duration, fingerprint) for `path`, or raise a LookupError."""
     exe = resolve_fpcalc()
     if not exe:
+        # Name the directory that was searched: "in scripts/" alone hides
+        # WHICH scripts/ it means, and the app may have been started with a
+        # working directory that resolves to a checkout's folder -- which
+        # never contains the helper (it is a build product).
+        here = os.path.dirname(os.path.abspath(__file__))
         raise LookupError("NO_FPCALC",
-                          "fpcalc not found - put fpcalc.exe (Chromaprint) in scripts/ or on PATH")
+                          "fpcalc not found - looked in %s and on PATH (MOUSIKI_FPCLC overrides)" % here)
     try:
         proc = subprocess.run([exe, "-json", "-length", str(DECODE_SECONDS), path],
                               capture_output=True, timeout=180,
