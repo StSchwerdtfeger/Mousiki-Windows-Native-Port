@@ -184,6 +184,7 @@ See `?` for the cheat sheet with all commands.
 | **Remove from Queue** | `d` | Dequeue selected track |
 | **Move Track Up** | `4` | Move up in Queue/Playlist |N
 | **Move Track down** | `5` | Move down in Queue/Playlist |
+| **Clear Queue** | `SHIFT+x` | Clear Queue | 
 | **Filter by Folder** | `f` | Apply folder filter |
 | **Clear Filter** | `c` | Reset active search/filters |
 | **Quit** | `q` | Exit application |
@@ -280,7 +281,8 @@ A few things added on top of the original design rather than required to run it 
     
 <img width="2301" height="1046" alt="grafik" src="https://github.com/user-attachments/assets/43241d83-9cdb-41f4-ad37-8793d2fae580" />
 
-- **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most palyed tracks on top" second sort ist "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
+- **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most played tracks on top" second sort is "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
+  - top tracks can be added to queue in the second menu tab. In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
 
 <img width="2295" height="1009" alt="grafik" src="https://github.com/user-attachments/assets/9e1b1971-5223-4f0d-b3d6-02e9da4874ba" />
 
@@ -292,6 +294,7 @@ A few things added on top of the original design rather than required to run it 
 ### Minor Additions / Modifications
 
 - **Copy/Paste/Cut in Search and Path Fields** All search fields now allow copy/paste/cut and the necessary marking. Same for fields to add local path.
+- **Clear QUEUE** In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
 - **Fetched Lyrics Folder** is now placed in an extra folder such that lyrics of song_a in folder_a are located in folder_a/lyrics/ and are not placed directly next to track files. Note that changing the name of the file may trigger a new lyrics fetch process (did not find a reasonable solution for that since filenames can eventually also be changed via the Windows explorer or other programs such as Midnight commander or Yazi... Hard to keep track of...
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
 - **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab.
