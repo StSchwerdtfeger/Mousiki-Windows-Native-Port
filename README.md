@@ -125,14 +125,14 @@ The entire UI is ANSI escape sequences. `mousiki.exe` enables `ENABLE_VIRTUAL_TE
 | Log | `%USERPROFILE%\.cache\mousiki\logs\console.log` |
 | Session snapshot | `%USERPROFILE%\.cache\mousiki\snapshot\snapshot.json` |
 
-`LocalMusicPath=` and `Playlitspath=` entries accept Windows paths, both slash directions should work (`std::filesystem` normalizes them):
+`LocalMusicPath=`,  `Playlistpath=` and `DownloadFolder`= entries accept Windows paths, both slash directions should work (`std::filesystem` normalizes them):
 
 ```
 LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=~/Music
 ```
 Playlists folder (optional -- overrides the `LocalMusicPath[0]/playlists` default). Default is located in `C:\Users\YOUR NAME\.cache\mousiki\playlists` 
-You can now add folders in the settings (`s`). 
+You can now add folders in the settings (`s`). Same goes for the Download folder...
 
 ```
 PlaylistsPath=C:\Users\YOUR NAME !!!!!!!\Music\playlists
