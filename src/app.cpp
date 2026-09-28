@@ -1258,12 +1258,13 @@ std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) con
 // The folder NEW playlists are written to and deleted from: the first
 // configured PlaylistsPath (settings_.playlists_paths[0] -- config.txt's
 // PlaylistsPath= line, editable from the ON/OFF tab's PLAYLIST PATH
-// list), otherwise settings_.local_music_paths[0]/playlists -- same
-// "first configured local path" fallback HKeyDownloadStream uses
-// (~/Music if none configured at all, which by the time this runs may
-// itself have become the cache folder -- see load_library()'s
-// cache-dir injection). Computed fresh every call, not cached, so it
-// always reflects whatever the user currently has set in Settings.
+// list), otherwise settings_.local_music_paths[0]/playlists (~/Music if
+// none configured at all, which by the time this runs may itself have
+// become the cache folder -- see load_library()'s cache-dir injection).
+// Unrelated to HKeyDownloadStream's folder, which comes from the
+// separate DOWNLOAD FOLDER setting (cache_.download_dir()) instead.
+// Computed fresh every call, not cached, so it always reflects whatever
+// the user currently has set in Settings.
 fs::path App::playlists_dir() const {
     if (!settings_.playlists_paths.empty() && !settings_.playlists_paths[0].empty())
         return path_from_utf8(settings_.playlists_paths[0]);
@@ -2140,17 +2141,21 @@ void App::commit_bulk_add(bool all) {
 
 // Tab layout: 0=Colors, 1=On/Off, 2=Animation, 3=Reference, 4=About App.
 //
-// The Reference tab lists every rebindable hotkey (kRefRows), grouped into
-// categories via the optional `header` field -- set only on a category's
-// first row, and rendered as a section title above it -- followed by a
-// read-only "HARDCODED / NOT REBINDABLE" section (kRefHardcoded) for key
-// commands that are NOT wired through settings_.hotkeys at all (fixed
-// literal key codes checked directly in the various handle_*_key()
-// functions), and finally the read-only font-mapping table loaded from
-// config.txt. All three sections scroll together as one list; see
-// ref_display_row() below for how a selectable row (settings_row_) maps
-// to the row it's actually drawn on, once the section headers/dividers
-// are accounted for.
+// The Reference tab opens with the editable LOUDNESS NORMALIZATION rows
+// (kNormLabels), then a one-line read-only note pointing at the cheat sheet
+// ('?') for the full command list, then every rebindable hotkey (kRefRows),
+// grouped into categories via the optional `header` field -- set only on a
+// category's first row, and rendered as a section title above it -- and
+// finally the read-only font-mapping table loaded from config.txt. This tab
+// deliberately does NOT also list the app's literal/non-rebindable key
+// commands (ESC, Y/N, the playlist and meta editors' own fixed navigation
+// and text-editing keys, and so on): there is nothing to configure for
+// those here, and keeping a second copy of them just meant this list and
+// the cheat sheet's could quietly drift apart. The cheat sheet ('?') is the
+// single, authoritative list of every command, rebindable or not -- hence
+// the note. All sections scroll together as one list; see ref_display_row()
+// below for how a selectable row (settings_row_) maps to the row it's
+// actually drawn on, once the section headers/dividers are accounted for.
 //
 // IMPORTANT: kRefRows[row].action is looked up in settings_.hotkeys (a
 // plain string->string map), so reordering/recategorizing rows here is
@@ -2208,43 +2213,28 @@ static const RefHotkeyRow kRefRows[] = {
 };
 static constexpr int kRefRowCount = sizeof(kRefRows) / sizeof(kRefRows[0]);
 
-// Key commands that are NOT in settings_.hotkeys -- fixed literal key
-// codes checked directly in handle_*_key(), so rebinding a similarly-
-// named action above (if any) does NOT affect these. Read-only in the UI;
-// listed here purely for reference. See e.g. handle_settings_key() (Enter/
-// Esc/S), the Playlist-editor track-list handler (4/5, D/DEL/Backspace),
-// and the Bulk-Add results handler (A, Space) for where each is checked.
-struct RefHardcodedRow { const char* keys; const char* label; };
-static const RefHardcodedRow kRefHardcoded[] = {
-    {"ESC", "Close Setting"},
-    {"S", "Save and Quit Settings"},
-    {"ENTER", "Confirm / Select"},
-    {"ARROW KEYS", "Navigate"},
-    {"Y / N", "Confirm Or Cancel"},
-    {"4 / 5", "Move Track Up/Down"},
-    {"D / DEL / BACKSPACE", "Removal commands"},
-    {"HOME", "Save Playlist"}, // playlist editor's save-and-exit, checked as a raw key like the rows above
-    {"SHIFT+B", "Fetch Metadata For Hovering Title"}, // Meta editor (also in Browse); can't be a hotkey -- see handle_key()
-    {"CTRL+SHIFT+S", "Apply Meta Edit Session To Files"},
-    {"CTRL+SHIFT+X", "Discard Meta Edit Session"},
-};
-static constexpr int kRefHardcodedCount = sizeof(kRefHardcoded) / sizeof(kRefHardcoded[0]);
+// The one-line, read-only note drawn right after the LOUDNESS NORMALIZATION
+// section (with a blank spacer line above it, same as a header) and before
+// the hotkeys start. Not selectable -- it costs a display line, same as a
+// header, but no entry in the row-index space below.
+static const char* const kRefNote = "SEE CHEAT SHEET FOR FULL LIST OF COMMANDS, `?`";
 
 // ---------------------------------------------------------------------------
 // LOUDNESS NORMALIZATION -- the two parameters behind the "Normalize Volume"
-// toggle, editable on this tab between the hotkeys and the font map (rather
-// than buried in config.txt, where they used to be the only way to change
-// them). Their selectable row range sits between the read-only hardcoded
-// section and the read-only font-map section:
+// toggle, editable on this tab (rather than buried in config.txt, where
+// they used to be the only way to change them). This section is first on
+// the tab, ahead of the hotkeys, so it -- and the toggle right above it on
+// the ON/OFF tab -- are the first thing this tab shows. Their selectable
+// row range sits ahead of the rebindable hotkeys and the read-only font-map
+// section:
 //
-//     0 .. kRefRowCount-1             rebindable hotkeys
-//     kRefRowCount .. kNormStart-1    hardcoded keys (read-only)
 //     kNormStart .. kNormEnd-1        these three rows (editable)
-//     kNormEnd ..                     font-map rows (read-only)
+//     kRefStart .. kRefEnd-1          rebindable hotkeys (kRefRows)
+//     kRefEnd ..                      font-map rows (read-only)
 //
 // Every row-index translation on this tab (ref_display_row(), the scroll
 // window, settings_max_row(), the Enter-to-edit guard) has to go through
-// kNormStart/kNormEnd, which is exactly where they all used to assume a
+// these four constants, which is exactly where they all used to assume a
 // single hard/soft split at kRefRowCount.
 // ---------------------------------------------------------------------------
 static const char* const kNormLabels[] = {
@@ -2254,8 +2244,10 @@ static const char* const kNormLabels[] = {
 };
 static constexpr int kNormRowCount =
     static_cast<int>(sizeof(kNormLabels) / sizeof(kNormLabels[0]));
-static constexpr int kNormStart = kRefRowCount + kRefHardcodedCount;
+static constexpr int kNormStart = 0;
 static constexpr int kNormEnd = kNormStart + kNormRowCount;
+static constexpr int kRefStart = kNormEnd;
+static constexpr int kRefEnd = kRefStart + kRefRowCount;
 
 // "-16" instead of "-16.000000". These are the only two fractional values
 // on the tab, and settings_options_for() has to render its option list with
@@ -2276,46 +2268,32 @@ static std::string fmt_loudness(double v) {
     return s;
 }
 
-// The label column of every row on this tab is 25 cells wide with the
-// ":" barrier sitting right behind it, and pad() below deliberately does
-// NOT truncate (the reference renderer doesn't either) -- so a label
-// longer than those 25 cells used to run straight through the barrier and
-// get chopped up by the ":" and the keys drawn after it. Wrapping at a
-// word boundary onto extra display lines keeps both columns intact: line
-// one carries the label's head, the ":" and the key, continuation lines
-// carry only the rest of the label. Every row after a wrapped one moves
-// down, which is what ref_display_row() has to count.
+// The label column of every row on this tab is 25 cells wide, with the
+// ":" barrier sitting right behind it -- every kRefRows/kNormLabels label
+// is short enough to fit inside that without wrapping.
 static constexpr int kRefLabelW = 25;
-static std::vector<std::string> ref_label_lines(int hardcoded_index) {
-    std::vector<std::string> lines =
-        wrap_lines(kRefHardcoded[hardcoded_index].label, kRefLabelW, 4);
-    if (lines.empty()) lines.push_back(std::string());
-    return lines;
-}
 
-// Maps a selectable row index -- 0..kRefRowCount-1 for hotkeys,
-// kRefRowCount..kNormStart-1 for the hardcoded rows, kNormStart..kNormEnd-1
-// for the loudness parameters, then the font-map letters -- to the row it's
-// actually drawn on, once the section header/divider lines inserted along
-// the way (one above each hotkey category, one above the hardcoded section,
-// one above the loudness section, one above the font map) and the wrapped labels' continuation lines are accounted for. Used by both
-// the render block and the ColorEdit cursor placement below, so the two
-// always agree on where a given row lands.
+// Maps a selectable row index -- kNormStart..kNormEnd-1 for the loudness
+// parameters, kRefStart..kRefEnd-1 for the hotkeys, then the font-map
+// letters -- to the row it's actually drawn on, once the section
+// header/divider lines inserted along the way (one above the loudness
+// section, one for the read-only note right after it, one above each hotkey
+// category, one above the font map) are accounted for. Used by both the
+// render block and the ColorEdit cursor placement below, so the two always
+// agree on where a given row lands.
 static int ref_display_row(int selectable_row) {
-    int headers = 0, wrapped = 0;
+    int headers = 0;
     for (int i = 0; i <= selectable_row; ++i) {
-        if (i < kRefRowCount) {
-            if (kRefRows[i].header) headers += 2;
-        } else if (i < kNormStart) {
-            if (i == kRefRowCount) headers += 2; // "HARDCODED / NOT REBINDABLE"
-            wrapped += static_cast<int>(ref_label_lines(i - kRefRowCount).size()) - 1; // a label may span 2 lines
-        } else if (i < kNormEnd) {
+        if (i < kNormEnd) {
             if (i == kNormStart) headers += 2;   // "LOUDNESS NORMALIZATION"
+        } else if (i < kRefEnd) {
+            if (i == kRefStart) headers += 2;    // the read-only note (blank + text), just before the hotkeys
+            if (kRefRows[i - kRefStart].header) headers += 2;
         } else {
-            if (i == kNormEnd) headers += 2;     // "FONT / CHARACTER MAP"
+            if (i == kRefEnd) headers += 2;      // "FONT / CHARACTER MAP"
         }
     }
-    return selectable_row + headers + wrapped;
+    return selectable_row + headers;
 }
 
 // The ON/OFF tab's toggle rows, in paint order -- and that order IS the
@@ -2475,7 +2453,7 @@ int App::settings_max_row() const {
         case 3: {
             int letters = 0;
             for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) ++letters;
-            return kNormEnd + letters - 1; // hotkeys + hardcoded + loudness rows + N font-map rows
+            return kRefEnd + letters - 1; // loudness rows + hotkeys + N font-map rows
         }
         case 4: {
             int MAX_Y = std::max(term_rows_ - 2, 10);
@@ -2552,8 +2530,8 @@ std::string App::settings_get_value(int row, int col) const {
             }
         }
     }
-    if (settings_tab_ == 3 && row >= 0 && row < kRefRowCount) {
-        auto it = settings_.hotkeys.find(kRefRows[row].action);
+    if (settings_tab_ == 3 && row >= kRefStart && row < kRefEnd) {
+        auto it = settings_.hotkeys.find(kRefRows[row - kRefStart].action);
         return it != settings_.hotkeys.end() ? it->second : "";
     }
     // LOUDNESS NORMALIZATION rows: same three values the ON/OFF tab's
@@ -2725,8 +2703,8 @@ void App::settings_commit_edit() {
                 else settings_.lyrics_animation = 0;
                 break;
         }
-    } else if (settings_tab_ == 3 && settings_row_ >= 0 && settings_row_ < kRefRowCount) {
-        settings_.hotkeys[kRefRows[settings_row_].action] = buf;
+    } else if (settings_tab_ == 3 && settings_row_ >= kRefStart && settings_row_ < kRefEnd) {
+        settings_.hotkeys[kRefRows[settings_row_ - kRefStart].action] = buf;
     } else if (settings_tab_ == 3 && settings_row_ >= kNormStart && settings_row_ < kNormEnd) {
         // LOUDNESS NORMALIZATION: clamped to the same ranges the option
         // lists advertise (typing a stray letter must not derail a value),
@@ -2801,8 +2779,8 @@ void App::handle_settings_key(int key) {
         le_clamp(color_edit_buffer_, edit_caret_, edit_anchor_);
         if (key == 27) { mode_ = Mode::Settings; return; } // cancel, discard buffer
         if (key == '\r' || key == '\n') {
-            std::string key_name = (settings_tab_ == 3 && settings_row_ >= 0 && settings_row_ < kRefRowCount)
-                                  ? kRefRows[settings_row_].action : "";
+            std::string key_name = (settings_tab_ == 3 && settings_row_ >= kRefStart && settings_row_ < kRefEnd)
+                                  ? kRefRows[settings_row_ - kRefStart].action : "";
             // Hotkey overlap fix: if this is a Reference-tab hotkey being
             // rebound and the typed key is already owned by a different
             // action, reject the commit instead of silently creating a
@@ -2914,12 +2892,11 @@ void App::handle_settings_key(int key) {
     }
 
     if (key == '\r' || key == '\n') {
-        // Reference tab: hotkeys (0..kRefRowCount-1) and the loudness rows
-        // (kNormStart..kNormEnd-1) are editable; the hardcoded-keys section
-        // and the font-map rows are read-only display and never enter
-        // ColorEdit at all.
-        if (settings_tab_ == 3 &&
-            ((settings_row_ >= kRefRowCount && settings_row_ < kNormStart) || settings_row_ >= kNormEnd)) {
+        // Reference tab: the loudness rows (kNormStart..kNormEnd-1) and the
+        // hotkeys (kRefStart..kRefEnd-1) are editable and sit back-to-back;
+        // the note between them and the font-map rows after them are
+        // read-only display and never enter ColorEdit at all.
+        if (settings_tab_ == 3 && settings_row_ >= kRefEnd) {
             return;
         }
         if (settings_tab_ == 1) {
@@ -3426,16 +3403,17 @@ void App::handle_key(int key) {
         settings_.waveform_smooth = !settings_.waveform_smooth;
         recompute_waveform_for_current_track();
         log_event(settings_.waveform_smooth ? "waveform: smooth" : "waveform: raw");
-    } else if (action == "HKeyDownloadStream") { // save cached stream to local music path
+    } else if (action == "HKeyDownloadStream") { // save cached stream to the configured download folder
         if (has_track_) {
             if (path_utf8(current_path_).find(".cache") != std::string::npos || metadata_.location == "youtube") {
-                std::string dest_dir;
-                if (!settings_.local_music_paths.empty()) {
-                    dest_dir = settings_.local_music_paths[0];
-                } else {
-                    const char* home = std::getenv("HOME");
-                    dest_dir = home ? std::string(home) + "/Music" : "./Music";
-                }
+                // Same folder the DOWNLOAD FOLDER setting promises everywhere
+                // else (see load_library()'s cache-dir injection and the
+                // Settings > ON/OFF tab's Download Folder field): the
+                // configured path, or ~/.cache/mousiki when none is set --
+                // never settings_.local_music_paths[0]/$HOME/Music, which
+                // this used to fall back to and had nothing to do with the
+                // folder the user actually configured for downloads.
+                std::string dest_dir = path_utf8(cache_.download_dir());
                 std::error_code ec;
                 fs::create_directories(path_from_utf8(dest_dir), ec);
 
@@ -3486,7 +3464,9 @@ void App::handle_key(int key) {
         // deep into the list). Not in settings_.hotkeys / kRefRows at all,
         // on purpose: this mirrors the original, which likewise has no
         // HKeyEsc entry -- ESC is a fixed shortcut, not something meant
-        // to be rebound (see kRefHardcoded in the Reference tab).
+        // to be rebound (see the HARDCODED / NOT REBINDABLE section of
+        // the cheat sheet, '?', which is where fixed keys like this one
+        // are documented -- the Reference tab only lists rebindable ones).
         list_source_ = ListSource::Local;
         last_local_query_.clear();
         folder_filter_.clear();
@@ -4799,6 +4779,8 @@ void App::handle_playlist_key(int key) {
     }
 }
 
+static std::string header_sgr(const Settings& s); // defined further down (Settings panel section)
+
 std::vector<std::string> App::build_playlist_library_panel(int total_width, int height) const {
     int inner = total_width - 4;
     std::string border_ansi = ansi_for(settings_.border_color, false);
@@ -4826,37 +4808,60 @@ std::vector<std::string> App::build_playlist_library_panel(int total_width, int 
         out.push_back(box_top_field(prefix, field, field_cols, total_width, border_ansi));
     }
 
+    // Three equal columns -- Filename | Title | Artist -- separated by
+    // " | ", with a header row of their own right under the title row.
+    // Filename is the file's stem, Title/Artist come from the resolved
+    // tags (row_meta_cache_) with the same folder-name fallback the main
+    // list uses for Artist; an untagged Title shows "-". No index column:
+    // the header promises exactly these three and each gets a third.
+    const std::string col_sep = " | ";
+    const int sep_w = static_cast<int>(col_sep.size());
+    const int avail = std::max(3, inner - 2 * sep_w);
+    const int col1_w = avail / 3;
+    const int col2_w = avail / 3;
+    const int col3_w = avail - col1_w - col2_w;
+    {
+        std::string header = pad_right(truncate_str("Filename", col1_w), col1_w) + col_sep
+                           + pad_right(truncate_str("Title", col2_w), col2_w) + col_sep
+                           + pad_right(truncate_str("Artist", col3_w), col3_w);
+        out.push_back(bar + " " + header_sgr(settings_)
+                      + pad_right(truncate_str(header, inner), inner) + "\x1b[0m " + bar);
+    }
+
     int total = static_cast<int>(playlist_edit_lib_view_.size());
     int scroll = std::clamp(playlist_edit_lib_selected_ - height / 2, 0, std::max(0, total - height));
-    const int idx_w = 3;
     for (int row = 0; row < height; ++row) {
         int idx = scroll + row;
         std::string content;
         if (idx < total) {
             const auto& t = playlist_edit_lib_view_[idx];
-            int title_w = std::max(5, inner - idx_w - 2);
-            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
-            // Shows the filename plus the real embedded title tag (once
-            // resolved), unlike list_row_title()'s either/or: this panel has
-            // no separate Artist/Duration columns and no "meta data only"
-            // toggle to fall back on, so both pieces of information need to
-            // fit in the one column that exists.
-            std::string t_title = apply_font_map(playlist_row_label(t.path, t.title), settings_.font_map);
+            std::string tag_title, tag_artist;
+            {
+                std::lock_guard<std::mutex> lk(row_meta_mutex_);
+                auto it = row_meta_cache_.find(path_utf8(t.path));
+                if (it != row_meta_cache_.end()) {
+                    tag_title = it->second.title;
+                    tag_artist = it->second.artist;
+                }
+            }
+            if (tag_title.empty()) tag_title = "-";
+            if (tag_artist.empty()) tag_artist = t.folder_artist.empty() ? std::string("-") : t.folder_artist;
+            std::string c_file = apply_font_map(t.title, settings_.font_map);
+            std::string c_title = apply_font_map(tag_title, settings_.font_map);
+            std::string c_artist = apply_font_map(tag_artist, settings_.font_map);
             // Every column padded to its own fixed width *before*
             // concatenating (rather than truncating the assembled whole
-            // afterward) -- matches build_list_panel()'s row construction.
-            // A one-off outer truncate/pad on the joined string is more
-            // exposed to a single title's display_width() landing a
-            // column short (an under-measured character widens the
-            // padding that follows it), which visibly shifts every
-            // border to its right; padding each piece independently
-            // can't drift the same way.
+            // afterward) -- matches build_list_panel()'s row construction,
+            // so one title's display_width() landing a column short can't
+            // shift every border to its right. The hovering row's
+            // filename scrolls (marquee) when it doesn't fit.
             bool row_focused_sel = (playlist_edit_focus_ == 1) && (idx == playlist_edit_lib_selected_);
-            std::string title_shown = row_focused_sel
-                ? marquee_or_truncate(t_title, title_w, idx, marquee_pl_lib_row_idx_, marquee_pl_lib_since_)
-                : pad_right(truncate_str(t_title, title_w), title_w);
-            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
-                    + pad_right(title_shown, title_w);
+            std::string file_shown = row_focused_sel
+                ? marquee_or_truncate(c_file, col1_w, idx, marquee_pl_lib_row_idx_, marquee_pl_lib_since_)
+                : pad_right(truncate_str(c_file, col1_w), col1_w);
+            content = file_shown + col_sep
+                    + pad_right(truncate_str(c_title, col2_w), col2_w) + col_sep
+                    + pad_right(truncate_str(c_artist, col3_w), col3_w);
         }
         bool sel = (playlist_edit_focus_ == 1) && (idx == playlist_edit_lib_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
@@ -4923,24 +4928,47 @@ std::vector<std::string> App::build_playlist_tracks_panel(int total_width, int h
         return out;
     }
 
+    // Same three equal columns as the LIBRARY pane above (Filename | Title |
+    // Artist, identical widths so they line up under its header) -- but no
+    // header row of its own, and no index column.
+    const std::string col_sep = " | ";
+    const int sep_w = static_cast<int>(col_sep.size());
+    const int avail = std::max(3, inner - 2 * sep_w);
+    const int col1_w = avail / 3;
+    const int col2_w = avail / 3;
+    const int col3_w = avail - col1_w - col2_w;
+
     int scroll = std::clamp(playlist_edit_track_selected_ - height / 2, 0, std::max(0, total - height));
-    const int idx_w = 3;
     for (int row = 0; row < height; ++row) {
         int idx = scroll + row;
         std::string content;
         if (idx < total) {
             const auto& t = playlist_edit_tracks_[idx];
-            int title_w = std::max(5, inner - idx_w - 2);
-            std::string base = playlist_row_label(t.path, t.title);
-            std::string shown = t.missing ? (base + " [missing]") : base;
-            std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
-            std::string t_title = apply_font_map(shown, settings_.font_map);
+            std::string tag_title, tag_artist;
+            {
+                std::lock_guard<std::mutex> lk(row_meta_mutex_);
+                auto it = row_meta_cache_.find(path_utf8(t.path));
+                if (it != row_meta_cache_.end()) {
+                    tag_title = it->second.title;
+                    tag_artist = it->second.artist;
+                }
+            }
+            if (tag_title.empty()) tag_title = "-";
+            if (tag_artist.empty()) {
+                std::string folder = path_utf8(t.path.parent_path().filename());
+                tag_artist = folder.empty() ? std::string("-") : folder;
+            }
+            std::string file_txt = t.missing ? (t.title + " [missing]") : t.title;
+            std::string c_file = apply_font_map(file_txt, settings_.font_map);
+            std::string c_title = apply_font_map(tag_title, settings_.font_map);
+            std::string c_artist = apply_font_map(tag_artist, settings_.font_map);
             bool row_focused_sel = (playlist_edit_focus_ == 2) && (idx == playlist_edit_track_selected_);
-            std::string title_shown = row_focused_sel
-                ? marquee_or_truncate(t_title, title_w, idx, marquee_pl_track_row_idx_, marquee_pl_track_since_)
-                : pad_right(truncate_str(t_title, title_w), title_w);
-            content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
-                    + pad_right(title_shown, title_w);
+            std::string file_shown = row_focused_sel
+                ? marquee_or_truncate(c_file, col1_w, idx, marquee_pl_track_row_idx_, marquee_pl_track_since_)
+                : pad_right(truncate_str(c_file, col1_w), col1_w);
+            content = file_shown + col_sep
+                    + pad_right(truncate_str(c_title, col2_w), col2_w) + col_sep
+                    + pad_right(truncate_str(c_artist, col3_w), col3_w);
         }
         bool sel = (playlist_edit_focus_ == 2) && (idx == playlist_edit_track_selected_) && idx < total;
         std::string padded = pad_right(truncate_str(content, inner), inner);
@@ -5120,16 +5148,17 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     // the frame past term_rows_ - 1 and scrolling the terminal.
     int panel_h = std::clamp(budget - fixed_rows - 5, 8, 22);
     if (playlist_tab_ == 0) {
-        int left_w = W / 2;
-        int right_w = W - left_w;
-        auto left_lines = build_playlist_library_panel(left_w, panel_h);
-        auto right_lines = build_playlist_tracks_panel(right_w, panel_h);
-        size_t rows = std::max(left_lines.size(), right_lines.size());
-        for (size_t i = 0; i < rows; ++i) {
-            std::string l = (i < left_lines.size()) ? left_lines[i] : std::string(left_w, ' ');
-            std::string r = (i < right_lines.size()) ? right_lines[i] : std::string(right_w, ' ');
-            frame << l << r << "\n";
-        }
+        // Stacked, full width: playlist box (above), LIBRARY, then TRACKS.
+        // The two panes together take exactly the lines the old side-by-
+        // side pair did (panel_h rows + 2 borders), so the whole screen
+        // keeps its height. LIBRARY spends 3 lines on chrome (top border,
+        // Filename|Title|Artist header, bottom border), TRACKS 2, which
+        // leaves panel_h - 3 data rows to split roughly 1:3.
+        int data_rows = std::max(5, panel_h - 3);
+        int lib_rows = std::max(2, data_rows / 4);
+        int track_rows = data_rows - lib_rows;
+        for (auto& l : build_playlist_library_panel(W, lib_rows)) frame << l << "\n";
+        for (auto& l : build_playlist_tracks_panel(W, track_rows)) frame << l << "\n";
     } else {
         for (auto& l : build_playlist_manage_panel(W, panel_h)) frame << l << "\n";
     }
@@ -6975,19 +7004,19 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 3) {
-        // Reference tab: the rebindable hotkeys grouped under category
-        // headers (kRefRows), then a read-only "HARDCODED / NOT
-        // REBINDABLE" section (kRefHardcoded), then the editable LOUDNESS
-        // NORMALIZATION rows (kNormLabels), then a read-only display
-        // of the font-mapping table (section 4 of the config, "A={A,a}"
-        // style) loaded from config.txt -- as "A = A, a" rows. Combined
-        // they're usually taller than the player view, so this scrolls as
-        // one list (viewport follows settings_row_, centered) rather than
-        // ever growing the panel past player_h. See ref_display_row() for
-        // how a selectable row maps to the row it's drawn on.
+        // Reference tab: the editable LOUDNESS NORMALIZATION rows
+        // (kNormLabels) first, then a one-line read-only note pointing at
+        // the cheat sheet, then the rebindable hotkeys grouped under
+        // category headers (kRefRows), then a read-only display of the
+        // font-mapping table (section 4 of the config, "A={A,a}" style)
+        // loaded from config.txt -- as "A = A, a" rows. Combined they're
+        // usually taller than the player view, so this scrolls as one list
+        // (viewport follows settings_row_, centered) rather than ever
+        // growing the panel past player_h. See ref_display_row() for how a
+        // selectable row maps to the row it's drawn on.
         std::vector<char> letters;
         for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-        int total_selectable = kRefRowCount + kRefHardcodedCount + kNormRowCount + static_cast<int>(letters.size());
+        int total_selectable = kRefEnd + static_cast<int>(letters.size());
         int display_count = ref_display_row(total_selectable - 1) + 1;
         int visible = std::max(1, MAX_Y - 3);
         int cur_display = ref_display_row(settings_row_);
@@ -7016,39 +7045,34 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             }
             disp++;
         };
-        auto draw_hotkey_row = [&](int i) {
+        auto draw_hotkey_row = [&](int selectable_row) {
+            const RefHotkeyRow& row = kRefRows[selectable_row - kRefStart];
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, pad(kRefRows[i].label, 25)); pos(y, 32, ":");
-                bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
-                bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
-                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
+                pos(y, 6, pad(row.label, 25)); pos(y, 32, ":");
+                bool sel = (selectable_row == settings_row_ && mode_ != Mode::ColorEdit);
+                bool ed = (selectable_row == settings_row_ && mode_ == Mode::ColorEdit);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(selectable_row, 0), 20);
                 pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                 y++;
             }
             disp++;
         };
-        auto draw_hardcoded_row = [&](int i, int selectable_row) {
-            // The label wraps at kRefLabelW cells instead of running past
-            // the ":" barrier (see ref_label_lines()), so a long command
-            // name takes a second display line: the ":" and the key stay on
-            // the first one, the continuation sits right below the label's
-            // head. disp++/y++ happen per drawn line, which is exactly what
-            // ref_display_row() counts for the scroll window and cursor.
-            const std::vector<std::string> parts = ref_label_lines(i);
-            bool sel = (selectable_row == settings_row_);
-            for (size_t p = 0; p < parts.size(); ++p) {
-                if (in_view()) {
-                    pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                    pos(y, 6, pad(parts[p], kRefLabelW));
-                    if (p == 0) {
-                        pos(y, 32, ":");
-                        pos(y, 35, (sel ? HI : "") + pad(kRefHardcoded[i].keys, 20) + R);
-                    }
-                    y++;
-                }
-                disp++;
+        auto draw_note = [&](const char* text) {
+            // blank spacer line, then the read-only note in dim grey.
+            // Two display lines, matching the `headers += 2` that
+            // ref_display_row() adds at kRefStart.
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                y++;
             }
+            disp++;
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, std::string("\x1b[90m") + text + R);
+                y++;
+            }
+            disp++;
         };
         auto draw_norm_row = [&](int i) {
             // LOUDNESS NORMALIZATION: same shape as a hotkey row, but the
@@ -7080,17 +7104,16 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             disp++;
         };
 
-        for (int i = 0; i < kRefRowCount && y < MAX_Y; ++i) {
-            if (kRefRows[i].header) draw_header(kRefRows[i].header);
-            if (y < MAX_Y) draw_hotkey_row(i);
-        }
-        if (y < MAX_Y) draw_header("HARDCODED / NOT REBINDABLE");
-        for (int i = 0; i < kRefHardcodedCount && y < MAX_Y; ++i) draw_hardcoded_row(i, kRefRowCount + i);
         if (y < MAX_Y) draw_header("LOUDNESS NORMALIZATION");
         for (int i = kNormStart; i < kNormEnd && y < MAX_Y; ++i) draw_norm_row(i);
+        if (y < MAX_Y) draw_note(kRefNote);
+        for (int i = 0; i < kRefRowCount && y < MAX_Y; ++i) {
+            if (kRefRows[i].header) draw_header(kRefRows[i].header);
+            if (y < MAX_Y) draw_hotkey_row(kRefStart + i);
+        }
         if (y < MAX_Y) draw_header("FONT / CHARACTER MAP");
         for (size_t li = 0; li < letters.size() && y < MAX_Y; ++li)
-            draw_font_row(letters[li], kNormEnd + static_cast<int>(li));
+            draw_font_row(letters[li], kRefEnd + static_cast<int>(li));
     } else if (settings_tab_ == 4) {
         // About App: shows settings_.about_app_lines (loaded verbatim
         // from config.txt's trailing ClassTextAboutApp={...}; block, not
@@ -7166,20 +7189,20 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             } else if (settings_tab_ == 3) {
                 // Reference tab scrolls once its row list exceeds the
                 // visible window -- the common case, since it holds every
-                // rebindable hotkey plus the hardcoded-keys section, the
-                // loudness-normalization rows and any font-map rows.
+                // rebindable hotkey plus the loudness-normalization rows
+                // and any font-map rows.
                 // Recompute the same scroll offset used when rendering (see
                 // the settings_tab_==3 branch above, and ref_display_row())
                 // so the text cursor lands on the row actually drawn there
                 // instead of one that's already scrolled off-screen. Reached
-                // only for the rebindable hotkeys and the loudness rows --
+                // only for the loudness rows and the rebindable hotkeys --
                 // the Enter handler blocks ColorEdit for the read-only
-                // hardcoded/font-map rows.
+                // font-map rows.
                 int visible = std::max(1, MAX_Y - 3);
                 int cur_display = ref_display_row(settings_row_);
                 std::vector<char> letters;
                 for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-                int total_selectable = kRefRowCount + kRefHardcodedCount + kNormRowCount + static_cast<int>(letters.size());
+                int total_selectable = kRefEnd + static_cast<int>(letters.size());
                 int display_count = ref_display_row(total_selectable - 1) + 1;
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);
@@ -7222,21 +7245,26 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
     std::string border = ansi_for(settings_.border_color, false);
     frame << box_top("CHEATSHEET", W, border) << "\n";
 
-    // Same shape as the Reference tab of Settings (kRefRows/kRefHardcoded):
+    // Similar shape to the Reference tab of Settings (kRefRows) for the
+    // rebindable hotkeys, but this screen is the ONE place that also lists
+    // every literal, non-rebindable key command -- the Reference tab no
+    // longer carries its own copy of those (see its own comment for why),
+    // so this table's rows are this app's entire command list, full stop.
     // `header` is set only on a category's first row and is drawn as a
-    // section title in the Header colour above a blank spacer row -- and the
-    // rows below it are that tab's ENTIRE command list, so the two screens
-    // can't drift apart. `action` is either
+    // section title in the Header colour above a blank spacer row. `action`
+    // is either
     //   * a plain action name, looked up in settings_.hotkeys, so the key
     //     shown is whatever the user actually has bound (config.txt /
     //     rebound in Settings), never a hardcoded assumption; or
-    //   * '#'-prefixed: a literal key label. SHIFT+B, Ctrl+Shift+S/D, ESC
-    //     and friends are checked as raw key codes in handle_*_key() (see
-    //     kRefHardcoded), so there is no hotkey entry to look them up in.
+    //   * '#'-prefixed: a literal key label. SHIFT+B, Ctrl+Shift+S/X, ESC,
+    //     the playlist/meta editors' own fixed navigation and text-editing
+    //     keys, and friends are checked as raw key codes in handle_*_key()
+    //     rather than looked up in settings_.hotkeys, so there is no hotkey
+    //     entry for them to reference.
     struct CheatRow { const char* header; const char* action; const char* desc; };
     static const CheatRow rows[] = {
         // --- Playback ---
-        {"PLAYBACK", "HKeyPlay", "Play the selected track"},
+        {"PLAYBACK (MAIN UI)", "HKeyPlay", "Play the selected track"},
         {nullptr, "HKeyTogglePlayPause", "Play / pause"},
         {nullptr, "HKeyPlayNextSong", "Play next in list/queue"},
         {nullptr, "HKeyPlayPreviousSong", "Play previous in list"},
@@ -7249,7 +7277,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyToggleMute", "Mute (without pausing)"},
         {nullptr, "HKeyToggleNormalize", "Toggle loudness normalization"},
         // --- Navigation & View ---
-        {"NAVIGATION & VIEW", "HKeyNavigateUp", "Explore list (up)"},
+        {"NAVIGATION & VIEW (MAIN UI)", "HKeyNavigateUp", "Explore list (up)"},
         {nullptr, "HKeyNavigateDown", "Explore list (down)"},
         {nullptr, "HKeySwitchBetweenCards", "Switch between panels"},
         {nullptr, "HKeyFilterForFolder", "Filter by folder"},
@@ -7261,22 +7289,41 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
         {nullptr, "HKeyRetryLyrics", "Retry lyrics"},
         // --- Search ---
-        {"SEARCH", "HKeySearch", "Search local folder"},
+        {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
         {nullptr, "HKeySearchPlaylist", "Search saved playlists (type /p:query)"},
         // --- Queue ---
-        {"QUEUE", "HKeyAddHoveringSongToQueue", "Add hovering track to queue"},
+        {"QUEUE (MAIN UI)", "HKeyAddHoveringSongToQueue", "Add hovering track to queue"},
         {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove hovering track from queue"},
         {nullptr, "HKeyQueueMoveUp", "Move hovering queue item up"},
         {nullptr, "HKeyQueueMoveDown", "Move hovering queue item down"},
-        // --- Playlists ---
-        {"PLAYLISTS", "HKeyPlaylist", "Create/manage playlists"},
-        // --- Meta editor ---
+        // --- Playlists -- HKeyPlaylist opens the overlay; every other row
+        // is the playlist editor's own fixed legend (build_playlist_screen()'s
+        // footer), none of which is a rebindable hotkey.
+        {"PLAYLISTS", "HKeyPlaylist", "Open Playlists (create / manage)"},
+        {nullptr, "#ALT+LEFT/RIGHT", "Switch tab (Create/Edit vs Saved Playlists)"},
+        {nullptr, "#TAB", "Cycle focus (name field / library picker / track list)"},
+        {nullptr, "#UP/DOWN", "Navigate the focused list/picker (fixed arrow keys)"},
+        {nullptr, "#ENTER", "Add hovering track to playlist / load selected playlist"},
+        {nullptr, "#4 / 5", "Move the hovering track up/down"},
+        {nullptr, "#D / DEL / BACKSPACE", "Remove hovering track / delete selected playlist"},
+        {nullptr, "#HOME", "Save the playlist"},
+        {nullptr, "#SHIFT+LEFT/RIGHT", "Mark text (name / search fields)"},
+        {nullptr, "#CTRL+C/X/V", "Copy / cut / paste text"},
+        // --- Meta editor -- same deal: HKeyMetaEditor opens it, everything
+        // else is build_meta_screen()'s own fixed legend (both tabs).
         {"META EDITOR", "HKeyMetaEditor", "Meta editor: edit file name / artist / title / album / year"},
+        {nullptr, "#LEFT/RIGHT", "Switch tab (Edit vs Fetch List)"},
         {nullptr, "#TAB", "Meta editor: cycle panels (search / library / fields)"},
+        {nullptr, "#UP/DOWN", "Navigate the focused list/picker (fixed arrow keys)"},
+        {nullptr, "#ENTER", "Edit the hovering field (Fetch List tab: fetch the whole list)"},
+        {nullptr, "#SHIFT+LEFT/RIGHT", "Mark text (field editor)"},
+        {nullptr, "#CTRL+C/X/V", "Copy / cut / paste text (field editor)"},
         {nullptr, "#a", "Meta editor: add the hovering file to the fetch list"},
         {nullptr, "#r", "Meta editor: toggle edited files on top of the library pane"},
+        {nullptr, "#x / SHIFT+T / SHIFT+A / SHIFT+Y", "Filter library: missing any / title / artist / year"},
         {nullptr, "#SHIFT+B", "Fetch metadata for the hovered title (AcoustID)"},
+        {nullptr, "#DEL / d", "Remove hovering track from the fetch list"},
         {nullptr, "#CTRL+SHIFT+S", "Apply the meta editor's pending edits to the files"},
         {nullptr, "#CTRL+SHIFT+X", "Discard the meta editor's pending edits"},
         // --- Listening history ---
@@ -7285,21 +7332,19 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#ARROWS", "History overlay: move the cursor / scroll Habits"},
         {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
         // --- Downloads ---
-        {"DOWNLOADS", "HKeyDownloadStream", "Download stream to 1st local path"},
+        {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
         // --- System ---
-        {"SYSTEM", "HKeySetting", "Settings panel"},
+        {"SYSTEM (MAIN UI)", "HKeySetting", "Settings panel"},
         {nullptr, "HKeyConsole", "Console / logs"},
         {nullptr, "HKeyCheatsheet", "This cheatsheet"},
         {nullptr, "HKeyQuit", "Quit"},
-        // --- The literal keys kRefHardcoded lists on the Reference tab ---
+        // --- Literal keys used across multiple overlays, not tied to one
+        // editor's own legend above ---
         {"HARDCODED / NOT REBINDABLE", "#ESC", "Close setting / overlay / menu"},
         {nullptr, "#S", "Save and quit Settings"},
-        {nullptr, "#ENTER", "Confirm / select (meta editor: fetch the whole list)"},
-        {nullptr, "#ARROW KEYS", "Navigate (meta editor: left/right switch tab)"},
+        {nullptr, "#ENTER", "Confirm / select"},
+        {nullptr, "#ARROW KEYS", "Navigate (context-dependent)"},
         {nullptr, "#Y / N", "Confirm or cancel a prompt"},
-        {nullptr, "#4 / 5", "Move the track up/down (playlist editor)"},
-        {nullptr, "#D / DEL / BACKSPACE", "Removal commands (playlist editor: delete tracks)"},
-        {nullptr, "#HOME", "Save the playlist (playlist editor)"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
