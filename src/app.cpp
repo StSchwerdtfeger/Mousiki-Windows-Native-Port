@@ -1094,9 +1094,21 @@ const char* App::sort_mode_name(int mode) {
 // background resolver catches up.
 void App::apply_local_sort(std::vector<LocalTrack>& tracks) const {
     if (local_sort_mode_ == 1) {
-        std::stable_sort(tracks.begin(), tracks.end(), [](const LocalTrack& a, const LocalTrack& b) {
-            return lower(a.title) < lower(b.title);
-        });
+        // Sort by the title the row actually SHOWS: the filename-derived one,
+        // or -- with "Show metadata only" (Shift+N) on -- the embedded title
+        // tag where one has been resolved (list_row_title() falls back to the
+        // filename otherwise, exactly like the row does). Keys are built once
+        // up front instead of taking row_meta_mutex_ on every comparison.
+        std::vector<std::pair<std::string, size_t>> keyed;
+        keyed.reserve(tracks.size());
+        for (size_t i = 0; i < tracks.size(); ++i)
+            keyed.emplace_back(lower(list_row_title(tracks[i].path, tracks[i].title)), i);
+        std::stable_sort(keyed.begin(), keyed.end(),
+                         [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<LocalTrack> sorted;
+        sorted.reserve(tracks.size());
+        for (const auto& k : keyed) sorted.push_back(std::move(tracks[k.second]));
+        tracks = std::move(sorted);
     } else if (local_sort_mode_ == 2) {
         std::stable_sort(tracks.begin(), tracks.end(), [this](const LocalTrack& a, const LocalTrack& b) {
             auto artist_of = [this](const LocalTrack& t) {
@@ -1131,6 +1143,24 @@ void App::refresh_local_view() {
     local_view_ = filter_and_rank_local_view(last_local_query_);
     selected_ = 0;
     scroll_ = 0;
+}
+
+// Rebuilds the local list after something changed HOW rows are titled or
+// ordered (the Shift+N metadata-only toggle), keeping the cursor on the same
+// track instead of jumping to the top like refresh_local_view() does.
+void App::resort_local_view_keep_selection() {
+    if (list_source_ != ListSource::Local) return;
+    fs::path prev;
+    const bool had = selected_ >= 0 && selected_ < static_cast<int>(local_view_.size());
+    if (had) prev = local_view_[static_cast<size_t>(selected_)].path;
+    local_view_ = filter_and_rank_local_view(last_local_query_);
+    selected_ = 0;
+    if (had) {
+        for (size_t i = 0; i < local_view_.size(); ++i)
+            if (local_view_[i].path == prev) { selected_ = static_cast<int>(i); break; }
+    }
+    scroll_ = std::max(0, selected_ - list_visible_rows_ / 2);
+    if (scroll_ > selected_) scroll_ = selected_;
 }
 
 // Re-runs the local library scan over whatever settings_.local_music_paths
@@ -2782,6 +2812,7 @@ void App::settings_cycle(int dir) {
     if (settings_tab_ == 1 && settings_row_ == 9) {
         status_line_ = settings_.meta_only ? "lists: metadata only (no filename)"
                                            : "lists: filename + metadata";
+        resort_local_view_keep_selection();
     }
 }
 
@@ -3406,6 +3437,7 @@ void App::handle_key(int key) {
                                               : "lists: filename + metadata";
         status_line_ = msg;
         log_event(msg);
+        resort_local_view_keep_selection(); // "title A-Z" follows the displayed title
         force_redraw_ = true;
     } else if (action == "HKeyToggleMute") { // force volume to 0 without touching pause state
         if (!muted_) {
@@ -3424,6 +3456,10 @@ void App::handle_key(int key) {
         if (list_source_ == ListSource::Local && !local_view_.empty() &&
             selected_ >= 0 && selected_ < static_cast<int>(local_view_.size())) {
             folder_filter_ = path_utf8(local_view_[selected_].path.parent_path());
+            // Filtering by folder also drops back to folder order (T cycles
+            // away from it again), so the pane title reads "sort: folder
+            // order" and the files sit in the order they are on disk.
+            local_sort_mode_ = 0;
             refresh_local_view();
             log_event("filtered: " + path_utf8(path_from_utf8(folder_filter_).filename()));
         }
@@ -4366,7 +4402,10 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
     bool playlists_mode = (list_source_ == ListSource::Playlist);
     std::string label = online ? "ONLINE RESULTS"
                        : playlists_mode ? "SAVED PLAYLISTS (Enter: queue all)"
-                       : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_)) + ")";
+                       : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_))
+                         + (folder_filter_.empty() ? std::string()
+                            : ", folder: " + path_utf8(path_from_utf8(folder_filter_).filename()) + " [c] clear")
+                         + ")";
     size_t total = online ? online_view_.size() : playlists_mode ? playlist_view_.size() : local_view_.size();
     int inner = total_width - 4;
     std::string border_ansi = ansi_for(settings_.border_color, false);

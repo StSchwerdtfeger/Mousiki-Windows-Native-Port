@@ -796,6 +796,7 @@ private:
     std::vector<LocalTrack> filter_and_rank_local(const std::string& query) const;
     void apply_local_sort(std::vector<LocalTrack>& tracks) const;
     std::vector<LocalTrack> filter_and_rank_local_view(const std::string& query) const; // + folder filter
+    void resort_local_view_keep_selection(); // after Shift+N: re-sort, cursor stays on the same track
     static const char* sort_mode_name(int mode);
     void submit_search();
     void start_local_track(const LocalTrack& track);
