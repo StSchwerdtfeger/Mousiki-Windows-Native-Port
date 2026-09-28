@@ -32,7 +32,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue };
 enum class ListSource { Local, Online, Playlist };
 
 struct QueueItem {
@@ -313,7 +313,13 @@ private:
     int history_scroll_ = 0;           // manual scroll offset (tab 2's content)
     bool history_most_first_ = true;   // 'r' on the Top Tracks tab
     std::vector<HistoryTopRow> history_top_view_; // rebuilt by history_refresh_top()
-    std::string history_status_;       // footer status line, set by 'r'
+    std::string history_status_;       // footer status line, set by 'r' / the queue adds
+    // Top Tracks tab only: it is split into two stacked panes. 0 = the track
+    // list (Up/Down move its cursor), 1 = the "ADD TOP TRACKS TO QUEUE" pane
+    // below it (Up/Down pick Top 10/25/50/100, Enter queues them). TAB toggles.
+    int history_pane_ = 0;
+    int history_add_sel_ = 0;          // 0..3 -> kHistoryAddCounts[]
+    static constexpr int kHistoryAddCounts[4] = {10, 25, 50, 100};
     HistoryStore history_;             // the store itself (also used outside this overlay)
 
     void history_open();               // HKeyHistory entry point
@@ -324,6 +330,11 @@ private:
     // of build_history_panel()).
     void build_history_screen(std::ostringstream& frame, int W, int player_h);
     std::vector<std::string> build_history_panel(int width, int height);
+    std::vector<std::string> build_history_add_panel(int width, int height) const; // Top Tracks tab, 2nd pane
+    // Queues the n most-played titles (always most-played first, whatever
+    // order the Top Tracks list is currently showing). Local files that no
+    // longer exist are skipped and reported, like a playlist add.
+    void history_add_top_to_queue(int n);
     // Play bookkeeping: called from poll_pending_load()/advance_track() when a
     // track starts or is handed over, and from the frame loop to accrue time.
     void history_end_current_play();   // closes the live record (no-op if none) + saves
@@ -784,6 +795,7 @@ private:
     void update_live_search_preview();
     std::vector<LocalTrack> filter_and_rank_local(const std::string& query) const;
     void apply_local_sort(std::vector<LocalTrack>& tracks) const;
+    std::vector<LocalTrack> filter_and_rank_local_view(const std::string& query) const; // + folder filter
     static const char* sort_mode_name(int mode);
     void submit_search();
     void start_local_track(const LocalTrack& track);
@@ -820,6 +832,13 @@ private:
     void queue_add_selected();
     void queue_remove_last();
     void queue_remove_hovering();
+    // Shift+X (HKeyClearQueue): asks "Want to clear queue?" (Mode::ClearQueue,
+    // a floating Yes/No panel like Bulk Add / Retry Lyrics) before queue_clear()
+    // actually empties queue_. The default choice is No.
+    void queue_clear();
+    int clear_queue_choice_ = 1;       // 0 = Yes, 1 = No
+    static constexpr int kClearQueuePanelWidth = 40;
+    std::vector<std::string> build_clear_queue_panel() const;
     void queue_move_hovering(int dir); // dir=-1 up, +1 down
     void clamp_queue_selected();
     void handle_key(int key);

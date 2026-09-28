@@ -1110,19 +1110,25 @@ void App::apply_local_sort(std::vector<LocalTrack>& tracks) const {
     // mode 0: leave as scanned (folder order) -- no-op
 }
 
-void App::refresh_local_view() {
-    local_view_ = filter_and_rank_local(last_local_query_);
-    // Folder filter (HKeyFilterForFolder) stacks on top of the search/sort
-    // result rather than replacing it, so filtering-by-folder while a
-    // search is active narrows to just that folder's matches.
-    if (!folder_filter_.empty()) {
-        std::vector<LocalTrack> filtered;
-        filtered.reserve(local_view_.size());
-        for (auto& t : local_view_) {
-            if (path_utf8(t.path.parent_path()) == folder_filter_) filtered.push_back(t);
-        }
-        local_view_ = std::move(filtered);
+// Folder filter (HKeyFilterForFolder) stacks on top of the search/sort
+// result rather than replacing it, so filtering-by-folder while a search is
+// active narrows to just that folder's matches. Every place that rebuilds
+// local_view_ must go through this (or refresh_local_view()): the background
+// tag resolver re-filters the list every time new tags land, and a rebuild
+// that skipped the folder filter silently undid 'f' a frame or two later.
+std::vector<LocalTrack> App::filter_and_rank_local_view(const std::string& query) const {
+    std::vector<LocalTrack> view = filter_and_rank_local(query);
+    if (folder_filter_.empty()) return view;
+    std::vector<LocalTrack> filtered;
+    filtered.reserve(view.size());
+    for (auto& t : view) {
+        if (path_utf8(t.path.parent_path()) == folder_filter_) filtered.push_back(std::move(t));
     }
+    return filtered;
+}
+
+void App::refresh_local_view() {
+    local_view_ = filter_and_rank_local_view(last_local_query_);
     selected_ = 0;
     scroll_ = 0;
 }
@@ -1187,7 +1193,7 @@ void App::update_live_search_preview() {
 
     if (buf.size() >= 2 && lower(buf.substr(0, 2)) == "s:") {
         list_source_ = pre_search_list_source_;
-        local_view_ = filter_and_rank_local(pre_search_local_query_);
+        local_view_ = filter_and_rank_local_view(pre_search_local_query_);
         selected_ = 0;
         scroll_ = 0;
         return;
@@ -1207,7 +1213,7 @@ void App::update_live_search_preview() {
     }
 
     list_source_ = ListSource::Local;
-    local_view_ = filter_and_rank_local(buf);
+    local_view_ = filter_and_rank_local_view(buf);
     selected_ = 0;
     scroll_ = 0;
 }
@@ -1937,6 +1943,13 @@ void App::queue_remove_hovering() {
     clamp_queue_selected();
 }
 
+void App::queue_clear() {
+    const size_t n = queue_.size();
+    queue_.clear();
+    clamp_queue_selected(); // empty queue -> cursor and scroll back to 0
+    log_event("queue cleared (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + " removed)");
+}
+
 void App::queue_move_hovering(int dir) {
     if (queue_.empty()) return;
     int target = queue_selected_ + dir;
@@ -2197,6 +2210,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove From Queue"},
     {nullptr, "HKeyQueueMoveUp", "Queue Move Up"},
     {nullptr, "HKeyQueueMoveDown", "Queue Move Down"},
+    {nullptr, "HKeyClearQueue", "Clear Queue"},
     // --- Playlists ---
     {"PLAYLISTS", "HKeyPlaylist", "Open Playlist Editor"}, // opens the playlist create/manage screen
     // --- Meta editor ---
@@ -3005,6 +3019,26 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::ClearQueue) {
+        // "Want to clear queue?" -- Left/Right/TAB move between Yes and No,
+        // Enter takes the highlighted one, y / n answer directly, ESC is No.
+        // Any OTHER key also cancels (nothing is cleared): this mode must never
+        // be a place where keys vanish silently, or a popup that is hard to
+        // see would look like a frozen UI. Cancelling is always the safe side.
+        const bool arrow = last_key_was_arrow();
+        if (arrow && (key == 'C' || key == 'D')) { clear_queue_choice_ = (key == 'D') ? 0 : 1; return; } // Left=Yes, Right=No
+        if (!arrow && key == 9) { clear_queue_choice_ ^= 1; return; }
+        if (!arrow && (key == 'y' || key == 'Y')) { mode_ = Mode::Browse; queue_clear(); return; }
+        if (!arrow && (key == '\r' || key == '\n')) {
+            mode_ = Mode::Browse;
+            if (clear_queue_choice_ == 0) queue_clear();
+            return;
+        }
+        mode_ = Mode::Browse; // n / N / ESC / anything else: No
+        status_line_.clear();
+        return;
+    }
+
     if (mode_ == Mode::Cheatsheet) {
         if (key == 27 || key == '?') mode_ = Mode::Browse;
         else if (key == 'A') --cheatsheet_scroll_; // up -- the table is longer than the screen
@@ -3318,6 +3352,13 @@ void App::handle_key(int key) {
         } else {
             queue_add_selected();
             log_event("added to queue");
+        }
+    } else if (action == "HKeyClearQueue") { // SHIFT+X: clear the whole queue, after a Yes/No confirmation
+        if (queue_.empty()) {
+            status_line_ = "queue is already empty";
+        } else {
+            clear_queue_choice_ = 1; // default to No so a stray Enter never wipes the queue
+            mode_ = Mode::ClearQueue;
         }
     } else if (action == "HKeyRemoveHoveringSongFromQueue") {
         queue_remove_hovering();
@@ -3735,7 +3776,7 @@ void App::poll_pending_row_meta_tags() {
     bool had_selection = selected_ >= 0 && selected_ < static_cast<int>(local_view_.size());
     if (had_selection) prev_selected_path = local_view_[static_cast<size_t>(selected_)].path;
 
-    local_view_ = filter_and_rank_local(q);
+    local_view_ = filter_and_rank_local_view(q);
 
     if (had_selection) {
         selected_ = 0;
@@ -6441,6 +6482,8 @@ void App::history_open() {
     history_tab_ = 0;
     history_selected_ = 0;
     history_scroll_ = 0;
+    history_pane_ = 0;
+    history_add_sel_ = 0;
     history_status_.clear();
     if (history_.plays().empty())
         history_status_ = "nothing played yet in this installation";
@@ -6487,6 +6530,43 @@ void App::history_begin_current_play() {
     history_.begin_play(p);
 }
 
+void App::history_add_top_to_queue(int n) {
+    // Ranked independently of the list above (which 'r' can flip to
+    // least-played first): "top N" always means the N most-played titles.
+    const std::vector<HistoryTopRow> top = history_top(history_.plays(), /*most_first=*/true);
+    if (top.empty()) {
+        history_status_ = "nothing played yet -- nothing to queue";
+        return;
+    }
+    const int take = std::min(n, static_cast<int>(top.size()));
+    int added = 0, missing = 0;
+    for (int i = 0; i < take; ++i) {
+        const HistoryTopRow& r = top[static_cast<size_t>(i)];
+        // The record only keeps the title; the artist comes from the newest
+        // play of the same track (plays_ is newest-first).
+        std::string artist;
+        for (const HistoryPlay& p : history_.plays()) {
+            if (p.id == r.id) { artist = p.artist; break; }
+        }
+        if (r.id.compare(0, 3, "yt:") == 0) {
+            queue_.push_back({false, r.title, artist, {}, r.id.substr(3)});
+            ++added;
+        } else {
+            fs::path path = path_from_utf8(r.id);
+            std::error_code ec;
+            if (!fs::exists(path, ec)) { ++missing; continue; } // moved/deleted since it was played
+            queue_.push_back({true, r.title, artist, path, ""});
+            ++added;
+        }
+    }
+    clamp_queue_selected();
+    std::string msg = "queued " + std::to_string(added) + " of top " + std::to_string(n) + " tracks";
+    if (take < n) msg += " (only " + std::to_string(take) + " played so far)";
+    if (missing > 0) msg += " (" + std::to_string(missing) + " missing, skipped)";
+    history_status_ = msg;
+    log_event(msg);
+}
+
 void App::handle_history_key(int key) {
     if (key == 0) return;
     const bool arrow = last_key_was_arrow();
@@ -6494,6 +6574,15 @@ void App::handle_history_key(int key) {
     // Leaving: ESC, or SHIFT+H again -- the very key that opened this
     // (nothing here is a text field, so an uppercase 'H' is always that key).
     if (key == 27 || (key == 'H' && !arrow)) { mode_ = Mode::Browse; return; }
+
+    // Top Tracks tab: TAB does not cycle the tab strip there, it switches
+    // between the two panes (the track list and ADD TOP TRACKS TO QUEUE).
+    // Left/Right and 1/2/3 still move between tabs.
+    if (key == 9 && history_tab_ == 1) {
+        history_pane_ ^= 1;
+        history_status_.clear();
+        return;
+    }
 
     // Tab strip: Left/Right or TAB cycles, 1/2/3 jumps outright.
     if ((arrow && (key == 'C' || key == 'D')) || key == 9) {
@@ -6505,6 +6594,7 @@ void App::handle_history_key(int key) {
         history_tab_ = (history_tab_ + dir + 3) % 3;
         history_selected_ = 0;
         history_scroll_ = 0;
+        history_pane_ = 0;
         history_status_.clear();
         return;
     }
@@ -6512,8 +6602,17 @@ void App::handle_history_key(int key) {
         history_tab_ = key - '1';
         history_selected_ = 0;
         history_scroll_ = 0;
+        history_pane_ = 0;
         history_status_.clear();
         return;
+    }
+
+    // Top Tracks tab, lower pane focused: Up/Down pick Top 10/25/50/100 and
+    // Enter queues that many. (Enter does nothing while the list is focused.)
+    if (history_tab_ == 1 && history_pane_ == 1) {
+        if (arrow && key == 'A') { if (history_add_sel_ > 0) --history_add_sel_; return; }
+        if (arrow && key == 'B') { if (history_add_sel_ < 3) ++history_add_sel_; return; }
+        if (key == '\r' || key == '\n') { history_add_top_to_queue(kHistoryAddCounts[history_add_sel_]); return; }
     }
 
     // Up/Down: a cursor on the two list tabs, plain scrolling on Habits
@@ -6582,13 +6681,23 @@ void App::build_history_screen(std::ostringstream& frame, int W, int target_heig
     // what clamp_output_rows() keeps, target_height is what the other
     // overlays use. 5 = the panel's own two border rows + the three footer rows.
     int budget = std::min(target_height, term_rows_ - 1);
-    int panel_h = std::clamp(budget - fixed_rows - 5, 6, 22);
+    // Top Tracks carries a second pane (ADD TOP TRACKS TO QUEUE: four option
+    // rows + its own two border rows) below the list, so the list gives those
+    // rows up -- the whole tab still adds up to `budget` lines (29 on a
+    // 30-line terminal).
+    const bool top_tab = (history_tab_ == 1);
+    const int add_body = 4;                       // Top 10 / 25 / 50 / 100
+    const int add_rows = top_tab ? add_body + 2 : 0;
+    int panel_h = std::clamp(budget - fixed_rows - 5 - add_rows, top_tab ? 3 : 6, 22);
     for (const auto& l : build_history_panel(W, panel_h)) frame << l << "\n";
+    if (top_tab)
+        for (const auto& l : build_history_add_panel(W, add_body)) frame << l << "\n";
 
     // Footer: two legend rows + one status row, always exactly three, so a
     // message appearing can never change the height of what sits above it.
-    const std::string hint =
-        "[\u2190\u2192/TAB] Tab | [1/2/3] Tab | [\u2191\u2193] Move | [r] Flip sort | [ESC] Exit";
+    const std::string hint = (history_tab_ == 1)
+        ? "[\u2190\u2192] Tab | [1/2/3] Tab | [TAB] Switch pane | [\u2191\u2193] Move | [ENTER] Add to queue | [r] Flip sort | [ESC] Exit"
+        : "[\u2190\u2192/TAB] Tab | [1/2/3] Tab | [\u2191\u2193] Move | [r] Flip sort | [ESC] Exit";
     std::vector<std::string> hint_lines(1);
     size_t pos = 0;
     for (;;) {
@@ -6735,12 +6844,41 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
         const std::string& text = lines[static_cast<size_t>(k)].first;
         const int style = lines[static_cast<size_t>(k)].second;
         if (style == 1) head(text);
-        else if (style == 2 || k == cursor)
+        else if (style == 2 || (k == cursor && !(history_tab_ == 1 && history_pane_ == 1)))
             row(text, cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color));
         else row(text, "");
     }
     while (shown < body) { blank(); ++shown; }
 
+    out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+    return out;
+}
+
+// Top Tracks tab, second pane: one row per selectable count. The cursor is
+// only drawn while this pane has focus (history_pane_ == 1).
+std::vector<std::string> App::build_history_add_panel(int total_width, int height) const {
+    const int inner = std::max(20, total_width - 4);
+    std::string border_ansi = ansi_for(settings_.border_color, false);
+    std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
+    const std::string R = "\x1b[0m";
+    std::vector<std::string> out;
+    out.push_back(box_top("ADD TOP TRACKS TO QUEUE", total_width, border_ansi));
+
+    const int played = static_cast<int>(history_top_view_.size()); // distinct titles, whatever the sort
+    const bool focused = (history_pane_ == 1);
+    for (int i = 0; i < std::max(1, height); ++i) {
+        std::string text, sgr;
+        if (i < 4) {
+            const int n = kHistoryAddCounts[i];
+            text = " Top " + std::to_string(n) + " tracks";
+            if (played == 0) text += "  (nothing played yet)";
+            else if (played < n) text += "  (only " + std::to_string(played) + " played so far)";
+            if (focused && i == history_add_sel_)
+                sgr = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
+        }
+        out.push_back(bar + " " + sgr + pad_right(truncate_str(text, inner), inner) + R + " " + bar);
+    }
     out.push_back(box_bottom(total_width, "", border_ansi_bottom));
     return out;
 }
@@ -7308,6 +7446,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove hovering track from queue"},
         {nullptr, "HKeyQueueMoveUp", "Move hovering queue item up"},
         {nullptr, "HKeyQueueMoveDown", "Move hovering queue item down"},
+        {nullptr, "HKeyClearQueue", "Clear the whole queue (asks Yes / No first)"},
         // --- Playlists -- HKeyPlaylist opens the overlay; every other row
         // is the playlist editor's own fixed legend (build_playlist_screen()'s
         // footer), none of which is a rebindable hotkey.
@@ -7342,6 +7481,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
         {nullptr, "#ARROWS", "History overlay: move the cursor / scroll Habits"},
         {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
+        {nullptr, "#TAB / ENTER", "Top Tracks tab: switch pane / add top 10-25-50-100 to queue"},
         // --- Downloads ---
         {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
     };
@@ -7634,6 +7774,49 @@ void App::rl_submit() {
     mode_ = Mode::Browse;
 }
 
+// "Want to clear queue?" -- small Yes/No confirmation, stamped over the live
+// Browse view by draw_floating_panel() like Bulk Add / Retry Lyrics. Fixed
+// size (8 rows x kClearQueuePanelWidth) so it overwrites cleanly without a clear.
+std::vector<std::string> App::build_clear_queue_panel() const {
+    const int W = kClearQueuePanelWidth;
+    const int inner = W - 4;
+    std::string border = ansi_for(settings_.border_color, false);
+    std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string R = "\x1b[0m", HI = "\x1b[7m";
+    const std::string bar = border + settings_.box_vertical + R;
+
+    // Centred plain-text row. Only ever fed plain text (display_width() counts
+    // escape bytes as columns), so the highlighted buttons are built below.
+    auto centred = [&](const std::string& plain) {
+        const int fill = std::max(0, inner - display_width(plain));
+        const int left = fill / 2;
+        return bar + " " + std::string(static_cast<size_t>(left), ' ') + plain +
+               std::string(static_cast<size_t>(fill - left), ' ') + " " + bar;
+    };
+
+    const size_t n = queue_.size();
+    const std::string yes = "  Yes  ", no = "  No  ", gap = "    ";
+    const int btn_w = display_width(yes) + display_width(gap) + display_width(no);
+    const int fill = std::max(0, inner - btn_w);
+    const int left = fill / 2;
+    const std::string buttons =
+        bar + " " + std::string(static_cast<size_t>(left), ' ') +
+        (clear_queue_choice_ == 0 ? HI + yes + R : yes) + gap +
+        (clear_queue_choice_ == 1 ? HI + no + R : no) +
+        std::string(static_cast<size_t>(fill - left), ' ') + " " + bar;
+
+    std::vector<std::string> lines;
+    lines.push_back(box_top("Clear Queue", W, border));
+    lines.push_back(centred(""));
+    lines.push_back(centred("Want to clear queue?"));
+    lines.push_back(centred(std::to_string(n) + " track" + (n == 1 ? "" : "s") + " will be removed"));
+    lines.push_back(centred(""));
+    lines.push_back(buttons);
+    lines.push_back(centred(""));
+    lines.push_back(box_bottom(W, "[y / n]  [ENTER] confirm", border_bottom));
+    return lines;
+}
+
 std::vector<std::string> App::build_retry_lyrics_panel() const {
     const int W = kRetryLyricsPanelWidth; // 62, matches the reference design
     const int label_w = 14;               // left label column, blank on box top/bottom rows
@@ -7787,7 +7970,7 @@ std::string App::render_frame(TerminalIO& term) {
     // change always has.
     auto mode_family = [](Mode m) {
         switch (m) {
-            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: return 0;
+            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: return 0;
             case Mode::Settings: case Mode::ColorEdit: return 1;
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
@@ -7997,32 +8180,40 @@ std::string App::render_frame(TerminalIO& term) {
 
     frame << "\x1b[0J";
 
-    // Bulk Add / Retry Lyrics: stamp their floating panel on top of the
-    // still-live background just built above, rather than replacing it.
-    // Uses absolute positioning (draw_floating_panel()), so it's simply
-    // appended after the background's own sequential top-to-bottom
-    // writes -- whichever content lands on a given screen cell last in
-    // the stream wins, and the panel is emitted after, so it draws over
-    // the background wherever they overlap without needing a clear.
-    if (mode_ == Mode::BulkAdd) {
-        draw_floating_panel(frame, build_bulk_add_panel(), kBulkAddPanelWidth, W);
-    } else if (mode_ == Mode::RetryLyrics) {
-        draw_floating_panel(frame, build_retry_lyrics_panel(), kRetryLyricsPanelWidth, W);
-    }
-
     // Hard safety net on top of the list_visible_rows_ sizing above: even
     // if the fixed chrome alone (metadata+progress+search bar) is taller
     // than the terminal -- a case list_visible_rows_ can't do anything
     // about, since it only controls the list panel -- this guarantees
     // the actual byte stream handed to the terminal never contains more
     // rows than the terminal has, so it structurally cannot scroll no
-    // matter what future panels/config combinations produce. Only
-    // applied to the background portion's line count implicitly (the
-    // floating panel's absolute-positioned writes come after and are
-    // already bounds-checked by draw_floating_panel() itself, so
-    // clamping here by counting trailing '\n's is still correct -- the
-    // panel's writes don't add any that would trip this).
-    return clamp_output_rows(frame.str(), term_rows_);
+    // matter what future panels/config combinations produce.
+    std::string out = clamp_output_rows(frame.str(), term_rows_);
+
+    // Bulk Add / Retry Lyrics / Clear Queue: stamp their floating panel on top
+    // of the still-live background just built above, rather than replacing
+    // it. Uses absolute positioning (draw_floating_panel()), so it is simply
+    // appended after the background's own sequential top-to-bottom writes --
+    // whichever content lands on a given screen cell last in the stream
+    // wins, and the panel is emitted after, so it draws over the background
+    // wherever they overlap without needing a clear.
+    //
+    // It MUST be appended after the clamp above, not before: on a terminal
+    // where the background already fills term_rows_ - 1 lines (any terminal
+    // too short for the full-height list, e.g. 30 rows), clamp_output_rows()
+    // cuts everything after the last kept newline -- which used to include
+    // the panel, so it never appeared while the mode still swallowed keys.
+    // The panel adds no '\n' (absolute moves only) and draw_floating_panel()
+    // already keeps it inside the screen, so it cannot cause a scroll.
+    std::ostringstream floating;
+    if (mode_ == Mode::BulkAdd) {
+        draw_floating_panel(floating, build_bulk_add_panel(), kBulkAddPanelWidth, W);
+    } else if (mode_ == Mode::RetryLyrics) {
+        draw_floating_panel(floating, build_retry_lyrics_panel(), kRetryLyricsPanelWidth, W);
+    } else if (mode_ == Mode::ClearQueue) {
+        draw_floating_panel(floating, build_clear_queue_panel(), kClearQueuePanelWidth, W);
+    }
+    out += floating.str();
+    return out;
 }
 
 // Keeps at most (term_rows - 1) lines of `frame` (the -1 leaves the

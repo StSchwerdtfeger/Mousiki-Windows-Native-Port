@@ -349,6 +349,9 @@ void apply_default_hotkeys(Settings& s) {
             // nothing claimed plain "h", but SHIFT+H is what the overlay is
             // entered with.
             {"HKeyHistory",                     "H"},
+            // Shift+X: clear the whole queue (after a Yes/No confirmation).
+            // Uppercase on purpose -- plain "x" is HKeyToggleMute.
+            {"HKeyClearQueue",                  "X"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
