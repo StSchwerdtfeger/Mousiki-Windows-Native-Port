@@ -40,7 +40,7 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
 
-## Current Status of the Port and Modification (Release v1.9.0, 28.09.2026)
+## Current Status of the Port and Modification (Release v2.0.0, 28.09.2026)
 
 For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
 Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creater would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
@@ -156,7 +156,7 @@ See `?` for the cheat sheet with all commands.
 | **Search Playlists** | `/p: <query>` | Search and stream local playlists |
 | **Open Playlist** | `SHIFT + p` | Open Playlist Creator/Editor |
 | **Open Meta Data** | `SHIFT + m` | Open Meta Data Editor |
-| **Download Stream** | `y` | Download currently streaming track |
+| **Download Stream** | `y` | Download currently streaming track to default or set path |
 | **Play / Pause** | `p` | Toggle playback |
 | **Play / reload selected track** | `Enter` | Play or reload selected track |
 | **Next / Previous Track** | `n` / `b` | Skip between songs |
@@ -251,9 +251,9 @@ A few things added on top of the original design rather than required to run it 
 
 - **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
- <img width="2295" height="864" alt="grafik" src="https://github.com/user-attachments/assets/bc0c27fe-59c6-4af9-838a-a3d3bd2ffab6" />
+<img width="2287" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" />
 
-<img width="2302" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/633b4686-1c00-452b-9d39-b3002854f660" />
+<img width="2295" height="1056" alt="grafik" src="https://github.com/user-attachments/assets/7ce6f723-ac7d-4a31-900b-efbeb24a3a10" />
 
 - **Meta/tag editor incl. fetch via AcoustID** (`SHIFT+M`, rebindable as `HKeyMetaEditor`) — a second full-screen overlay shaped exactly like the playlist menu (tab strip, boxed panels, search field, hint/status footer) for changing a file's **name**, **artist**, **title**, **album** and **year**:
   - `TAB` cycles search field → library list → the five field rows, where typing edits the hovered field directly; `SHIFT+←/→` switches between the **EDIT** tab and the **FETCH LIST** tab.
@@ -317,7 +317,7 @@ A few things added on top of the original design rather than required to run it 
 ## Current Ideas on Features and Modifications 
 
 **Basic Features (that will definitely be implemented soon):**
-- no current to-dos...  
+- no current to-dos... Feel free to start discussion or report issue! 
 
 **Major New Features:**
 
