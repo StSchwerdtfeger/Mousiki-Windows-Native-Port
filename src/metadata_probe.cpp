@@ -63,39 +63,25 @@ RowMeta probe_row_meta(const fs::path& file) {
 
         if (key == "duration") {
             try { rm.duration_sec = std::stod(val); } catch (...) {}
-        } else {
-            // Case-insensitive on purpose: ffprobe reports a tag's key
-            // exactly as it's stored on disk, and containers disagree on
-            // casing. In particular Matroska/WebM's muxer writes any tag
-            // ffmpeg newly sets using the Matroska spec's canonical
-            // UPPERCASE names (ARTIST, TITLE, DATE, ...), while an
-            // untouched pre-existing tag on the same file keeps whatever
-            // casing it already had (often lowercase). A file that's had
-            // exactly one field edited can genuinely have "TAG:title" and
-            // "TAG:ARTIST" side by side -- an exact-case match here would
-            // read the just-edited field back as blank even though the
-            // save itself succeeded.
-            std::string upper_key = to_upper(key);
-            if (upper_key == "TAG:ARTIST") {
-                // First-wins: with stream_tags also requested, a file with
-                // several streams (e.g. an attached-picture "video" stream
-                // alongside the audio) can print more than one TAG:artist
-                // line. format_tags is listed first and is the authoritative
-                // one when present; don't let a later, possibly-blank or
-                // irrelevant stream's tags clobber it.
-                if (rm.artist.empty()) rm.artist = val;
-            } else if (upper_key == "TAG:TITLE") {
-                if (rm.title.empty()) rm.title = val;
-            } else if (upper_key == "TAG:ALBUM") {
-                if (rm.album.empty()) rm.album = val;
-            } else if (upper_key == "TAG:DATE") {
-                // Containers store the year very differently (ID3's TYER="1999",
-                // ID3v2.4's TDRC="1999-05-01", Vorbis' DATE, MP4's ©day) --
-                // ffprobe just reports whatever it found, so keep only the
-                // leading 4-digit year. Same rule probe_metadata() applies to
-                // its own md.year, so the editor and the metadata panel agree.
-                if (rm.year.empty()) rm.year = (val.size() >= 4) ? val.substr(0, 4) : val;
-            }
+        } else if (key == "TAG:artist") {
+            // First-wins: with stream_tags also requested, a file with
+            // several streams (e.g. an attached-picture "video" stream
+            // alongside the audio) can print more than one TAG:artist
+            // line. format_tags is listed first and is the authoritative
+            // one when present; don't let a later, possibly-blank or
+            // irrelevant stream's tags clobber it.
+            if (rm.artist.empty()) rm.artist = val;
+        } else if (key == "TAG:title") {
+            if (rm.title.empty()) rm.title = val;
+        } else if (key == "TAG:album") {
+            if (rm.album.empty()) rm.album = val;
+        } else if (key == "TAG:date") {
+            // Containers store the year very differently (ID3's TYER="1999",
+            // ID3v2.4's TDRC="1999-05-01", Vorbis' DATE, MP4's ©day) --
+            // ffprobe just reports whatever it found, so keep only the
+            // leading 4-digit year. Same rule probe_metadata() applies to
+            // its own md.year, so the editor and the metadata panel agree.
+            if (rm.year.empty()) rm.year = (val.size() >= 4) ? val.substr(0, 4) : val;
         }
     }
     return rm;
@@ -138,19 +124,12 @@ TrackMetadata probe_metadata(const fs::path& file, const std::string& fallback_n
             md.sampling = val + "KHz"; // matches the mockup's (unconventional) unit label
         } else if (key == "codec_name") {
             md.format = to_upper(val);
-        } else {
-            // Case-insensitive for the same reason as probe_row_meta() --
-            // see its comment. A freshly-edited tag on a Matroska/WebM file
-            // can come back as "TAG:ARTIST" even while an untouched sibling
-            // tag on the same file is still "TAG:title".
-            std::string upper_key = to_upper(key);
-            if (upper_key == "TAG:TITLE") {
-                md.name = val;
-            } else if (upper_key == "TAG:ARTIST") {
-                md.artist = val;
-            } else if (upper_key == "TAG:DATE") {
-                md.year = val.substr(0, 4);
-            }
+        } else if (key == "TAG:title") {
+            md.name = val;
+        } else if (key == "TAG:artist") {
+            md.artist = val;
+        } else if (key == "TAG:date") {
+            md.year = val.substr(0, 4);
         }
     }
     return md;
