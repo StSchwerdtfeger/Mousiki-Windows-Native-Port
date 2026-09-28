@@ -3464,7 +3464,7 @@ void App::handle_key(int key) {
         // deep into the list). Not in settings_.hotkeys / kRefRows at all,
         // on purpose: this mirrors the original, which likewise has no
         // HKeyEsc entry -- ESC is a fixed shortcut, not something meant
-        // to be rebound (see the HARDCODED / NOT REBINDABLE section of
+        // to be rebound (see the SYSTEM (MAIN UI) section of
         // the cheat sheet, '?', which is where fixed keys like this one
         // are documented -- the Reference tab only lists rebindable ones).
         list_source_ = ListSource::Local;
@@ -7263,6 +7263,17 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
     //     entry for them to reference.
     struct CheatRow { const char* header; const char* action; const char* desc; };
     static const CheatRow rows[] = {
+        // --- System -- listed first. Besides the rebindable system hotkeys
+        // this also carries the literal keys used across multiple overlays
+        // (not tied to one editor's own legend below). ---
+        {"SYSTEM (MAIN UI)", "HKeySetting", "Open Settings panel, hit again to save and quit"},
+        {nullptr, "HKeyConsole", "Console / logs"},
+        {nullptr, "HKeyCheatsheet", "This cheatsheet"},
+        {nullptr, "HKeyQuit", "Quit"},
+        {nullptr, "#ESC", "Close setting / overlay / menu"},
+        {nullptr, "#ENTER", "Confirm / select"},
+        {nullptr, "#ARROW KEYS", "Navigate (context-dependent)"},
+        {nullptr, "#Y / N", "Confirm or cancel a prompt"},
         // --- Playback ---
         {"PLAYBACK (MAIN UI)", "HKeyPlay", "Play the selected track"},
         {nullptr, "HKeyTogglePlayPause", "Play / pause"},
@@ -7333,18 +7344,6 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
         // --- Downloads ---
         {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
-        // --- System ---
-        {"SYSTEM (MAIN UI)", "HKeySetting", "Settings panel"},
-        {nullptr, "HKeyConsole", "Console / logs"},
-        {nullptr, "HKeyCheatsheet", "This cheatsheet"},
-        {nullptr, "HKeyQuit", "Quit"},
-        // --- Literal keys used across multiple overlays, not tied to one
-        // editor's own legend above ---
-        {"HARDCODED / NOT REBINDABLE", "#ESC", "Close setting / overlay / menu"},
-        {nullptr, "#S", "Save and quit Settings"},
-        {nullptr, "#ENTER", "Confirm / select"},
-        {nullptr, "#ARROW KEYS", "Navigate (context-dependent)"},
-        {nullptr, "#Y / N", "Confirm or cancel a prompt"},
     };
 
     int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
