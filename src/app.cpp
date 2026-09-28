@@ -1078,9 +1078,11 @@ std::vector<LocalTrack> App::filter_and_rank_local(const std::string& query) con
     return result;
 }
 
-const char* App::sort_mode_name(int mode) {
+// Mode 1 names what it sorts by, which follows Shift+N (see apply_local_sort()):
+// the file name normally, the embedded title tag in metadata-only mode.
+const char* App::sort_mode_name(int mode, bool meta_only) {
     switch (mode) {
-        case 1: return "title A-Z";
+        case 1: return meta_only ? "title A-Z" : "file name A-Z";
         case 2: return "artist A-Z";
         default: return "folder order";
     }
@@ -3524,7 +3526,7 @@ void App::handle_key(int key) {
     } else if (action == "HKeyCycleSortMode") { // cycle local-list sort mode (folder order -> title A-Z -> artist A-Z)
         local_sort_mode_ = (local_sort_mode_ + 1) % 3;
         refresh_local_view();
-        log_event(std::string("sort: ") + sort_mode_name(local_sort_mode_));
+        log_event(std::string("sort: ") + sort_mode_name(local_sort_mode_, settings_.meta_only));
     } else if (action == "HKeyPlay") {
         play_selected();
     } else if (action == "HKeySearch") {
@@ -4402,7 +4404,7 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
     bool playlists_mode = (list_source_ == ListSource::Playlist);
     std::string label = online ? "ONLINE RESULTS"
                        : playlists_mode ? "SAVED PLAYLISTS (Enter: queue all)"
-                       : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_))
+                       : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_, settings_.meta_only))
                          + (folder_filter_.empty() ? std::string()
                             : ", folder: " + path_utf8(path_from_utf8(folder_filter_).filename()) + " [c] clear")
                          + ")";
