@@ -59,6 +59,14 @@ add_executable(mousiki ${MUISC_SOURCES} ${KISSFFT_SOURCES})
 target_include_directories(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/src" "${MINIAUDIO_DIR}" "${KISSFFT_DIR}")
 
 # ---------------------------------------------------------------------------
+# App icon (Windows): mousiki.rc + mousiki.ico in the source root -- the
+# packaging pipeline copies them in before building. Guarded so a plain
+# source checkout without an icon still builds.
+if(EXISTS "${CMAKE_SOURCE_DIR}/mousiki.rc")
+    target_sources(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/mousiki.rc")
+endif()
+
+# ---------------------------------------------------------------------------
 # fpcalc — the fingerprint helper the meta editor's AcoustID fetch calls
 # (scripts/fetch_meta.py runs `fpcalc -json -length 120 <file>`).
 #
