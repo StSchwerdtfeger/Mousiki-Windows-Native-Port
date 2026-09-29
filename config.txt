@@ -249,7 +249,6 @@ HKeyCheatsheet="?"
 HKeyRetryLyrics="l"
 HKeyShuffleNext="#"
 HKeyToggleLyrics="+"
-HKeyQueueMoveUp="u"
 HKeyToggleWaveform="w"
 HKeyCycleSortMode="T"
 HKeySearchPlaylist="/p:"
@@ -270,9 +269,9 @@ HKeyMetaEditor="M"
 # which the input layer reports as the letters A/B/C/D):
 #   SHIFT+B            fetch metadata for the hovered title (AcoustID)
 #   CTRL+SHIFT+S       apply the pending edits to the files (asks first)
-#   CTRL+SHIFT+D       discard the pending edits (asks first)
+#   CTRL+SHIFT+X       discard the pending edits (asks first)
 # Simply exiting the menu keeps the autosaved edit session -- only
-# Ctrl+Shift+S or Ctrl+Shift+D ever changes or clears it.
+# Ctrl+Shift+S or Ctrl+Shift+X ever changes or clears it.
 # Move track in queue/playlist up/down:
 HKeyQueueMoveUp="4"
 HKeyQueueMoveDown="5"
@@ -286,7 +285,9 @@ ClassTextAboutApp= {
 Mousiki
 
 A terminal music player built for people who prefer control.
-Zero external UI bloat: 100% native POSIX terminal runtime.
+Zero external UI bloat. Mousiki is designed around a fast, 
+focused TUI with no unnecessary interface layers. A terminal 
+music player built for people who prefer control.
 
 Mousiki is designed around a fast, focused TUI with no 
 unnecessary interface layers. A terminal music player built 
@@ -295,7 +296,6 @@ for people who prefer control.
 Everything is keyboard-driven.
 Everything is configurable.
 Everything stays in your terminal.
-
 
 Devloper : ender                         Github   : itzender5820
 Email    : itz.ender5820@gmail.com
