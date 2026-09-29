@@ -1,0 +1,5 @@
+// Application icon for the Windows build.
+// mousiki.ico must sit next to this file -- the packaging pipeline
+// (standalone/assets) copies both into the source root before building.
+#define IDI_MOUSIKI 101
+IDI_MOUSIKI ICON "mousiki.ico"
