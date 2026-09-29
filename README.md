@@ -175,14 +175,14 @@ See `?` for the cheat sheet with all commands.
 | **Exit Setting** |`ESC` |Exit Settings menu|
 | **Quit** | `q` | Quit (when in main UI page) |
 | **Exit + Save Setting** |`s` |Exit + Save again via `s`|   
-| **Console / Logs** | `t` | title/artist a-z, folder order |
+| **Console / Logs** | `t` | Show console logs for debugging |
 | **Playlists** | `SHIFT+P` |Enter Playlist menu |
 | **Navigate** | `ARROW_UP` / `ARROW_DOWN` | Move selection |
-| **Cycle Sort Mode** | `SHIFT + t` | In audio files pane
+| **Cycle Sort Mode** | `SHIFT + t` | title/artist a-z, folder order |
 | **Switch Tabs/Cards** | `TAB` | Cycle between UI panels |
 | **Add to Queue** | `a` | Enqueue selected track |
 | **Remove from Queue** | `d` | Dequeue selected track |
-| **Move Track Up** | `4` | Move up in Queue/Playlist |N
+| **Move Track Up** | `4` | Move up in Queue/Playlist |
 | **Move Track down** | `5` | Move down in Queue/Playlist |
 | **Clear Queue** | `SHIFT+x` | Clear Queue | 
 | **Filter by Folder** | `f` | Apply folder filter |
@@ -198,7 +198,7 @@ Changing Fonts: In the config.txt you will also see liens like A = A, a. This is
 ## Playlist and Meta Data UI Behavior
 
 The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB and the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking text input... 
-In the meta data menu, the tabs can be changed via `ALT + left / right`. I guess the handling of the meta data menu needs some practice, since it is rather complex task to perform, however after fitting in it works well. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane and then use `x/T/A/Y` for all missing, title missing, artist missing, year missing. Using metatogger can be a bit faster, however it is not the Mousi-**key** way of doing things! Gotta love the terminal. 
+In the meta data menu, the tabs can be changed via `left / right`. I guess the handling of the meta data menu needs some practice, since it is rather complex task to perform, however after fitting in it works well. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane and then use `x/T/A/Y` for all missing, title missing, artist missing, year missing. Using metatogger can be a bit faster, however it is not the Mousi-**key** way of doing things! Gotta love the terminal. 
 
 ## What had to change
 
