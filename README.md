@@ -26,6 +26,8 @@
 
 A native Windows port (including a bunch of modifications and additions; design maintained) of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player for macOS/Linux built for people who prefer control, simplicity, and a keyboard. Note about the name: it is the greek word for music and is pronounced mousi-**key**! ;) All credits for the design, main feature set, and the vast majority of the code goes to the original author. Feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
+Build yourself (see [prerequesites](+prerequesite) below) **or use installer(x64)** that is entailed in the latest release (since v2.1.0). 
+
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all. This native port uses no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
 Along the Win32 port, **some minor and major additions where made too**. Major changes/additions are a most of all a **menu to create playlists from local (or downloaded) tracks**, a **meta data editor menu, including fetching meta data from AcoustID**, a **listening histoy** incl. the ability to add top tracks to the playback queue and a **user's manual**, added a **user manual** (.md and .pdf version)... Minor changes/additions are e.g. a general key to shuffle to a next title (before only next title in the list was possible), stereo audio and loudness normalization, add path via settings menu, toggle the lyrics on/off (also via a key command), optimized search engine for windows (searching metadata was very slow, only available after 2-3 min. after starting app), added fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without dash) a cheat sheet... The desing remained the same for obvious reasons; only thing added is a Braille-ASCII of a music cassette shown when no track is loaded... See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list.  
@@ -42,10 +44,12 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 ## Current Status of the Port and Modification (v2.1.0, 29.09.2026, no new release rolled out yet, next release will incl. standalone setup.exe)
 
-For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might release an "installer version" without dependencies for those that don't want to install all the requirements, such as Visual Studio 2022 Build Tools (never done something like that so it might be good exercise)... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
+For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB) ... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
 Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creater would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
 ## Quick start (port was tested with PowerShell 7.6.6 and 5.1)
+
+Installer (x64) is entailed in the latest release (since v2.1.0) or build yourself via:
 
 ```powershell
 # from the repo root
@@ -250,6 +254,7 @@ A few things added on top of the original design rather than required to run it 
 
 ### Major Additions / Modifications
 
+- **Installer (x64)** entailed in the latest release (since v2.1.0) as alternative to building the app oneself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future).
 - **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
 <img width="2287" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" />
@@ -293,6 +298,7 @@ A few things added on top of the original design rather than required to run it 
 
 ### Minor Additions / Modifications
 
+- **Icon for .exe** is now included.
 - **Folder Order and Sorting** `f` shows only the titles in a folder of the hovering track in the list. It now shows which folder. `SHIFT+n` was added in the past to toggle between showing the file name and the meta data track name in the local audio files list. I adjusted the sorting algorithm now sorts what is shown in the respective column, adapting to the set `SHIFT+n` mode. 
 - **Copy/Paste/Cut in Search and Path Fields** All search fields now allow copy/paste/cut and the necessary marking. Same for fields to add local path.
 - **Clear QUEUE** In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
