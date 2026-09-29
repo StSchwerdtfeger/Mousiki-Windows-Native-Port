@@ -141,7 +141,7 @@ PlaylistsPath=C:\Users\YOUR NAME !!!!!!!\Music\playlists
 ## Default Keybindings
 
 Configurable in `C:\Users\USER\.config\mousiki\config.txt` or in the settings. Some commands are hard coded.
-See `?` for the cheat sheet with all commands.
+See the new **user manual** in the repo above or use `?` for the cheat sheet with all commands inside the app.
 
 ### Key Commands Overview
 | Action | Keybinding | Description |
