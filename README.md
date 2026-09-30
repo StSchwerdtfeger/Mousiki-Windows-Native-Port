@@ -158,6 +158,7 @@ See the new **user manual** in the repo above or use `?` for the cheat sheet wit
 | **Local Search** | `/` | Filter and search local library 
 | **Online Stream Search** | `/s: <query>` | Search and stream music online |
 | **Search Playlists** | `/p: <query>` | Search and stream local playlists |
+| **Search Folders by Name** | `/f: <query>` | Search folder; hit `Enter` to open content in local audio pane (similar using `f`) |
 | **Track list overlay** | `SHIFT+l` | Enlarged overlay of the track list pane in the main UI |
 | **Queue list overlay** | `SHIFT+l` | Enlarged overlay of the queue list pane in the main UI |
 | **Open Playlist** | `SHIFT + p` | Open Playlist Creator/Editor |
@@ -305,6 +306,7 @@ A few things added on top of the original design rather than required to run it 
 ### Minor Additions / Modifications
 
 - **Icon for .exe** is now included.
+- **Search Folder by Name via `/f:`** hit `Enter` and the content is shown in the local audio pane, similar using `f`; use `c` or `ESC` to clear. 
 - **Folder Order and Sorting** `f` shows only the titles in a folder of the hovering track in the list. It now shows which folder. `SHIFT+n` was added in the past to toggle between showing the file name and the meta data track name in the local audio files list. I adjusted the sorting algorithm now sorts what is shown in the respective column, adapting to the set `SHIFT+n` mode. 
 - **Copy/Paste/Cut in Search and Path Fields** All search fields now allow copy/paste/cut and the necessary marking. Same for fields to add local path.
 - **Clear QUEUE** In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
