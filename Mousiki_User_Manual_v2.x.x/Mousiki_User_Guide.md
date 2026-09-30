@@ -7,18 +7,18 @@ The key shown for each command is the **default binding**. Your own bindings may
 
 ## Contents
 
-[Before you start](#before-you-start)
-[1. System (main UI)](#1-system-main-ui)
-[2. Playback (main UI)](#2-playback-main-ui)
-[3. Navigation & view (main UI)](#3-navigation--view-main-ui)
-[4. Search (main UI)](#4-search-main-ui)
-[5. Queue (main UI)](#5-queue-main-ui)
-[6. Playlists](#6-playlists)
-[7. Meta editor](#7-meta-editor)
-[8. History](#8-history)
-[9. Downloads](#9-downloads)
-[10. Settings (individual tabs)](#10-settings-individual-tabs)
-[About this App](#About-this-app)
+  [Before you start](#before-you-start)  
+  [1. System (main UI)](#1-system-main-ui)  
+  [2. Playback (main UI)](#2-playback-main-ui)  
+  [3. Navigation & view (main UI)](#3-navigation--view-main-ui)  
+  [4. Search (main UI)](#4-search-main-ui)  
+  [5. Queue (main UI)](#5-queue-main-ui)  
+  [6. Playlists](#6-playlists)
+  [7. Meta editor](#7-meta-editor)
+  [8. History](#8-history)
+  [9. Downloads](#9-downloads)
+  [10. Settings (individual tabs)](#10-settings-individual-tabs)
+  [About this App](#About-this-app)
 
 ---
 
@@ -194,11 +194,15 @@ Opens a large window, styled like the lyrics form (`l`), that shows the same lis
 
 | Key | Action |
 |---|---|
-| `SHIFT+ARROW_DOWN` / `SHIFT+ARROW_UP` | Next / previous **page** (faster scrolling). At the end of the list the cursor jumps to the last / first entry. |
-| `ARROW_UP` / `ARROW_DOWN` | Move one row |
+| `SHIFT+↓` / `SHIFT+↑` | Next / previous **page** (faster scrolling). At the end of the list the cursor jumps to the last / first entry. |
+| `↑` / `↓` | Move one row |
 | `ESC` or `SHIFT+L` | Close the overlay |
 
 Everything else keeps working from inside the overlay: `ENTER` plays, `T` cycles the sort mode, `f` / `c` set / clear the folder filter, `/` searches (the search bar is part of the overlay), `a` adds to the queue, `n` / `b` / `p` / seek / volume as usual, and `l` opens the lyrics form on top of it. The queue pane is hidden while the overlay is open, so its footer shows the current queue size (`queue: N`) together with a page counter. Full-screen menus (Settings, Playlists, ...) hide the overlay while they are open and it returns when they close.
+
+![Big list overlay](images/Playback_Main_UI_TRACK_OVERLAY.png)
+
+*Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
 
 ### Clear queue prompt (`SHIFT+X`)
 
