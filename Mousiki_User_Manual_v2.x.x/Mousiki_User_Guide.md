@@ -186,6 +186,19 @@ The queue is a list of tracks that play **before** the normal list continues. Pr
 | `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
 | `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
 | `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
+| `L` (Shift+L) | Big list overlay | Floats a larger version of the list pane (LOCAL AUDIO FILES) over the main UI. See below. |
+
+### Big list overlay (`SHIFT+L`)
+
+Opens a large window, styled like the lyrics form (`l`), that shows the same list as the small pane (LOCAL AUDIO FILES, or the online / playlist results) with many more rows. It shares the cursor with the small pane, so both always point at the same track.
+
+| Key | Action |
+|---|---|
+| `SHIFT+ARROW_DOWN` / `SHIFT+ARROW_UP` | Next / previous **page** (faster scrolling). At the end of the list the cursor jumps to the last / first entry. |
+| `ARROW_UP` / `ARROW_DOWN` | Move one row |
+| `ESC` or `SHIFT+L` | Close the overlay |
+
+Everything else keeps working from inside the overlay: `ENTER` plays, `T` cycles the sort mode, `f` / `c` set / clear the folder filter, `/` searches (the search bar is part of the overlay), `a` adds to the queue, `n` / `b` / `p` / seek / volume as usual, and `l` opens the lyrics form on top of it. The queue pane is hidden while the overlay is open, so its footer shows the current queue size (`queue: N`) together with a page counter. Full-screen menus (Settings, Playlists, ...) hide the overlay while they are open and it returns when they close.
 
 ### Clear queue prompt (`SHIFT+X`)
 
