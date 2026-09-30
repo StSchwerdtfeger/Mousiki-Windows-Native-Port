@@ -117,6 +117,11 @@ static bool g_last_key_was_arrow = false;
 
 bool last_key_was_arrow() { return g_last_key_was_arrow; }
 
+// See last_key_was_shifted() in terminal_ui.h. Cleared at the top of every
+// poll_key() call, so it can only ever be true for the key just returned.
+static bool g_last_key_was_shifted = false;
+bool last_key_was_shifted() { return g_last_key_was_shifted; }
+
 // ---------------------------------------------------------------------------
 // Text-entry mode + clipboard (see terminal_ui.h)
 //
@@ -152,9 +157,11 @@ void clipboard_set(const std::string& utf8) {
 
 int TerminalIO::poll_key() {
     reassert_raw_mode();
+    g_last_key_was_shifted = false;
 #if defined(_WIN32)
     int key = win_poll_key();
     g_last_key_was_arrow = win_last_key_was_arrow();
+    g_last_key_was_shifted = win_last_key_was_shifted();
     return key;
 #else
     unsigned char c = 0;
@@ -227,6 +234,12 @@ int TerminalIO::poll_key() {
                         // Shift) combination is consumed -- Alt+Shift+Arrow
                         // isn't bound to anything and falls through as today.
                         bool alt = (((m - 1) & 2) != 0);
+                        // SHIFT+Up/Down: still reported as a plain arrow (so
+                        // nothing that ignores the modifier changes), with the
+                        // shift flag set for the list overlay's page jumps.
+                        // Used to fall through as a bare Escape.
+                        if (shift && !alt && tail == 'A') { g_last_key_was_arrow = true; g_last_key_was_shifted = true; return 'A'; }
+                        if (shift && !alt && tail == 'B') { g_last_key_was_arrow = true; g_last_key_was_shifted = true; return 'B'; }
                         if (shift && tail == 'D') { g_last_key_was_arrow = false; return kKeyShiftLeft; }
                         if (shift && tail == 'C') { g_last_key_was_arrow = false; return kKeyShiftRight; }
                         if (shift && tail == 'H') { g_last_key_was_arrow = false; return kKeyHome; }

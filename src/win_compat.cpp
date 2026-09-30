@@ -353,11 +353,17 @@ wchar_t g_pending_high_surrogate = 0;
 // never an arrow), so the flag is always in sync with the value just
 // returned.
 bool g_last_key_was_arrow = false;
+// Shift held on an Up/Down press -- see win_last_key_was_shifted(). Reset at
+// the top of every win_poll_key() call (recursive ones included), then set
+// only by the VK_UP/VK_DOWN cases below.
+bool g_last_key_was_shifted = false;
 } // namespace
 
 bool win_last_key_was_arrow() { return g_last_key_was_arrow; }
+bool win_last_key_was_shifted() { return g_last_key_was_shifted; }
 
 int win_poll_key() {
+    g_last_key_was_shifted = false;
     if (!g_pending_key_bytes.empty()) {
         unsigned char b = static_cast<unsigned char>(g_pending_key_bytes.front());
         g_pending_key_bytes.erase(g_pending_key_bytes.begin());
@@ -404,7 +410,8 @@ int win_poll_key() {
     // event itself, so it has to be split out at the source. Left/Right
     // with SHIFT keep the sentinel values documented in terminal_ui.h;
     // Up/Down are unaffected (nothing in the UI marks with them) and keep
-    // collapsing to 'A'/'B' either way.
+    // collapsing to 'A'/'B' either way -- the Shift state is only exposed
+    // through win_last_key_was_shifted() (the list overlay's page jumps).
     const bool shifted = (k.dwControlKeyState & SHIFT_PRESSED) != 0;
     // Alt held (without Shift) on Left/Right -- the playlist editor's tab
     // switch (see kKeyAltLeft/Right in terminal_ui.h). Checked the same
@@ -414,8 +421,8 @@ int win_poll_key() {
     // for their own shortcuts and the console never sees the keystroke.
     const bool alt_held = (k.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
     switch (k.wVirtualKeyCode) {
-        case VK_UP:    g_last_key_was_arrow = true;  return 'A';
-        case VK_DOWN:  g_last_key_was_arrow = true;  return 'B';
+        case VK_UP:    g_last_key_was_arrow = true; g_last_key_was_shifted = shifted; return 'A';
+        case VK_DOWN:  g_last_key_was_arrow = true; g_last_key_was_shifted = shifted; return 'B';
         case VK_RIGHT: if (shifted) { g_last_key_was_arrow = false; return kKeyShiftRight; }
                        if (alt_held) { g_last_key_was_arrow = false; return kKeyAltRight; }
                        g_last_key_was_arrow = true; return 'C';

@@ -78,6 +78,10 @@ int win_poll_key();
 // see last_key_was_arrow() in terminal_ui.h for the platform-neutral view.
 bool win_last_key_was_arrow();
 
+// True while the key win_poll_key() just returned was Up/Down with Shift
+// held (the value is still 'A'/'B'). See last_key_was_shifted().
+bool win_last_key_was_shifted();
+
 // Text-entry mode. While `on`, ENABLE_PROCESSED_INPUT is cleared from the
 // input handle, which is the one console setting that decides whether Ctrl+C
 // is swallowed by the system (CTRL_C_EVENT -> the ctrl_handler above, i.e.

@@ -111,6 +111,28 @@ private:
     // "either/or".
     int term_rows_ = 24;
     int list_visible_rows_ = kListVisibleRows;
+
+    // --- list overlay (HKeyListOverlay, SHIFT+L) -------------------------
+    // A large floating copy of the list pane (LOCAL AUDIO FILES when the
+    // local library is showing), drawn over the main UI like the Retry
+    // Lyrics form. It is NOT a Mode: it stays a plain flag on top of
+    // Browse/Search so every list command (play, sort, folder filter,
+    // search, queue add, ...) keeps working through the normal key
+    // dispatch, and it shares selected_/scroll_ with the small pane so
+    // both always show the same cursor. Only the number of rows differs,
+    // which is what list_nav_rows() abstracts -- every scroll-follows-the-
+    // cursor calculation asks it instead of using list_visible_rows_ directly.
+    bool list_overlay_open_ = false;
+    int overlay_list_rows_ = kListVisibleRows; // list rows the overlay fits; recomputed every frame
+    static constexpr int kListOverlayChromeRows = 5; // search bar (3) + list box top/bottom border (2)
+    bool list_overlay_active() const; // open AND in a mode that shows the main UI underneath it
+    int list_nav_rows() const { return list_overlay_active() ? overlay_list_rows_ : list_visible_rows_; }
+    void list_overlay_geometry(int W, int& panel_w, int& list_rows) const;
+    void list_overlay_fit_scroll(int rows); // keep selected_ inside a `rows`-row window and the window inside the list
+    void list_overlay_open();
+    void list_overlay_close();
+    void list_overlay_page(int dir); // dir=-1 page up, +1 page down
+    std::vector<std::string> build_list_overlay_panel(int panel_w, int list_rows) const;
     std::string clamp_output_rows(const std::string& frame, int term_rows) const;
 
     mutable std::mutex row_meta_mutex_;

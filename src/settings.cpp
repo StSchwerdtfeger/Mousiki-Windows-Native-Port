@@ -352,6 +352,10 @@ void apply_default_hotkeys(Settings& s) {
             // Shift+X: clear the whole queue (after a Yes/No confirmation).
             // Uppercase on purpose -- plain "x" is HKeyToggleMute.
             {"HKeyClearQueue",                  "X"},
+            // Shift+L: the big list overlay (a larger LOCAL AUDIO FILES pane
+            // floated over the main UI). Uppercase on purpose -- plain "l" is
+            // HKeyRetryLyrics.
+            {"HKeyListOverlay",                 "L"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.

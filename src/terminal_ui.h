@@ -106,6 +106,14 @@ private:
 // step with what it returned.
 bool last_key_was_arrow();
 
+// True while the key most recently returned by poll_key() was an Up/Down
+// arrow pressed WITH Shift held. The value itself stays a plain 'A'/'B'
+// (and last_key_was_arrow() stays true), so every screen that doesn't care
+// about the modifier keeps treating SHIFT+Up/Down exactly like Up/Down --
+// only the list overlay (SHIFT+L) asks this, to turn them into page jumps.
+// (SHIFT+Left/Right have their own sentinels, see kKeyShiftLeft/Right.)
+bool last_key_was_shifted();
+
 // ---------------------------------------------------------------------------
 // Text-entry mode + clipboard
 // ---------------------------------------------------------------------------

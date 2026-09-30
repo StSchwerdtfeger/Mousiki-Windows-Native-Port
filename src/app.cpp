@@ -1161,7 +1161,7 @@ void App::resort_local_view_keep_selection() {
         for (size_t i = 0; i < local_view_.size(); ++i)
             if (local_view_[i].path == prev) { selected_ = static_cast<int>(i); break; }
     }
-    scroll_ = std::max(0, selected_ - list_visible_rows_ / 2);
+    scroll_ = std::max(0, selected_ - list_nav_rows() / 2);
     if (scroll_ > selected_) scroll_ = selected_;
 }
 
@@ -1800,7 +1800,7 @@ void App::play_relative(int delta) {
     int base = current_track_list_index();
     if (base < 0) base = selected_;
     selected_ = std::clamp(base + delta, 0, static_cast<int>(list_len) - 1);
-    if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+    if (selected_ >= scroll_ + list_nav_rows()) scroll_ = selected_ - list_nav_rows() + 1;
     if (selected_ < scroll_) scroll_ = selected_;
     play_selected();
 }
@@ -1817,7 +1817,7 @@ void App::play_relative_random() {
     int next;
     do { next = dist(rng); } while (next == base);
     selected_ = next;
-    if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+    if (selected_ >= scroll_ + list_nav_rows()) scroll_ = selected_ - list_nav_rows() + 1;
     if (selected_ < scroll_) scroll_ = selected_;
     play_selected();
 }
@@ -2233,6 +2233,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyToggleLyrics", "Toggle Lyrics"},
     {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
     {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
+    {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
     {nullptr, "HKeySearchOnline", "Search Online"},
@@ -3205,6 +3206,8 @@ void App::handle_key(int key) {
         // from inside this box too; they are the caret keys now, since a
         // text field needs them more and seek still works from Browse.
         if (last_key_was_arrow() && (key == 'A' || key == 'B')) { // up / down
+            // SHIFT+Up/Down: whole page at a time while the big list overlay is open.
+            if (list_overlay_active() && last_key_was_shifted()) { list_overlay_page(key == 'A' ? -1 : 1); return; }
             if (key == 'A') {
                 if (selected_ > 0) --selected_;
                 if (selected_ < scroll_) scroll_ = selected_;
@@ -3216,7 +3219,7 @@ void App::handle_key(int key) {
             // as Enter/submit_search() would commit to.
             size_t list_len = (list_source_ == ListSource::Playlist) ? playlist_view_.size() : local_view_.size();
             if (list_len > 0 && selected_ < static_cast<int>(list_len) - 1) ++selected_;
-            if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+            if (selected_ >= scroll_ + list_nav_rows()) scroll_ = selected_ - list_nav_rows() + 1;
             return;
         }
         edit_focus("browse-search", search_buffer_);
@@ -3229,6 +3232,20 @@ void App::handle_key(int key) {
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size()
                      : (list_source_ == ListSource::Online) ? online_view_.size()
                      : playlist_view_.size();
+
+    // Big list overlay (SHIFT+L): SHIFT+Up/Down turn a whole page, ESC closes
+    // it. Matched on the raw arrow codes + the shift flag, like SHIFT+B below
+    // -- the input layer reports Shift+Up/Down as a plain 'A'/'B' arrow with
+    // last_key_was_shifted() set, so there is no hotkey string for them. With
+    // the overlay closed both keys fall through and behave exactly like plain
+    // Up/Down, as they always did.
+    if (list_overlay_active()) {
+        if (last_key_was_arrow() && last_key_was_shifted() && (key == 'A' || key == 'B')) {
+            list_overlay_page(key == 'A' ? -1 : 1);
+            return;
+        }
+        if (key == 27) { list_overlay_close(); return; }
+    }
 
     // SHIFT+B -- AcoustID lookup of the hovered title (by audio fingerprint).
     //
@@ -3293,8 +3310,12 @@ void App::handle_key(int key) {
         meta_open();
     } else if (action == "HKeyHistory") { // SHIFT+H: listening history (HISTORY / TOP TRACKS / HABITS)
         history_open();
+    } else if (action == "HKeyListOverlay") { // SHIFT+L: big list overlay on/off
+        if (list_overlay_open_) list_overlay_close(); else list_overlay_open();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
-        queue_focus_ = !queue_focus_;
+        // The queue pane is hidden behind the big list overlay, so there is
+        // nothing to switch to while it is up.
+        if (!list_overlay_active()) queue_focus_ = !queue_focus_;
     } else if (action == "HKeyNavigateUp") {
         if (queue_focus_) {
             if (queue_selected_ > 0) --queue_selected_;
@@ -3312,7 +3333,7 @@ void App::handle_key(int key) {
             // BUGFIX: selection could move past the visible window without
             // the window ever following it, leaving the highlighted row
             // invisible below row 8 instead of the list scrolling up.
-            if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+            if (selected_ >= scroll_ + list_nav_rows()) scroll_ = selected_ - list_nav_rows() + 1;
         }
     } else if (action == "HKeySeekForward") {
         if (has_track_) player_.seek_relative(5.0);
@@ -3616,7 +3637,7 @@ RowMeta try_native_row_meta(const fs::path& path) {
 // rendering or input.
 void App::ensure_visible_row_meta() {
     if (list_source_ != ListSource::Local) return;
-    for (int i = scroll_; i < std::min<int>(local_view_.size(), scroll_ + list_visible_rows_); ++i) {
+    for (int i = scroll_; i < std::min(static_cast<int>(local_view_.size()), scroll_ + list_nav_rows()); ++i) {
         const auto& t = local_view_[i];
         std::string key = path_utf8(t.path);
         {
@@ -3825,7 +3846,7 @@ void App::poll_pending_row_meta_tags() {
     if (local_view_.empty()) selected_ = 0;
     else if (selected_ >= static_cast<int>(local_view_.size())) selected_ = static_cast<int>(local_view_.size()) - 1;
     if (scroll_ > selected_) scroll_ = selected_;
-    if (selected_ >= scroll_ + list_visible_rows_) scroll_ = selected_ - list_visible_rows_ + 1;
+    if (selected_ >= scroll_ + list_nav_rows()) scroll_ = selected_ - list_nav_rows() + 1;
 }
 
 // ---------------------------------------------------------------------
@@ -7486,6 +7507,9 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyToggleLyrics", "Toggle lyrics on/off"},
         {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
         {nullptr, "HKeyRetryLyrics", "Retry lyrics"},
+        {nullptr, "HKeyListOverlay", "Big list overlay: larger LOCAL AUDIO FILES pane (toggle)"},
+        {nullptr, "#SHIFT+UP/DOWN", "Big list overlay: previous / next page (faster scrolling)"},
+        {nullptr, "#ESC", "Big list overlay: close (play, sort, filter, search, queue keep working)"},
         // --- Search ---
         {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
@@ -7614,6 +7638,114 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
 // takes as many rows as it actually has content for: an input row while
 // typing, then a short starred checklist once results come in. It never
 // grows to fill the terminal.
+
+// ---------------------------------------------------------------------
+// Big list overlay (HKeyListOverlay, SHIFT+L) -- see app.h for the design.
+// ---------------------------------------------------------------------
+
+namespace {
+inline int list_total_for(ListSource src, size_t local, size_t online, size_t playlists) {
+    return static_cast<int>(src == ListSource::Local ? local : src == ListSource::Online ? online : playlists);
+}
+} // namespace
+
+// The overlay is only shown (and only steers scrolling) in the modes that
+// have the main UI underneath it. In the full-screen takeovers (Settings,
+// Playlist, ...) the flag simply stays set and the overlay is back when
+// they close.
+bool App::list_overlay_active() const {
+    if (!list_overlay_open_) return false;
+    switch (mode_) {
+        case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
+        case Mode::RetryLyrics: case Mode::ClearQueue: return true;
+        default: return false;
+    }
+}
+
+void App::list_overlay_geometry(int W, int& panel_w, int& list_rows) const {
+    panel_w = std::min(W, std::max(40, std::min(W - 6, 160)));
+    // Rows 2 .. term_rows_-1 belong to the panel: search bar (3) + list box
+    // border (2) + the list rows themselves.
+    list_rows = std::max(1, term_rows_ - 2 - kListOverlayChromeRows);
+}
+
+// Keeps selected_ inside a window of `rows` rows and the window inside the
+// list (no empty rows after the last entry when the list is long enough).
+void App::list_overlay_fit_scroll(int rows) {
+    rows = std::max(1, rows);
+    const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size());
+    if (total <= 0) { selected_ = 0; scroll_ = 0; return; }
+    selected_ = std::clamp(selected_, 0, total - 1);
+    scroll_ = std::clamp(scroll_, 0, std::max(0, total - rows));
+    if (selected_ < scroll_) scroll_ = selected_;
+    if (selected_ >= scroll_ + rows) scroll_ = selected_ - rows + 1;
+}
+
+void App::list_overlay_open() {
+    list_overlay_open_ = true;
+    queue_focus_ = false; // the queue pane is hidden while the overlay is up
+    list_overlay_fit_scroll(overlay_list_rows_);
+}
+
+void App::list_overlay_close() {
+    list_overlay_open_ = false;
+    // Both panes share selected_/scroll_: pull the window back so the cursor
+    // is inside the small pane's (much shorter) view again.
+    list_overlay_fit_scroll(list_visible_rows_);
+}
+
+// One page up/down. The cursor keeps its row within the window, so the eye
+// stays in the same place while the list flips underneath it. At either end
+// (window can't move any further) the cursor jumps to the first/last entry.
+void App::list_overlay_page(int dir) {
+    const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size());
+    if (total <= 0) return;
+    const int rows = std::max(1, overlay_list_rows_);
+    const int max_scroll = std::max(0, total - rows);
+    const int rel = std::clamp(selected_ - scroll_, 0, rows - 1);
+    const int new_scroll = std::clamp(scroll_ + dir * rows, 0, max_scroll);
+    if (new_scroll == scroll_) {
+        selected_ = (dir > 0) ? total - 1 : 0;
+    } else {
+        scroll_ = new_scroll;
+        selected_ = std::clamp(new_scroll + rel, 0, total - 1);
+    }
+    list_overlay_fit_scroll(rows);
+}
+
+// The search bar and the list pane at overlay size. The list itself is the
+// normal build_list_panel() (same rows, colours, sort/folder title), just
+// given the wider/taller box -- only its bottom border is replaced, to carry
+// the page counter, the queue size (the queue pane is hidden, so this is the
+// only feedback for "add to queue") and the key hints.
+std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_rows) const {
+    std::vector<std::string> out = build_search_bar(panel_w);
+    std::vector<std::string> list = build_list_panel(panel_w, list_rows);
+    if (!list.empty()) {
+        const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size());
+        const int rows = std::max(1, list_rows);
+        const int pages = std::max(1, (total + rows - 1) / rows);
+        const int page = std::clamp((scroll_ + rows / 2) / rows + 1, 1, pages);
+        const int remaining = total - (scroll_ + rows);
+
+        std::vector<std::string> parts; // dropped from the back until it fits
+        if (remaining > 0) parts.push_back("( " + std::to_string(remaining) + " more )");
+        parts.push_back("page " + std::to_string(page) + "/" + std::to_string(pages));
+        parts.push_back("queue: " + std::to_string(queue_.size()));
+        parts.push_back("[SHIFT+UP/DOWN] page  [ESC] close");
+        std::string footer;
+        for (;;) {
+            footer.clear();
+            for (size_t i = 0; i < parts.size(); ++i) footer += (i ? "  " : "") + parts[i];
+            if (parts.empty() || display_width(footer) + 5 <= panel_w) break;
+            parts.pop_back();
+        }
+        if (parts.empty()) footer.clear();
+        list.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
+    }
+    out.insert(out.end(), list.begin(), list.end());
+    return out;
+}
 
 // ---------------------------------------------------------------------
 // Floating panels (Bulk Add, Retry Lyrics) -- see app.h's comment on
@@ -8010,6 +8142,17 @@ std::string App::render_frame(TerminalIO& term) {
     // truly pathological values feeding into subtraction below.
     term_rows_ = std::max(term.rows(), 4);
 
+    // Big list overlay (SHIFT+L): size it against the real terminal every
+    // frame -- before anything below scrolls/paints the list -- so
+    // list_nav_rows() (which every scroll-follows-the-cursor calculation
+    // asks) already reflects the overlay's row count, and re-anchor the
+    // window so a resize can never leave the cursor off-screen.
+    int overlay_panel_w = 0;
+    if (list_overlay_active()) {
+        list_overlay_geometry(W, overlay_panel_w, overlay_list_rows_);
+        list_overlay_fit_scroll(overlay_list_rows_);
+    }
+
     // Browse/BulkAdd/RetryLyrics all share the same live background (the
     // latter two float a small panel on top of it -- see
     // draw_floating_panel()'s comment in app.h), so switching between
@@ -8254,6 +8397,20 @@ std::string App::render_frame(TerminalIO& term) {
     // The panel adds no '\n' (absolute moves only) and draw_floating_panel()
     // already keeps it inside the screen, so it cannot cause a scroll.
     std::ostringstream floating;
+    if (list_overlay_active()) {
+        // Stamped first so the small forms (Retry Lyrics, Bulk Add, Clear
+        // Queue) still float on top of it when they are opened from inside
+        // the overlay. Absolute moves only -- no '\n', so it cannot scroll --
+        // and rows past the last usable terminal row are dropped.
+        auto lines = build_list_overlay_panel(overlay_panel_w, overlay_list_rows_);
+        const int start_col = 1 + std::max(0, (W - overlay_panel_w) / 2);
+        const int start_row = 2; // one background row stays visible above and below
+        for (size_t i = 0; i < lines.size(); ++i) {
+            const int row = start_row + static_cast<int>(i);
+            if (row > term_rows_ - 1) break;
+            floating << "\x1b[" << row << ";" << start_col << "H" << lines[i];
+        }
+    }
     if (mode_ == Mode::BulkAdd) {
         draw_floating_panel(floating, build_bulk_add_panel(), kBulkAddPanelWidth, W);
     } else if (mode_ == Mode::RetryLyrics) {
