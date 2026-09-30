@@ -10,6 +10,7 @@
 #include <ctime>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -1244,6 +1245,17 @@ void App::update_live_search_preview() {
         return;
     }
 
+    // "f:" (folder search) is local too -- filter the folder list live.
+    if (buf.size() >= 2 && lower(buf.substr(0, 2)) == "f:") {
+        std::string q = buf.substr(2);
+        while (!q.empty() && q.front() == ' ') q.erase(q.begin());
+        list_source_ = ListSource::Folder;
+        folder_view_ = filter_folders(q);
+        selected_ = 0;
+        scroll_ = 0;
+        return;
+    }
+
     list_source_ = ListSource::Local;
     local_view_ = filter_and_rank_local_view(buf);
     selected_ = 0;
@@ -1274,11 +1286,81 @@ void App::submit_search() {
         playlist_view_ = filter_playlists(query);
         selected_ = 0;
         scroll_ = 0;
+    } else if (buf.size() >= 2 && lower(buf.substr(0, 2)) == "f:") {
+        std::string query = buf.substr(2);
+        while (!query.empty() && query.front() == ' ') query.erase(query.begin());
+        last_folder_query_ = query;
+        list_source_ = ListSource::Folder;
+        folder_view_ = filter_folders(query);
+        selected_ = 0;
+        scroll_ = 0;
     } else {
         last_local_query_ = buf;
         list_source_ = ListSource::Local;
         refresh_local_view();
     }
+}
+
+// "/f:" folder search: every folder that directly holds at least one scanned
+// track, filtered by the query. Each whitespace-separated word of the query
+// must appear (case-insensitively) in "<parent folder> <folder name>", so
+// "beatles abbey" finds Music/The Beatles/Abbey Road. An empty query lists
+// every folder. Sorted by folder name.
+std::vector<FolderSummary> App::filter_folders(const std::string& query) const {
+    std::map<std::string, FolderSummary> by_path;
+    for (const auto& t : all_local_tracks_) {
+        fs::path dir = t.path.parent_path();
+        std::string key = path_utf8(dir);
+        auto it = by_path.find(key);
+        if (it == by_path.end()) {
+            FolderSummary f;
+            f.path = key;
+            f.name = path_utf8(dir.filename());
+            if (f.name.empty()) f.name = key; // drive root etc.
+            f.parent = path_utf8(dir.parent_path().filename());
+            f.track_count = 1;
+            by_path.emplace(key, std::move(f));
+        } else {
+            ++it->second.track_count;
+        }
+    }
+
+    std::vector<std::string> words;
+    {
+        std::string cur;
+        for (char c : query) {
+            if (c == ' ') { if (!cur.empty()) { words.push_back(cur); cur.clear(); } }
+            else cur += c;
+        }
+        if (!cur.empty()) words.push_back(cur);
+    }
+
+    std::vector<FolderSummary> out;
+    out.reserve(by_path.size());
+    for (auto& [key, f] : by_path) {
+        const std::string hay = f.parent + " " + f.name;
+        bool ok = true;
+        for (const auto& w : words) if (!contains_ci(hay, w)) { ok = false; break; }
+        if (ok) out.push_back(f);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const FolderSummary& a, const FolderSummary& b) {
+        return lower(a.name) < lower(b.name);
+    });
+    return out;
+}
+
+// Enter on a row of the "/f:" list: list all files of that folder in the
+// LOCAL AUDIO FILES pane. Same mechanism as the 'f' filter (folder_filter_),
+// so [c] clears it again and the pane title shows the folder name. Any
+// active local query is dropped so really every file of the folder shows up.
+void App::open_selected_folder() {
+    if (folder_view_.empty() || selected_ < 0 || selected_ >= static_cast<int>(folder_view_.size())) return;
+    folder_filter_ = folder_view_[static_cast<size_t>(selected_)].path;
+    last_local_query_.clear();
+    local_sort_mode_ = 0; // folder order, like 'f'
+    list_source_ = ListSource::Local;
+    refresh_local_view();
+    log_event("filtered: " + path_utf8(path_from_utf8(folder_filter_).filename()));
 }
 
 // Local, case-insensitive substring match on playlist name -- cheap
@@ -1762,6 +1844,8 @@ void App::play_selected() {
     // (see playlist_add_selected_to_queue()), same as the user pressing
     // "a" on it would.
     if (list_source_ == ListSource::Playlist) { playlist_add_selected_to_queue(); return; }
+    // Folders aren't played either -- Enter opens the folder's files.
+    if (list_source_ == ListSource::Folder) { open_selected_folder(); return; }
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0 || selected_ < 0 || selected_ >= static_cast<int>(list_len)) return;
     if (list_source_ == ListSource::Local) start_local_track(local_view_[selected_]);
@@ -1770,7 +1854,7 @@ void App::play_selected() {
 
 int App::current_track_list_index() const {
     if (!has_track_) return -1;
-    if (list_source_ == ListSource::Playlist) return -1; // no "now playing" identity in a list of playlist names
+    if (list_source_ == ListSource::Playlist || list_source_ == ListSource::Folder) return -1; // no "now playing" identity in a list of playlist/folder names
     if (list_source_ == ListSource::Local) {
         if (!current_is_local_) return -1; // playing an online track while browsing the local list
         for (size_t i = 0; i < local_view_.size(); ++i) {
@@ -1789,7 +1873,7 @@ int App::current_track_list_index() const {
 void App::play_relative(int delta) {
     // "next/previous track" has no meaning while browsing a list of
     // playlist names rather than tracks.
-    if (list_source_ == ListSource::Playlist) return;
+    if (list_source_ == ListSource::Playlist || list_source_ == ListSource::Folder) return;
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0) return;
     // Relative to what's actually *playing*, not wherever the hover
@@ -1806,7 +1890,7 @@ void App::play_relative(int delta) {
 }
 
 void App::play_relative_random() {
-    if (list_source_ == ListSource::Playlist) return;
+    if (list_source_ == ListSource::Playlist || list_source_ == ListSource::Folder) return;
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0) return;
     if (list_len == 1) { selected_ = 0; play_selected(); return; }
@@ -1924,6 +2008,7 @@ char App::play_mode_letter() const {
 
 void App::queue_add_selected() {
     if (list_source_ == ListSource::Playlist) { playlist_add_selected_to_queue(); return; }
+    if (list_source_ == ListSource::Folder) { status_line_ = "Enter opens the folder -- then add its tracks"; return; }
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0 || selected_ < 0 || selected_ >= static_cast<int>(list_len)) return;
     if (list_source_ == ListSource::Local) {
@@ -2238,6 +2323,7 @@ static const RefHotkeyRow kRefRows[] = {
     {"SEARCH", "HKeySearch", "Search Local"},
     {nullptr, "HKeySearchOnline", "Search Online"},
     {nullptr, "HKeySearchPlaylist", "Search Playlists"},
+    {nullptr, "HKeySearchFolder", "Search Folders"},
     // --- Queue ---
     {"QUEUE", "HKeyAddHoveringSongToQueue", "Add To Queue"},
     {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove From Queue"},
@@ -3217,7 +3303,9 @@ void App::handle_key(int key) {
             // already showing playlist_view_ (see update_live_search_preview())
             // -- navigate that instead of local_view_ in that case, same
             // as Enter/submit_search() would commit to.
-            size_t list_len = (list_source_ == ListSource::Playlist) ? playlist_view_.size() : local_view_.size();
+            size_t list_len = (list_source_ == ListSource::Playlist) ? playlist_view_.size()
+                            : (list_source_ == ListSource::Folder) ? folder_view_.size()
+                            : local_view_.size();
             if (list_len > 0 && selected_ < static_cast<int>(list_len) - 1) ++selected_;
             if (selected_ >= scroll_ + list_nav_rows()) scroll_ = selected_ - list_nav_rows() + 1;
             return;
@@ -3231,6 +3319,7 @@ void App::handle_key(int key) {
     // Mode::Browse
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size()
                      : (list_source_ == ListSource::Online) ? online_view_.size()
+                     : (list_source_ == ListSource::Folder) ? folder_view_.size()
                      : playlist_view_.size();
 
     // Big list overlay (SHIFT+L): SHIFT+Up/Down turn a whole page, ESC closes
@@ -4380,6 +4469,7 @@ std::vector<std::string> App::build_progress_panel(int total_width) const {
 std::vector<std::string> App::build_search_bar(int total_width) const {
     std::string label = (list_source_ == ListSource::Online) ? "SEARCH ONLINE"
                        : (list_source_ == ListSource::Playlist) ? "SEARCH PLAYLISTS"
+                       : (list_source_ == ListSource::Folder) ? "SEARCH FOLDERS"
                        : "SEARCH LOCAL";
 
     std::string content;
@@ -4389,6 +4479,8 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
         content = "/s:" + last_online_query_;
     } else if (list_source_ == ListSource::Playlist) {
         content = "/p:" + last_playlist_query_;
+    } else if (list_source_ == ListSource::Folder) {
+        content = "/f:" + last_folder_query_;
     } else {
         content = "/l:" + last_local_query_;
     }
@@ -4431,13 +4523,16 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
 std::vector<std::string> App::build_list_panel(int total_width, int height) const {
     bool online = (list_source_ == ListSource::Online);
     bool playlists_mode = (list_source_ == ListSource::Playlist);
+    bool folders_mode = (list_source_ == ListSource::Folder);
     std::string label = online ? "ONLINE RESULTS"
                        : playlists_mode ? "SAVED PLAYLISTS (Enter: queue all)"
+                       : folders_mode ? "LOCAL AUDIO FOLDERS (Enter: open folder)"
                        : "LOCAL AUDIO FILES (sort: " + std::string(sort_mode_name(local_sort_mode_, settings_.meta_only))
                          + (folder_filter_.empty() ? std::string()
                             : ", folder: " + path_utf8(path_from_utf8(folder_filter_).filename()) + " [c] clear")
                          + ")";
-    size_t total = online ? online_view_.size() : playlists_mode ? playlist_view_.size() : local_view_.size();
+    size_t total = online ? online_view_.size() : playlists_mode ? playlist_view_.size()
+                 : folders_mode ? folder_view_.size() : local_view_.size();
     int inner = total_width - 4;
     std::string border_ansi = ansi_for(settings_.border_color, false);
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
@@ -4469,6 +4564,19 @@ std::vector<std::string> App::build_list_panel(int total_width, int height) cons
                 std::string t_count = std::to_string(p.track_count) + (p.track_count == 1 ? " track" : " tracks");
                 content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
                         + pad_right(truncate_str(t_name, name_w), name_w) + settings_.list_separator + " "
+                        + pad_right(t_count, count_w);
+            } else if (folders_mode) {
+                const auto& f = folder_view_[idx];
+                const int parent_w = 16;
+                const int count_w = 10;
+                int name_w = std::max(5, inner - idx_w - 2 - 2 - parent_w - 2 - count_w);
+                std::string t_idx = apply_font_map(std::to_string(idx + 1), settings_.font_map);
+                std::string t_name = apply_font_map(f.name, settings_.font_map);
+                std::string t_parent = apply_font_map(f.parent, settings_.font_map);
+                std::string t_count = std::to_string(f.track_count) + (f.track_count == 1 ? " track" : " tracks");
+                content = pad_right(t_idx, idx_w) + settings_.list_separator + " "
+                        + pad_right(truncate_str(t_name, name_w), name_w) + settings_.list_separator + " "
+                        + pad_right(truncate_str(t_parent, parent_w), parent_w) + settings_.list_separator + " "
                         + pad_right(t_count, count_w);
             } else {
                 const auto& t = local_view_[idx];
@@ -7514,6 +7622,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
         {nullptr, "HKeySearchPlaylist", "Search saved playlists (type /p:query)"},
+        {nullptr, "HKeySearchFolder", "Search folders (type /f:query), ENTER lists all files of that folder"},
         // --- Queue ---
         {"QUEUE (MAIN UI)", "HKeyAddHoveringSongToQueue", "Add hovering track to queue"},
         {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove hovering track from queue"},
@@ -7644,8 +7753,9 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
 // ---------------------------------------------------------------------
 
 namespace {
-inline int list_total_for(ListSource src, size_t local, size_t online, size_t playlists) {
-    return static_cast<int>(src == ListSource::Local ? local : src == ListSource::Online ? online : playlists);
+inline int list_total_for(ListSource src, size_t local, size_t online, size_t playlists, size_t folders) {
+    return static_cast<int>(src == ListSource::Local ? local : src == ListSource::Online ? online
+                          : src == ListSource::Folder ? folders : playlists);
 }
 } // namespace
 
@@ -7673,7 +7783,7 @@ void App::list_overlay_geometry(int W, int& panel_w, int& list_rows) const {
 // list (no empty rows after the last entry when the list is long enough).
 void App::list_overlay_fit_scroll(int rows) {
     rows = std::max(1, rows);
-    const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size());
+    const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size(), folder_view_.size());
     if (total <= 0) { selected_ = 0; scroll_ = 0; return; }
     selected_ = std::clamp(selected_, 0, total - 1);
     scroll_ = std::clamp(scroll_, 0, std::max(0, total - rows));
@@ -7698,7 +7808,7 @@ void App::list_overlay_close() {
 // stays in the same place while the list flips underneath it. At either end
 // (window can't move any further) the cursor jumps to the first/last entry.
 void App::list_overlay_page(int dir) {
-    const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size());
+    const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size(), folder_view_.size());
     if (total <= 0) return;
     const int rows = std::max(1, overlay_list_rows_);
     const int max_scroll = std::max(0, total - rows);
@@ -7722,7 +7832,7 @@ std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_row
     std::vector<std::string> out = build_search_bar(panel_w);
     std::vector<std::string> list = build_list_panel(panel_w, list_rows);
     if (!list.empty()) {
-        const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size());
+        const int total = list_total_for(list_source_, local_view_.size(), online_view_.size(), playlist_view_.size(), folder_view_.size());
         const int rows = std::max(1, list_rows);
         const int pages = std::max(1, (total + rows - 1) / rows);
         const int page = std::clamp((scroll_ + rows / 2) / rows + 1, 1, pages);

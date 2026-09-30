@@ -330,6 +330,7 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyCycleSortMode",               "T"},
             {"HKeyPlaylist",                    "P"},
             {"HKeySearchPlaylist",              "/p:"},
+            {"HKeySearchFolder",                "/f:"},
             {"HKeyToggleNormalize",             "v"},
             // Shift+N: deliberately the UPPERCASE letter, because plain
             // "n" is already HKeyPlayNextSong and resolve_hotkey_action()

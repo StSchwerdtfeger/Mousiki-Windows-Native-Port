@@ -33,7 +33,16 @@
 namespace muisc {
 
 enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue };
-enum class ListSource { Local, Online, Playlist };
+enum class ListSource { Local, Online, Playlist, Folder };
+
+// One row of the main UI's "/f:" folder list: a folder that directly
+// contains at least one scanned local track.
+struct FolderSummary {
+    std::string path;   // parent-directory path (same form as folder_filter_)
+    std::string name;   // folder's own name
+    std::string parent; // name of its parent folder (usually the artist)
+    int track_count = 0;
+};
 
 struct QueueItem {
     bool is_local;
@@ -164,6 +173,15 @@ private:
     std::vector<PlaylistSummary> playlist_view_;
     std::string last_playlist_query_;
     std::vector<PlaylistSummary> filter_playlists(const std::string& query) const;
+
+    // Main UI: results of a "/f:" search (list_source_==Folder). Enter on a
+    // row opens that folder in the LOCAL AUDIO FILES pane -- it sets
+    // folder_filter_ (exactly what 'f' does) and switches back to the local
+    // list, so every file of the folder is listed.
+    std::vector<FolderSummary> folder_view_;
+    std::string last_folder_query_;
+    std::vector<FolderSummary> filter_folders(const std::string& query) const;
+    void open_selected_folder();
     // First configured PlaylistsPath (settings_.playlists_paths[0]) if the
     // user set one (config.txt's PlaylistsPath=), else
     // local_music_paths[0]/playlists -- this is the folder NEW playlists
