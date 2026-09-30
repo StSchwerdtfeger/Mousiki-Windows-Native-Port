@@ -158,6 +158,7 @@ See the new **user manual** in the repo above or use `?` for the cheat sheet wit
 | **Local Search** | `/` | Filter and search local library 
 | **Online Stream Search** | `/s: <query>` | Search and stream music online |
 | **Search Playlists** | `/p: <query>` | Search and stream local playlists |
+| **Track list overlay** | `SHIFT+l` | Enlarged overlay of the track list pan in the main UI |
 | **Open Playlist** | `SHIFT + p` | Open Playlist Creator/Editor |
 | **Open Meta Data** | `SHIFT + m` | Open Meta Data Editor |
 | **Download Stream** | `y` | Download currently streaming track to default or set path |
@@ -255,6 +256,7 @@ A few things added on top of the original design rather than required to run it 
 ### Major Additions / Modifications
 
 - **Installer/portable (x64)** entailed in the latest release (since v2.1.0) as alternative to building the app oneself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
+- **Track list overlay** for the playback UI. 
 - **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
 <img width="2287" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" />
