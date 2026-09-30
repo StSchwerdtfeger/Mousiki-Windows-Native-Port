@@ -1,6 +1,6 @@
 <div align="center">
     
-# Mousiki Windows Native Port v2.1.0 🎵 
+# Mousiki Windows Native Port v2.2.0 🎵 
 
 </p>
 
@@ -42,7 +42,7 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
 
-## Current Status of the Port and Modification (v2.1.0, now with standalone setup.exe / portable, see latest release)
+## Current Status of the Port and Modification (v2.2.0, now with standalone setup.exe / portable, see latest release)
 
 For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB) ... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
 Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creater would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
