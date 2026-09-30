@@ -247,6 +247,14 @@ HKeyConsole="t"
 HKeyToggleMute="x"
 HKeyCheatsheet="?"
 HKeyRetryLyrics="l"
+# Big list overlay: a larger LOCAL AUDIO FILES pane floated over the main UI.
+# SHIFT+UP/DOWN turns a whole page while it is open (not rebindable, the input
+# layer reports the arrows as A/B); ESC or this key again closes it. Deliberately
+# the UPPERCASE letter: plain "l" stays "retry lyrics".
+HKeyListOverlay="L"
+# Big queue overlay: the same for the QUEUE pane. SHIFT+UP/DOWN pages, ESC or this
+# key again closes it. Uppercase on purpose, and NOT "q" (that quits the app).
+HKeyQueueOverlay="K"
 HKeyShuffleNext="#"
 HKeyToggleLyrics="+"
 HKeyToggleWaveform="w"
