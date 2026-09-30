@@ -13,7 +13,7 @@ The key shown for each command is the **default binding**. Your own bindings may
   [3. Navigation & view (main UI)](#3-navigation--view-main-ui)  
   [4. Search (main UI)](#4-search-main-ui)  
   [5. Queue (main UI)](#5-queue-main-ui)  
-  [6. Playlists](#6-playlists)
+  [6. Playlists](#6-playlists)  
   [7. Meta editor](#7-meta-editor)  
   [8. History](#8-history)  
   [9. Downloads](#9-downloads)   
