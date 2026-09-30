@@ -19,7 +19,7 @@ The key shown for each command is the **default binding**. Your own bindings may
   [9. Downloads](#9-downloads)
   [10. Settings (individual tabs)](#10-settings-individual-tabs)
   [About this App](#About-this-app)
-F
+
 ---
 
 ## Before you start
