@@ -256,7 +256,10 @@ A few things added on top of the original design rather than required to run it 
 ### Major Additions / Modifications
 
 - **Installer/portable (x64)** entailed in the latest release (since v2.1.0) as alternative to building the app oneself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
-- **Track list overlay** for the playback UI. 
+- **Track list overlay** for the playback UI.
+ 
+<img width="2292" height="1083" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" />
+
 - **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
 <img width="2287" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" />
