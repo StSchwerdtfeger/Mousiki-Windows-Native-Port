@@ -19,7 +19,7 @@ The key shown for each command is the **default binding**. Your own bindings may
   [9. Downloads](#9-downloads)
   [10. Settings (individual tabs)](#10-settings-individual-tabs)
   [About this App](#About-this-app)
-
+F
 ---
 
 ## Before you start
@@ -164,6 +164,7 @@ A **search** always ranks by match quality, so while a query is active the sort 
 | `/` | Search local folder | Opens the search box. The list updates **live as you type**. Press `ENTER` to keep the result, or `ESC` to cancel and restore the previous view. |
 | `/s:` + query | Search online (YouTube) | Type `s:` followed by your query, then press `ENTER`. Online searches only run on `ENTER`, never per keystroke. |
 | `/p:` + query | Search saved playlists | Type `p:` followed by part of a playlist name. The playlist list filters live. `ENTER` on a playlist row queues all of its tracks. |
+| `/f:` + query | Search folders | Type `f:` followed by part of a folder name (or of `<parent folder> <folder>`, e.g. `beatles abbey`). The folder list filters live. `ENTER` on a folder row opens it in the LOCAL AUDIO FILES pane and lists all of its files, exactly like the `f` filter (`c` clears it again). |
 
 **Local search details**
 
