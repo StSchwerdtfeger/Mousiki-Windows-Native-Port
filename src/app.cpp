@@ -4344,6 +4344,14 @@ std::vector<std::string> App::build_progress_panel(int total_width) const {
     for (int i = 0; i < dashes_n; ++i) bottom_line += settings_.box_horizontal;
     bottom_line += settings_.box_lower_right;
     bottom_line += "\x1b[0m";
+    // This row is only main_total_w wide, but the row above it runs the
+    // full width (volume bar occupies the right-hand side). Frames are
+    // drawn without a screen clear (cursor-home only), so any cell this
+    // row does not write keeps whatever was there before -- e.g. the edge
+    // of a floating panel (Retry Lyrics / Bulk Add / Clear Queue) that was
+    // stamped over it, which then stayed on screen under the volume bar
+    // after the panel closed. Pad to the full width so it is overwritten.
+    if (side_w > 0) bottom_line += std::string(side_w, ' ');
     out.push_back(bar + " " + row3_content + " " + bar + vol_tail);
     out.push_back(bottom_line);
     return out;
