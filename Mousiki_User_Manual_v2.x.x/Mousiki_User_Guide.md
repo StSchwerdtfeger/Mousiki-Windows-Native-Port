@@ -187,6 +187,7 @@ The queue is a list of tracks that play **before** the normal list continues. Pr
 | `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
 | `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
 | `L` (Shift+L) | Big list overlay | Floats a larger version of the list pane (LOCAL AUDIO FILES) over the main UI. See below. |
+| `K` (Shift+K) | Big queue overlay | Floats a larger version of the QUEUE pane over the main UI. See below. |
 
 ### Big list overlay (`SHIFT+L`)
 
@@ -201,6 +202,26 @@ Opens a large window, styled like the lyrics form (`l`), that shows the same lis
 Everything else keeps working from inside the overlay: `ENTER` plays, `T` cycles the sort mode, `f` / `c` set / clear the folder filter, `/` searches (the search bar is part of the overlay), `a` adds to the queue, `n` / `b` / `p` / seek / volume as usual, and `l` opens the lyrics form on top of it. The queue pane is hidden while the overlay is open, so its footer shows the current queue size (`queue: N`) together with a page counter. Full-screen menus (Settings, Playlists, ...) hide the overlay while they are open and it returns when they close.
 
 ![Big list overlay](images/Playback_Main_UI_TRACK_OVERLAY.png)
+
+*Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
+
+### Big queue overlay (`SHIFT+K`)
+
+The same idea as the big list overlay, for the queue: a large window that shows the QUEUE pane with many more rows. It is on `SHIFT+K` (and not on `q`) so that you cannot quit the app by accident. It shares the cursor with the small queue pane, and the queue is automatically focused while it is open, so the arrow keys move through the queue.
+
+| Key | Action |
+|---|---|
+| `SHIFT+ARROW_DOWN` / `SHIFT+ARROW_UP` | Next / previous **page**. At the end the cursor jumps to the last / first entry. |
+| `ARROW_UP` / `ARROW_DOWN` | Move one row |
+| `4` / `5` (default) | Move the hovered track up / down in the queue |
+| `d` | Remove the hovered track from the queue |
+| `a` | Open the bulk-add panel (paste a playlist link), as with the queue focused |
+| `SHIFT+X` | Clear the whole queue (asks first) |
+| `ESC` or `SHIFT+K` | Close the overlay (the previous focus is restored) |
+
+Only one of the two overlays can be open at a time: `SHIFT+K` while the list overlay is open switches to the queue overlay, and vice versa. Pressing `/` closes the queue overlay, because the search filters the list underneath. Playback keys (`n`, `b`, `p`, seek, volume) keep working. The footer shows the page counter and the number of tracks.
+
+![Big list overlay](images/Playback_Main_UI_QUEUE_OVERLAY.png)
 
 *Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
 
