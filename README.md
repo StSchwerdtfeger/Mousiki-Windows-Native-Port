@@ -2,8 +2,6 @@
     
 # Mousiki Windows Native Port v2.3.0 🎵 
 
-</p>
-
 <p align="center">
   <a href="https://opensource.org/" target="_blank">
     <img src="https://i0.wp.com/opensource.org/wp-content/uploads/2023/03/cropped-OSI-horizontal-large.png?fit=640%2C229&quality=80&ssl=1" alt="OSI" height="52" /></a>
@@ -18,23 +16,23 @@
 > You are free to use, modify, fork, re-distribute, and sell the software,
 > subject to the terms of the license.
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/itzender5820/mousiki/blob/main/LICENSE)
-[![Language](https://img.shields.io/badge/Language-C++17-orange.svg)]([https://github.com/itzender5820/mousiki](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main))
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Language](https://img.shields.io/badge/Language-C++17-orange.svg)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main)
 [![Windows](https://img.shields.io/badge/Windows-Supported-0078D4.svg?logo=windows&logoColor=white)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main)
 
 </div>
 
 A native Windows port (including a bunch of modifications and additions; design maintained) of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player for macOS/Linux built for people who prefer control, simplicity, and a keyboard. Note about the name: it is the greek word for music and is pronounced mousi-**key**! ;) All credits for the design, main feature set, and the vast majority of the code goes to the original author. Feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
-Build yourself (see [prerequesites](+prerequesite) below) **or use installer/portable(x64)** that is entailed in the latest release (since v2.1.0). 
+Build yourself (see [prerequisites](#prerequisites) below) **or use the installer/portable (x64) version** that is included in the latest release (since v2.1.0). A full **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** (also as [PDF](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.pdf)) walks through every entry of the in-app cheat sheet, every settings tab and every overlay.
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all. This native port uses no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
-Along the Win32 port, **some minor and major additions where made too**. Major changes/additions are a most of all a **menu to create playlists from local (or downloaded) tracks**, a **meta data editor menu, including fetching meta data from AcoustID**, a **listening histoy** incl. the ability to add top tracks to the playback queue and a **user's manual**, added a **user manual** (.md and .pdf version)... Minor changes/additions are e.g. a general key to shuffle to a next title (before only next title in the list was possible), stereo audio and loudness normalization, add path via settings menu, toggle the lyrics on/off (also via a key command), optimized search engine for windows (searching metadata was very slow, only available after 2-3 min. after starting app), added fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without dash) a cheat sheet... The desing remained the same for obvious reasons; only thing added is a Braille-ASCII of a music cassette shown when no track is loaded... See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list.  
+Along the Win32 port, **some minor and major additions were made too**. The major ones are a **playlist menu** to create playlists from local (or downloaded) tracks, a **meta data editor** including **fetching artist/title via AcoustID** (audio fingerprinting), a **listening history** (incl. the ability to add top tracks to the playback queue), an **XY oscilloscope** as an alternative to the lyrics ball, enlarged **list/queue overlays**, and a **user manual** (.md and .pdf). Minor changes/additions are e.g. a general key to shuffle to a next title (before only the next title in the list was possible), stereo audio and loudness normalization, adding paths via the settings menu, toggling the lyrics on/off (also via a key command), an optimized search engine for Windows (searching metadata was very slow and only available 2-3 min. after starting the app), fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without the dash), a categorized cheat sheet... The design remained the same for obvious reasons; the only thing added is a Braille-ASCII music cassette shown when no track is loaded. See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list.  
 
 - **Original:** [github.com/itzender5820/mousiki](https://github.com/itzender5820/mousiki) — ender ([itzender5820](https://github.com/itzender5820))
 - **License:** Apache 2.0 — see [LICENSE](LICENSE)
-- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly MiMo V2.6 and Sonett 5 set on medium). Therefore take some of the below with a grain of salt (explicitly the documentation of the Win native port and some assumed bugs of the original, which I can't confirm myself), since I am not a developer for applications like this and I do not fully understand how the porting was actually done. Still took me around 50h in the last weeks to perform porting to Win, modify (feature design) and debug this version... The repo code could also be optimized in that respect, but apparently is supposed to be done quite well (from feedback I got so far and evaluated myself, as far as I am capable to do so). Even though I am not that big fan of using AI for scientific applications (which I usually do), e.g. in the context of data science - since someone has to understand how sh** works and understanding is beautiful and mind blowing - I still liked this music player way too much the first time I saw it on social media to not want to use it on my Windows setup... Sooooo, I went this path and vibe coded a lot to create a port for Windows and still learned a lot as well (especially on UI and feature design). *In general, a huge shout out for the great work by itzender5820 for this beautiful music player.* <3 It's the best and most fun music player I ever found. Makes me want to listen to music all the time :D 
+- **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly MiMo V2.6 and Sonnet 5 set on medium). Therefore take some of the below with a grain of salt (explicitly the documentation of the Win native port and some assumed bugs of the original, which I can't confirm myself), since I am not a developer for applications like this and I do not fully understand how the porting was actually done. Still took me around 50h in the last weeks to perform porting to Win, modify (feature design) and debug this version... The repo code could also be optimized in that respect, but apparently is supposed to be done quite well (from feedback I got so far and evaluated myself, as far as I am capable to do so). Even though I am not that big fan of using AI for scientific applications (which I usually do), e.g. in the context of data science - since someone has to understand how sh** works and understanding is beautiful and mind blowing - I still liked this music player way too much the first time I saw it on social media to not want to use it on my Windows setup... Sooooo, I went this path and vibe coded a lot to create a port for Windows and still learned a lot as well (especially on UI and feature design). *In general, a huge shout out for the great work by itzender5820 for this beautiful music player.* <3 It's the best and most fun music player I ever found. Makes me want to listen to music all the time :D 
 
 <p align="center"><img width="800" alt="preview" src="preview.gif" /></p>
 
@@ -45,34 +43,40 @@ My current setup looks like the below. The config.txt and everything that comes 
 ## Current Status of the Port and Modification (v2.3.0, now with standalone setup.exe / portable, see latest release)
 
 For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB) ... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
-Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creater would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
+Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
-## Quick start (port was tested with PowerShell 7.6.6 and 5.1)
+## Quick start
 
-Installer/portable (x64) is entailed in the latest release (since v2.1.0) or build yourself via:
+Installer/portable (x64) is included in the latest release (since v2.1.0) or build yourself via:
 
 ```powershell
 # from the repo root
 .\setup.ps1
 ```
-This temporarily disables script blocking and warning prompts for the currently active PowerShell session only,
-in case the above does not compute in your PowerShell.
+> [!IMPORTANT]
+> `setup.ps1` itself **requires PowerShell 7 or newer** (`#Requires -Version 7.0`); it will refuse to run in Windows PowerShell 5.1. The finished `mousiki.exe` was tested in PowerShell 7.6.6 *and* 5.1. If you only have 5.1, build manually (see below).
+
+Optional parameters: `-SkipDeps` (configure and build only, don't touch winget/pip) and `-BuildType Debug` (default is `Release`).
+
+If PowerShell blocks the script, the following temporarily disables script blocking and warning prompts for the current PowerShell session only:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\setup.ps1
 ```
 
-You can build the .exe via the following, however, the setup.ps1 already performs building the file
-(so the below is just in case something didn't work computing setup.ps1 and you want to build after debugging):
+The setup.ps1 already performs the build. If something didn't work and you want to build manually after debugging (this also works in PowerShell 5.1), use CMake directly:
 
 ```powershell
-.\build\Release\mousiki.exe
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
 ```
 
-Run app e.g. via the commad below (adjust username in the path before executing!!).
-Note that you have to add your local files path via the config.txt file in "C:\Users\YOURNAME\.config" (more details further below).
-See original repo by itzender5820 for an introduction on how to use Mousiki.
+The build copies `scripts\` (including the freshly built `fpcalc.exe`) next to `mousiki.exe`. Keep that `scripts\` folder next to the exe if you move it, otherwise lyrics, fast online search and the AcoustID fetch stop working.
+
+Run app e.g. via the command below (adjust username in the path before executing!!).
+Note that you have to add your local files path via the config file `C:\Users\YOURNAME\.config\mousiki\config.txt` or via Settings (`s`) inside the app (more details further below). The `config.txt` in the repo root is a documented template of that file.
+See the [user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md) or the original repo by itzender5820 for an introduction on how to use Mousiki.
 ```powershell
 & 'C:\Users\YOURNAME\mousiki\build\Release\mousiki.exe'
 ```
@@ -92,27 +96,29 @@ function lala {
 }
 ```
 Save your profile.ps1 via Ctrl + S and open a new terminal in order to be able to test your new function.
-Voilá, you can now open Mousiki from any folder you're at using the command "lala", or whatever you set as command respectively...
+Voilà, you can now open Mousiki from any folder you're at using the command "lala", or whatever you set as command respectively...
 
 ## Prerequisites
 
 Note, I had a bunch of the below already installed, so I am not sure how smooth setup.ps1 runs installing the below for the first time using setup.ps1 (such as installing Visual Studio 2022 Build Tools...).
 
-`setup.ps1` installs these via winget in PowerShell 7, except the compiler "VS 2022 Build tools":
+`setup.ps1` (PowerShell 7+) installs these via winget (and pip for `requests`), except the compiler "VS 2022 Build tools":
 
 | Tool | Why | Install |
 |---|---|---|
-| Visual Studio 2022 Build Tools, "Desktop development with C++" | compiles the app | must be selected interactively — winget's silent mode won't pick the C++ workload |
+| Visual Studio 2022 Build Tools, "Desktop development with C++" | compiles the app (and the `fpcalc` helper) | `winget install --id Microsoft.VisualStudio.2022.BuildTools`, then tick the C++ workload interactively — winget's silent mode won't pick it. `setup.ps1` only warns if no compiler is found. |
 | CMake ≥ 3.16 | build system | `winget install Kitware.CMake` |
-| FFmpeg | decodes Opus (miniaudio can't), `ffprobe` supplies metadata | `winget install Gyan.FFmpeg` |
-| yt-dlp | online search fallback, playlists, streaming | `winget install yt-dlp.yt-dlp` |
-| Python 3 + `requests` | lyrics and fast online search (`scripts/`) | `winget install Python.Python.3.12` then `py -3 -m pip install requests` |
+| FFmpeg | decodes Opus (miniaudio can't), `ffprobe` supplies metadata, decodes audio for the AcoustID fingerprint and writes tags in the meta editor (`ffmpeg -c copy`) | `winget install Gyan.FFmpeg` |
+| yt-dlp | online search fallback, YouTube playlists (bulk add), streaming, downloads | `winget install yt-dlp.yt-dlp` |
+| Python 3 | runs the helper scripts in `scripts/`: fast online search (`fast_yt_search.py`), AcoustID fetch (`fetch_meta.py`) and lyrics (`fetch_lyrics.py`) — the first two use the standard library only | `winget install Python.Python.3.12` |
+| Python package `requests` | lyrics only (`fetch_lyrics.py` / `lrc.py`) | `py -3 -m pip install requests` (done by `setup.ps1`) |
+| `fpcalc` (Chromaprint) | audio fingerprint for the AcoustID fetch | **nothing to install** — built by CMake from `third_party/chromaprint/` and copied to `scripts\` |
 
-All of these are independent of each other and of the core player. With none of them installed, local playback still works. 
+All of the runtime tools (FFmpeg, yt-dlp, Python) are independent of each other and of the core player. With none of them installed, local playback of MP3/FLAC/WAV etc. still works (Opus/some other formats need FFmpeg). 
 
 MinGW-w64 (MSYS2 UCRT64) also builds this — configure with `-G "MinGW Makefiles"`. The code guards on `_WIN32`, not on `_MSC_VER`, except where MSVC genuinely differs (noted inline where it matters).
 
-`third_party/` (miniaudio v0.11.25, kissfft, chromaprint for AcoustID meta data fetch) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if either is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause (see the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included).
+`third_party/` (miniaudio v0.11.25, kissfft, chromaprint 1.6.1 for the AcoustID meta data fetch) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if one of them is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause, Chromaprint is MIT but — because it bundles some FFmpeg code — is to be treated as LGPL-2.1 as a whole (see `third_party/chromaprint/LICENSE.md` and the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included).
 
 ## Use Windows Terminal
 
@@ -128,85 +134,109 @@ The entire UI is ANSI escape sequences. `mousiki.exe` enables `ENABLE_VIRTUAL_TE
 | Cache (downloaded/streamed tracks) | `%USERPROFILE%\.cache\mousiki\` |
 | Log | `%USERPROFILE%\.cache\mousiki\logs\console.log` |
 | Session snapshot | `%USERPROFILE%\.cache\mousiki\snapshot\snapshot.json` |
+| Listening history | `%USERPROFILE%\.cache\mousiki\history\history.json` |
+| Meta editor session (pending edits) | `%USERPROFILE%\.cache\mousiki\meta_session\session.json` |
+| Playlists (default) | `<first LocalMusicPath>\playlists\`; falls back to `%USERPROFILE%\.cache\mousiki\playlists\` if no `LocalMusicPath` is set |
+| Fetched lyrics | `<folder of the track>\lyrics\` |
 
-`LocalMusicPath=`,  `Playlistpath=` and `DownloadFolder`= entries accept Windows paths, both slash directions should work (`std::filesystem` normalizes them):
+`LocalMusicPath=`, `PlaylistsPath=` and `DownloadFolder=` entries accept Windows paths, both slash directions should work (`std::filesystem` normalizes them). A leading `~` is expanded to your user profile; **environment variables such as `%USERPROFILE%` are *not* expanded**, so use `~` or a full path:
 
 ```
 LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=~/Music
 ```
-Playlists folder (optional -- overrides the `LocalMusicPath[0]/playlists` default). Default is located in `C:\Users\YOUR NAME\.cache\mousiki\playlists` 
-You can now add folders in the settings (`s`). Same goes for the Download folder...
+Playlists folder (optional, one `PlaylistsPath=` line per folder). Without it, playlists live in `<first LocalMusicPath>\playlists`. Playlists are listed/loaded from all configured folders, saving/deleting always uses the first one.
+You can also add folders in the settings (`s`). Same goes for the (single) download folder (`DownloadFolder=`, default is `%USERPROFILE%\.cache\mousiki`), which is automatically added to the local music paths.
 
 ```
 PlaylistsPath=C:\Users\YOUR NAME !!!!!!!\Music\playlists
+DownloadFolder=D:\Downloads\mousiki
 ```
 
 ## Default Keybindings
 
-Configurable in `C:\Users\USER\.config\mousiki\config.txt` or in the settings. Some commands are hard coded.
-See the new **user manual** in the repo above or use `?` for the cheat sheet with all commands inside the app.
+Rebindable in `C:\Users\USER\.config\mousiki\config.txt` or in Settings → Reference (`s`). Keys written as `SHIFT+x` are the **uppercase letter** (e.g. `HKeyCycleSortMode="T"`), because the plain lowercase letter already does something else. Some commands are fixed (not rebindable): `ESC`, `Y`/`N` in prompts, `SHIFT+B`, `SHIFT+↑/↓` in the overlays, and the keys inside the playlist and meta editors including `CTRL+SHIFT+S/X`.
+See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for every command in detail or use `?` for the cheat sheet inside the app (it always shows the keys you actually have bound).
 
-### Key Commands Overview
+### System
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
-| **Cheat Sheet** | `?` | List of key commands (on German keyboards its `SHIFT + ß` == `?` |
-
-### Search & Playback
-| Action | Keybinding | Description |
-| :--- | :--- | :--- |
-| **Local Search** | `/` | Filter and search local library 
-| **Online Stream Search** | `/s: <query>` | Search and stream music online |
-| **Search Playlists** | `/p: <query>` | Search and stream local playlists |
-| **Search Folders by Name** | `/f: <query>` | Search folder; hit `Enter` to open content in local audio pane (similar using `f`) |
-| **Track list overlay** | `SHIFT+l` | Enlarged overlay of the track list pane in the main UI |
-| **Queue list overlay** | `SHIFT+l` | Enlarged overlay of the queue list pane in the main UI |
-| **Open Playlist** | `SHIFT + p` | Open Playlist Creator/Editor |
-| **Open Meta Data** | `SHIFT + m` | Open Meta Data Editor |
-| **Download Stream** | `y` | Download currently streaming track to default or set path |
-| **Play / Pause** | `p` | Toggle playback |
-| **Play / reload selected track** | `Enter` | Play or reload selected track |
-| **Next / Previous Track** | `n` / `b` | Skip between songs |
-| **Shuffle Next** | `#` | Shuffle to a next song |
-| **Filename / Meta Data** | `SHIFT + n` | Toggle to show meta data only in lists |
-| **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward |
-| **Volume** | `1` / `2` |  Increase / Decrease in-app volume |
-| **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab |
-| **Change Play-/Cyclemode** | `m` | Toggle Playmode (shuffle, stop, repeat queue, loop, list) |
-| **Cycle Lyrics View** | `+` | Cycle the lyrics area: lyrics → sphere → oscilloscope |
-| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live |
-
-### Navigation & Queue
-| Action | Keybinding | Description |
-| :--- | :--- | :--- |
-| **Setting** |`s` |Enter Settings menu|
-| **Exit Setting** |`ESC` |Exit Settings menu|
-| **Quit** | `q` | Quit (when in main UI page) |
-| **Exit + Save Setting** |`s` |Exit + Save again via `s`|   
+| **Cheat Sheet** | `?` | List of all key commands (on German keyboards it is `SHIFT + ß`) |
+| **Settings** | `s` | Open Settings; inside Settings `s` again saves to `config.txt` and returns |
+| **Exit Settings** | `ESC` / `q` | Return without writing `config.txt` right now (config is also written on a normal quit) |
 | **Console / Logs** | `t` | Show console logs for debugging |
-| **Playlists** | `SHIFT+P` |Enter Playlist menu |
+| **Quit** | `q` | Quit (from the main UI) |
+| **Home view** | `ESC` | On the main screen: back to the full local library, no search/folder filter, scrolled to top (sort mode stays) |
+| **Confirm prompt** | `Y` / `N` | Answer Yes/No prompts (clear queue, AcoustID disclaimer, ...) |
+
+### Playback
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
+| **Play / reload selected track** | `Enter` | Play or reload selected track (on a playlist row: queue all of its tracks) |
+| **Play / Pause** | `p` | Toggle playback |
+| **Next / Previous Track** | `n` / `b` | Skip between songs (`n` takes the queue first) |
+| **Shuffle Next** | `#` | Jump to a random track of the current list (ignores the queue) |
+| **Change Play-/Cyclemode** | `m` | list → repeat → shuffle → stop → repeat queue (shown as `L` `R` `S` `O` `Q` next to the search bar) |
+| **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward (5 s) |
+| **Volume** | `1` / `2` | Increase / Decrease in-app volume (steps of 5) |
+| **Mute** | `x` | Set volume to 0 without pausing; press again to restore |
+| **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab |
+
+### Navigation & View
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
 | **Navigate** | `ARROW_UP` / `ARROW_DOWN` | Move selection |
-| **Cycle Sort Mode** | `SHIFT + t` | title/artist a-z, folder order |
-| **Switch Tabs/Cards** | `TAB` | Cycle between UI panels |
-| **Add to Queue** | `a` | Enqueue selected track |
+| **Switch Tabs/Cards** | `TAB` | Switch focus between list and queue |
+| **Filter by Folder** | `f` | Show only the folder of the hovering track |
+| **Clear Filter** | `c` | Reset the folder filter |
+| **Cycle Sort Mode** | `SHIFT + t` | folder order → title A-Z → artist A-Z |
+| **Filename / Meta Data** | `SHIFT + n` | Toggle between filename + meta data and meta data only in lists |
+| **Cycle Lyrics View** | `+` | Cycle the lyrics area: lyrics → sphere → oscilloscope |
+| **Retry Lyrics** | `l` | Form to fetch lyrics again with a manual title/artist (only while the lyrics engine is on) |
+| **Waveform style** | `w` | Toggle waveform raw / smooth |
+| **Refresh UI** | `k` | Force a full redraw (e.g. after a terminal resize) |
+| **Track list overlay** | `SHIFT + l` | Enlarged overlay of the track list pane; `SHIFT + ↑/↓` pages, `ESC` closes |
+| **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
+| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live (`R` resets, saved on close) |
+
+### Search
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
+| **Local Search** | `/` | Filter and search local library (fuzzy, live as you type) |
+| **Online Stream Search** | `/s: <query>` | Search and stream music online (runs on `Enter`) |
+| **Search Playlists** | `/p: <query>` | Search saved playlists; `Enter` on a playlist queues all of its tracks |
+| **Search Folders by Name** | `/f: <query>` | Search folder; hit `Enter` to open content in local audio pane (similar using `f`) |
+
+### Queue
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
+| **Add to Queue** | `a` | Enqueue selected track (with the queue focused: bulk-add panel for a pasted YouTube playlist link) |
 | **Remove from Queue** | `d` | Dequeue selected track |
 | **Move Track Up** | `4` | Move up in Queue/Playlist |
 | **Move Track down** | `5` | Move down in Queue/Playlist |
-| **Clear Queue** | `SHIFT+x` | Clear Queue | 
-| **Filter by Folder** | `f` | Apply folder filter |
-| **Clear Filter** | `c` | Reset active search/filters |
-| **Quit** | `q` | Exit application |
+| **Clear Queue** | `SHIFT + x` | Clear Queue (asks first) |
 
-</div>
+### Playlists, Meta Data, History, Downloads
+| Action | Keybinding | Description |
+| :--- | :--- | :--- |
+| **Open Playlist Editor** | `SHIFT + p` | Open Playlist Creator/Editor (see the editor keys below) |
+| **Open Meta Data Editor** | `SHIFT + m` | Open Meta Data Editor (see the editor keys below) |
+| **Fetch meta data (AcoustID)** | `SHIFT + b` | Fingerprint lookup of the hovered local title (fixed key, also works from the main list) |
+| **Listening History** | `SHIFT + h` | Open the history overlay; `1` / `2` / `3` switch tabs, `r` re-sorts, `TAB`/`Enter` on Top Tracks add the top 10-25-50-100 to the queue |
+| **Download Stream** | `y` | Download currently streaming track to the download folder (Settings → Download Folder, default `.cache\mousiki`) |
 
-Every editable/rebindable hotkey can also be found in the config.txt and — for an overview — in the in-app cheat sheet overview (`?`). Not every key was set to be rebindable. Rebinding can also be done in the config.txt file and  under Settings → Reference in the app itself.
+Keys inside the **playlist editor**: `ALT+←/→` switch tab, `TAB` cycle focus, `Enter` add track / load playlist, `4`/`5` move track, `D`/`DEL`/`BACKSPACE` remove track (delete playlist on the Saved tab), `HOME` save playlist, `SHIFT+←/→` mark text, `CTRL+C/X/V` copy/cut/paste.
 
-Changing Fonts: In the config.txt you will also see liens like A = A, a. This is used so you can re-font the UI without changing the font of the terminal, e.g. via A={𝓐,𝓪}.... 
+Keys inside the **meta data editor**: `←/→` switch EDIT / FETCH LIST tab, `TAB` cycle focus, `Enter` edit field (on FETCH LIST: run the whole batch), `a` add file to the fetch list, `r` edited files on top, `x` / `SHIFT+T` / `SHIFT+A` / `SHIFT+Y` filter for missing any / title / artist / year, `DEL`/`d` remove from the fetch list, `CTRL+SHIFT+S` apply edits to the files, `CTRL+SHIFT+X` discard edits.
+
+Every editable/rebindable hotkey can also be found in the config.txt and — for an overview — in the in-app cheat sheet overview (`?`). Not every key was set to be rebindable. Rebinding can also be done in the config.txt file and under Settings → Reference in the app itself (a key already used by another action is refused).
+
+Changing Fonts: In the config.txt you will also see lines like `A={A,a}`. This is used so you can re-font the UI without changing the font of the terminal, e.g. via `A={𝓐,𝓪}` (edit while the app is closed). 
 
 ## Playlist and Meta Data UI Behavior
 
-The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB and the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking text input... 
-In the meta data menu, the tabs can be changed via `left / right`. I guess the handling of the meta data menu needs some practice, since it is rather complex task to perform, however after fitting in it works well. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane and then use `x/T/A/Y` for all missing, title missing, artist missing, year missing. Using metatogger can be a bit faster, however it is not the Mousi-**key** way of doing things! Gotta love the terminal. 
+The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB, the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT and the playlist is saved via HOME. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking text input... 
+In the meta data menu, the tabs can be changed via `left / right`. I guess the handling of the meta data menu needs some practice, since it is rather complex task to perform, however after fitting in it works well. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane and then use `x` / `SHIFT+T` / `SHIFT+A` / `SHIFT+Y` for all missing, title missing, artist missing, year missing (press again to clear). Using metatogger can be a bit faster, however it is not the Mousi-**key** way of doing things! Gotta love the terminal. 
 
 ## What had to change
 
@@ -262,8 +292,8 @@ A few things added on top of the original design rather than required to run it 
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
 
-- **Installer/portable (x64)** entailed in the latest release (since v2.1.0) as alternative to building the app oneself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
-- **Track and queue list overlay** for the playback UI.
+- **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
+- **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays.
  
 <p align="center"><img width="850" height="402" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" /></p>
 
@@ -274,9 +304,9 @@ A few things added on top of the original design rather than required to run it 
 <p align="center"><img width="850" height="391" alt="grafik" src="https://github.com/user-attachments/assets/7ce6f723-ac7d-4a31-900b-efbeb24a3a10" /></p>
 
 - **Meta/tag editor incl. fetch via AcoustID** (`SHIFT+M`, rebindable as `HKeyMetaEditor`) — a second full-screen overlay shaped similar to the playlist menu (tab strip, boxed panels, search field, hint/status footer) for changing a file's **name**, **artist**, **title**, **album** and **year**:
-  - `TAB` cycles search field → library list → the five field rows, where typing edits the hovered field directly; `SHIFT+←/→` switches between the **EDIT** tab and the **FETCH LIST** tab.
+  - `TAB` cycles search field → library list → the five field rows, where typing edits the hovered field directly; `←/→` switches between the **EDIT** tab and the **FETCH LIST** tab (while a field row is being edited, `SHIFT+←/→` marks text instead).
   - Every field that was touched — typed *or* filled in by a lookup — stays drawn in the **header colour**, and the matching **file rows in the LIBRARY panel are drawn in that same header colour** (with an `[ N edited ]` count in the panel's footer), so "which files does this session touch, and what exactly will be written?" is answerable at a glance.
-  - sorting of the library pane for titles without any meta data (`x`) with missing title (`SHIFT+t`), missing artist (`SHIFT+a`) and missing year (`SHIFT+y`) is possible for better overview. 
+  - sorting of the library pane for titles without any meta data (`x`) with missing title (`SHIFT+t`), missing artist (`SHIFT+a`) and missing year (`SHIFT+y`) is possible for better overview; `r` toggles the edited files to the top. `DEL`/`d` removes a title from the fetch list.
   - **AcoustID fetch (audio fingerprint)**: `SHIFT+B` looks up the hovered title (`Browse` list or inside the menu), `a` queues a title for the batch like the queue's add key, `ENTER` on the FETCH LIST tab runs the whole batch. Both ask the exact disclaimer *"Fetching meta data via AcoustID; not always accurate and previous meta data will be overwritten. Continue?"* first (Yes/No/ESC) and results only ever land **in the edit session**, never directly in the files. The lookup identifies the *audio*, not the text in the file name: `scripts/fetch_meta.py` runs `fpcalc` — a drop-in rebuild of Chromaprint's own tool, compiled by CMake from the vendored [Chromaprint](https://github.com/acoustid/chromaprint) 1.6.1 sources in `third_party/chromaprint/` (`tools/fpcalc.cpp` drives the library, ffmpeg does the decoding, so no prebuilt binary ships) — to fingerprint the first ~120 s of the file, sends fingerprint + duration to the AcoustID web service (paced to its 3 requests/second limit) and takes **artist + title** from the best-matching recording — confidence below 0.5 is reported as "no match" rather than written as a wrong tag, and among equally confident recordings the one whose duration is closest to the file wins. Progress shows as `3/7 …` while it runs.
   - Note that "year" and "album" is not fetched since it becomes rather complicated for a lot of albums, considering re-releases such as remasterd album versions. MusicBrainz (which could be added) would be necessary for that and an option to choose between different possible years and album names that were fetched. Since this makes the process of meta data editing rather complex, I discarded the idea to include it. It also might not work well with titles fetched from you tube via yt-dlp. 
   - **API key**: every AcoustID request is signed with an application key that is hard-coded as `API_KEY` at the top of `scripts/fetch_meta.py` — deliberately *not* a setting, because an AcoustID key belongs to one registered application rather than to a user, and the account-key/application-key mix-up is exactly what the service answers with *"invalid API key"*. A highly modified or rebranded build should maybe register its own application (its free!) at <https://acoustid.org/new-application> and change that one line; an invalid key fails with a status line that says so (`NO_KEY`) instead of guessing from the file name.
@@ -299,7 +329,7 @@ A few things added on top of the original design rather than required to run it 
 <p align="center"><img width="850" height="386" alt="grafik" src="https://github.com/user-attachments/assets/43241d83-9cdb-41f4-ad37-8793d2fae580" /></p>
 
 - **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most played tracks on top" second sort is "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
-  - top tracks can be added to queue in the second menu tab. In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
+  - top tracks (top 10 / 25 / 50 / 100) can be added to the queue in the second menu tab (`TAB` switches pane, `Enter` adds). Tabs are switched with `1` / `2` / `3`.
 
 <p align="center"><img width="850" height="374" alt="grafik" src="https://github.com/user-attachments/assets/9e1b1971-5223-4f0d-b3d6-02e9da4874ba" /></p>
 
@@ -345,6 +375,6 @@ A few things added on top of the original design rather than required to run it 
 **Major New Features:**
 
 - (NOT SURE ABOUT THIS, but idea sounds nice) Apart from regular playlists a modified playlist feature could be added: pixel art cassette tapes with limited number of tracks, A/B side, which can be shared. The cassettes could consist of a number of basic components like cassette style, label style, a decent number color sets (incl. a randomizer for composing the cassette style that optionally keeps track of what had been used already in the list of "cassette mixtapes"(i.e. with or without possible color redundancies or so))), may incl. a yt-dlp feature, where you can share a "cassette files / mixtapes (.mix files)" with others which include a list of commands (youtube urls) that can be shared and uploaded to your Mousiki player (commands that initialize starting fetching songs from you tube or elsewhere(local search included)); possible royalty free art that could be adjusted for that purpose (https://pixabay.com/illustrations/search/cassette%20tape/)
-- Search online radio channels incl. a key toggle to switch to radio mode (`SHIFT+r`), slight main UI changes where the progress bar could become a radio frequency bar including truning buttons, where different chosen online channels could be assigned to certain frequencies, including a fade effect with an overlay of a selection of noisy sounds when changing the channel (would limit the number of possible channels)... Key toggles for next song (`n` and shuffle next `#` could be re-used as commands to change channels; probably makes more sense than fiddling around with arrow key (I grew up with classic radios and it was fun but also daunting)); 
+- Search online radio channels incl. a key toggle to switch to radio mode (`SHIFT+r`), slight main UI changes where the progress bar could become a radio frequency bar including turning buttons, where different chosen online channels could be assigned to certain frequencies, including a fade effect with an overlay of a selection of noisy sounds when changing the channel (would limit the number of possible channels)... Key toggles for next song (`n` and shuffle next `#` could be re-used as commands to change channels; probably makes more sense than fiddling around with arrow key (I grew up with classic radios and it was fun but also daunting)); 
 
 
