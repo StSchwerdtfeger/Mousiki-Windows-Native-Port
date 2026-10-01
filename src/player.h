@@ -8,6 +8,7 @@
 #include "miniaudio.h"
 #include "streaming_pcm.h"
 #include "fft_visualizer.h"
+#include "oscilloscope_visualizer.h"
 
 namespace muisc {
 
@@ -43,8 +44,12 @@ public:
     // the device down. `fft_sink`, if given, gets push_samples() called
     // from the audio callback with each chunk actually played (nullptr
     // to disable — e.g. not needed for a plain smoke test).
+    // `scope_sink`, if given, gets push_frames() called with the exact
+    // interleaved stereo block written to the device -- the raw
+    // time-domain feed for the lyrics panel's oscilloscope (independent
+    // of fft_sink, so one can exist without the other).
     bool play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volume_pct,
-              FftVisualizer* fft_sink = nullptr);
+              FftVisualizer* fft_sink = nullptr, OscilloscopeVisualizer* scope_sink = nullptr);
 
     void pause();
     void resume();
@@ -125,6 +130,7 @@ private:
 
     std::shared_ptr<StreamingPcm> pcm_;
     FftVisualizer* fft_sink_ = nullptr;
+    OscilloscopeVisualizer* scope_sink_ = nullptr; // raw-waveform feed; same lifetime rules as fft_sink_
     std::atomic<int> sample_rate_{44100};
     std::atomic<long long> cursor_frames_{0};
     std::atomic<bool> finished_{false};

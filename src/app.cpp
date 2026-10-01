@@ -1692,6 +1692,7 @@ void App::poll_pending_load() {
     ++waveform_epoch_; // BUG FIX #5: invalidate any in-flight waveform from the previous track
     last_lyrics_status_.clear();
     fft_.reset(); // don't let the previous track's spectrum tail linger into this one's first frame
+    scope_.reset(); // ...and don't let the previous track's waveform linger in the oscilloscope either
 
     // "Lyrics Engine" (settings_.element_lyrics) used to only hide the
     // panel -- fetch_synced_lyrics() still ran, still spawned Python, and
@@ -1780,7 +1781,7 @@ void App::device_worker_loop() {
         // it rather than just failing one track.
         run_guarded("audio device start", [&] {
             std::lock_guard<std::mutex> lk(player_mutex_);
-            player_.play(req.pcm, req.start_sec, req.volume, &fft_);
+            player_.play(req.pcm, req.start_sec, req.volume, &fft_, &scope_);
         });
         // The new track is in and the old pcm (and its latching finished_
         // flag) is gone, so the main loop may look at finished_ again. Only
@@ -2319,6 +2320,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
     {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
+    {nullptr, "HKeyOscMenu", "Oscilloscope Tuning"},  // decay / dot threshold / tail brightness, live
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
     {nullptr, "HKeySearchOnline", "Search Online"},
@@ -2435,7 +2437,7 @@ static int ref_display_row(int selectable_row) {
 // it, so appending a line here is all it takes to add another toggle.
 static const char* const kOnOffToggles[] = {
     "Eliment Disk", "Dummy Buttons", "Queue Display", "WaveForm",
-    "Lyrics Engine", "Lyric Ball", "Visualizer", "Stereo Sound",
+    "Lyrics Engine", "Lyric Viz", "Visualizer", "Stereo Sound",
     "Normalize Volume", "Show meta data only",
 };
 static constexpr int kOnOffToggleCount =
@@ -2637,7 +2639,9 @@ std::string App::settings_get_value(int row, int col) const {
             case 2: v = settings_.element_queue; break;
             case 3: v = settings_.element_waveform; break;
             case 4: v = settings_.element_lyrics; break;
-            case 5: v = settings_.element_lyrics_placeholder_ball; break;
+            // "Lyric Viz" isn't a bool: it cycles sphere / osci (see
+            // settings_options_for() and settings_commit_edit()).
+            case 5: return settings_.lyric_viz == 1 ? "osci" : "sphere";
             case 6: v = settings_.element_visualizer; break;
             case 7: v = settings_.stereo; break;
             case 8: v = settings_.normalize; break;
@@ -2694,6 +2698,7 @@ std::vector<std::string> App::settings_options_for(int tab, int row) const {
         // a "true"/"false" into a commit that then had nowhere to put it.
         OnOffRow r = onoff_row(row);
         if (r.sel < 0 || r.kind != OnOffRow::Kind::Toggle) return {};
+        if (r.sel == 5) return {"sphere", "osci"}; // "Lyric Viz": which placeholder visual, not a bool
         return {"true", "false"};
     }
     if (tab == 2) {
@@ -2795,6 +2800,14 @@ void App::settings_commit_edit() {
             return;
         }
         std::string v = to_lower(buf);
+        // "Lyric Viz" is a two-way pick (sphere / osci), not a bool: it has
+        // to be handled BEFORE the true/false gate below, or its values
+        // would bounce off it and the row would silently never change.
+        if (settings_row_ == 5) {
+            if (v == "sphere") settings_.lyric_viz = 0;
+            else if (v == "osci" || v == "oscilloscope") settings_.lyric_viz = 1;
+            return; // anything unrecognized leaves the pick as it was
+        }
         bool is_true = (v == "true"), is_false = (v == "false");
         if (!is_true && !is_false) return;
         switch (settings_row_) {
@@ -2803,7 +2816,6 @@ void App::settings_commit_edit() {
             case 2: settings_.element_queue = is_true; break;
             case 3: settings_.element_waveform = is_true; break;
             case 4: settings_.element_lyrics = is_true; break;
-            case 5: settings_.element_lyrics_placeholder_ball = is_true; break;
             case 6: settings_.element_visualizer = is_true; break;
             case 7:
                 settings_.stereo = is_true;
@@ -2886,6 +2898,9 @@ void App::settings_cycle(int dir) {
     settings_commit_edit();
     status_line_ = "TOGGLED -> " + opts[idx];
     if (settings_tab_ == 2 && settings_row_ == 1) recompute_waveform_for_current_track();
+    if (settings_tab_ == 1 && settings_row_ == 5) {
+        status_line_ = settings_.lyric_viz == 1 ? "lyric viz: oscilloscope" : "lyric viz: sphere";
+    }
     if (settings_tab_ == 1 && settings_row_ == 7) {
         // A track that was decoded as mono can't become stereo without being
         // decoded again, so switching stereo ON only applies from the next
@@ -3159,6 +3174,31 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::OsciMenu) {
+        // Oscilloscope tuning. Playback and the scope keep running underneath;
+        // only this overlay takes keys. Unknown keys are ignored (the footer
+        // lists every key), ESC or the overlay hotkey again closes and saves.
+        const bool arrow = last_key_was_arrow();
+        if (arrow && key == 'A') { osci_menu_row_ = (osci_menu_row_ + 2) % 3; return; } // up
+        if (arrow && key == 'B') { osci_menu_row_ = (osci_menu_row_ + 1) % 3; return; } // down
+        if (arrow && key == 'D') { osci_menu_adjust(-1); return; }                      // left
+        if (arrow && key == 'C') { osci_menu_adjust(+1); return; }                      // right
+        if (!arrow && (key == 'r' || key == 'R')) {
+            settings_.osci_decay = 0.80f;
+            settings_.osci_dot_threshold = 0.28f;
+            settings_.osci_tail_brightness = 0.45f;
+            return;
+        }
+        std::string osc_action = resolve_hotkey_action(key);
+        if (osc_action.empty() && key >= 'a' && key <= 'z') osc_action = resolve_hotkey_action(key - 32);
+        if (osc_action.empty() && key >= 'A' && key <= 'Z') osc_action = resolve_hotkey_action(key + 32);
+        if (!arrow && (key == 27 || osc_action == "HKeyOscMenu")) {
+            mode_ = Mode::Browse;
+            save_settings(settings_);
+        }
+        return;
+    }
+
     if (mode_ == Mode::Cheatsheet) {
         if (key == 27 || key == '?') mode_ = Mode::Browse;
         else if (key == 'A') --cheatsheet_scroll_; // up -- the table is longer than the screen
@@ -3399,6 +3439,9 @@ void App::handle_key(int key) {
         meta_open();
     } else if (action == "HKeyHistory") { // SHIFT+H: listening history (HISTORY / TOP TRACKS / HABITS)
         history_open();
+    } else if (action == "HKeyOscMenu") { // SHIFT+O: oscilloscope tuning overlay
+        osci_menu_row_ = 0;
+        mode_ = Mode::OsciMenu;
     } else if (action == "HKeyListOverlay") { // SHIFT+L: big list overlay on/off
         if (list_overlay_open_) list_overlay_close(); else list_overlay_open();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
@@ -4146,7 +4189,7 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     }
 
     if (!has_track_) {
-        // Nothing is playing, so there is no sphere and no lyric line to draw
+        // Nothing is playing, so there is no lyric visual and no lyric line to draw
         // and this column would just be empty. Fill it with the braille
         // cassette picture (kTapeArt above -- 15 rows of 30 cells, the disk's
         // own dimensions), centred in the column and tinted with the SAME
@@ -4166,8 +4209,8 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     } else if (!lyrics_avail) {
         // A status message ("fetching...", "no lyrics found", etc.) is
         // only shown for the first 1.75s after it appears -- after that
-        // the sphere gets the whole panel to itself instead of a
-        // permanently stuck caption line. Each distinct message content
+        // the placeholder visual (sphere or osci) gets the whole panel to
+        // itself instead of a permanently stuck caption line. Each distinct message content
         // gets its own fresh window (so "fetching..." showing, then
         // later "no lyrics found", each get their moment) rather than
         // one timer for the whole track.
@@ -4179,16 +4222,67 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
             std::chrono::steady_clock::now() - lyrics_status_shown_at_).count();
         bool show_caption = status_age < 1.75 && !lyrics_status.empty();
 
-        if (has_track_ && lyrics_w >= 6 && panel_h >= 3 && settings_.element_lyrics_placeholder_ball) {
-            // Fill the panel with the audio-reactive sphere instead of
-            // leaving it blank — reuses `bars` (already computed for the
-            // main spectrum strip above, same frame) rather than running
-            // a second independent audio analysis.
-            int sphere_rows_h = show_caption ? panel_h - 1 : panel_h;
-            auto sphere_rows = sphere_.render(lyrics_w, sphere_rows_h, bars, viz_dt_);
-            std::string sphere_ansi = gradient_ansi(settings_.visualizer_color, settings_.visualizer_color_end, 0.5f);
-            for (int i = 0; i < static_cast<int>(sphere_rows.size()) && i < panel_h; ++i) {
-                lyric_rows[i] = sphere_ansi + pad_right(sphere_rows[i], lyrics_w) + "\x1b[0m";
+        if (has_track_ && lyrics_w >= 6 && panel_h >= 3) {
+            // Fill the panel with the audio-reactive placeholder visual
+            // instead of leaving it blank -- which one is picked by
+            // Settings -> ON/OFF -> "Lyric Viz":
+            //   sphere -> reuses `bars` (already computed for the main
+            //             spectrum strip above, same frame) rather than
+            //             running a second independent audio analysis.
+            //   osci   -> XY scope (L = horizontal, R = vertical) drawn from the
+            //             raw waveform ring the audio callback feeds
+            //             (OscilloscopeVisualizer).
+            // Both are tinted with the VIZ colors (Settings -> Colors ->
+            // VIZ): the sphere with the pair's midpoint, the scope with a
+            // LEFT -> RIGHT sweep, dimmed per cell by beam brightness.
+            int viz_rows_h = show_caption ? panel_h - 1 : panel_h;
+            if (settings_.lyric_viz == 1) {
+                // XY scope: render() hands back exactly lyrics_w cells per
+                // row (empty ones included), each with a braille pattern and
+                // a 0..255 beam brightness. EVERY cell is emitted -- blanks
+                // as a plain space -- so each row is exactly lyrics_w
+                // columns wide; dropping the blanks (as an earlier version
+                // did) made rows shorter than the panel, which pushed the
+                // right border around and left stale cells on screen.
+                // Colour = the VIZ gradient swept left -> right, dimmed by
+                // the cell's brightness so the afterglow fades out.
+                OscilloscopeVisualizer::Params osci_params;
+                osci_params.decay = settings_.osci_decay;
+                osci_params.dot_threshold = settings_.osci_dot_threshold;
+                osci_params.tail_brightness = settings_.osci_tail_brightness;
+                auto osci_cells = scope_.render(lyrics_w, viz_rows_h, osci_params);
+                auto dim_ansi = [](const std::string& ansi, float k) -> std::string {
+                    int r, g, b;
+                    if (std::sscanf(ansi.c_str(), "\x1b[38;2;%d;%d;%dm", &r, &g, &b) != 3) return ansi; // palette colour: can't scale
+                    auto sc = [k](int v) { return std::clamp(static_cast<int>(v * k), 0, 255); };
+                    return "\x1b[38;2;" + std::to_string(sc(r)) + ";" + std::to_string(sc(g)) + ";" + std::to_string(sc(b)) + "m";
+                };
+                for (int i = 0; i < static_cast<int>(osci_cells.size()) && i < panel_h; ++i) {
+                    std::string colored, last_ansi;
+                    for (int cell = 0; cell < lyrics_w; ++cell) {
+                        const auto& c = osci_cells[i][cell];
+                        if (c.braille == 0) { colored += ' '; continue; }
+                        const float t = lyrics_w > 1
+                            ? static_cast<float>(cell) / static_cast<float>(lyrics_w - 1) : 0.0f;
+                        // 8 brightness steps keeps the escape traffic small
+                        const float lvl = std::round(c.level / 255.0f * 7.0f) / 7.0f;
+                        std::string ansi = dim_ansi(gradient_ansi(settings_.visualizer_color,
+                                                                  settings_.visualizer_color_end, t),
+                                                    0.30f + 0.70f * lvl);
+                        if (ansi != last_ansi) { colored += ansi; last_ansi = ansi; }
+                        const int cp = 0x2800 + c.braille;
+                        colored += static_cast<char>(0xE0 | (cp >> 12));
+                        colored += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                        colored += static_cast<char>(0x80 | (cp & 0x3F));
+                    }
+                    lyric_rows[i] = colored + "\x1b[0m";
+                }
+            } else {
+                auto sphere_rows = sphere_.render(lyrics_w, viz_rows_h, bars, viz_dt_);
+                std::string sphere_ansi = gradient_ansi(settings_.visualizer_color, settings_.visualizer_color_end, 0.5f);
+                for (int i = 0; i < static_cast<int>(sphere_rows.size()) && i < panel_h; ++i) {
+                    lyric_rows[i] = sphere_ansi + pad_right(sphere_rows[i], lyrics_w) + "\x1b[0m";
+                }
             }
             if (show_caption) {
                 int pad = std::max(0, (lyrics_w - display_width(lyrics_status)) / 2);
@@ -7618,6 +7712,8 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyListOverlay", "Big list overlay: larger LOCAL AUDIO FILES pane (toggle)"},
         {nullptr, "#SHIFT+UP/DOWN", "Big list overlay: previous / next page (faster scrolling)"},
         {nullptr, "#ESC", "Big list overlay: close (play, sort, filter, search, queue keep working)"},
+        {nullptr, "HKeyOscMenu", "Oscilloscope overlay: tune decay / dot threshold / tail live (toggle)"},
+        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
         // --- Search ---
         {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
@@ -7767,7 +7863,7 @@ bool App::list_overlay_active() const {
     if (!list_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: return true;
         default: return false;
     }
 }
@@ -8065,6 +8161,56 @@ void App::rl_submit() {
     mode_ = Mode::Browse;
 }
 
+// Oscilloscope tuning overlay (SHIFT+O). Rows: 0 decay, 1 dot threshold,
+// 2 tail brightness. The ranges match what settings.cpp clamps on load.
+namespace {
+struct OsciKnob { const char* label; float lo, hi, step; };
+constexpr OsciKnob kOsciKnobs[3] = {
+    {"Decay",         0.00f, 0.99f, 0.01f},
+    {"Dot threshold", 0.01f, 1.00f, 0.01f},
+    {"Tail",          0.00f, 1.00f, 0.02f},
+};
+} // namespace
+
+void App::osci_menu_adjust(int dir) {
+    float* v = osci_menu_row_ == 0 ? &settings_.osci_decay
+             : osci_menu_row_ == 1 ? &settings_.osci_dot_threshold
+                                   : &settings_.osci_tail_brightness;
+    const OsciKnob& k = kOsciKnobs[std::clamp(osci_menu_row_, 0, 2)];
+    // Round to the step grid so repeated presses never accumulate float drift.
+    float next = std::round((*v + dir * k.step) / k.step) * k.step;
+    *v = std::clamp(next, k.lo, k.hi);
+}
+
+std::vector<std::string> App::build_osci_menu_panel() const {
+    const int W = kOsciMenuPanelWidth;
+    const int inner = W - 4;
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string R = "\x1b[0m", HI = "\x1b[7m";
+    const std::string bar = border + settings_.box_vertical + R;
+    auto row = [&](const std::string& plain, bool hi) {
+        const std::string body = pad_right(truncate_str(plain, inner), inner);
+        return bar + " " + (hi ? HI + body + R : body) + " " + bar;
+    };
+
+    const float vals[3] = {settings_.osci_decay, settings_.osci_dot_threshold, settings_.osci_tail_brightness};
+    std::vector<std::string> lines;
+    lines.push_back(box_top("Oscilloscope", W, border));
+    for (int i = 0; i < 3; ++i) {
+        const OsciKnob& k = kOsciKnobs[i];
+        char num[16];
+        std::snprintf(num, sizeof num, "%.2f", vals[i]);
+        const std::string plain = std::string(i == osci_menu_row_ ? "> " : "  ") +
+                                  pad_right(k.label, 16) + pad_left(num, 5);
+        lines.push_back(row(plain, i == osci_menu_row_));
+    }
+    lines.push_back(row(settings_.lyric_viz == 1 ? "[UP/DOWN] select   [LEFT/RIGHT] change"
+                                                 : "Lyric Viz is sphere - use osci", false));
+    lines.push_back(box_bottom(W, "[R] reset  [SHIFT+O / ESC] close", border_bottom));
+    return lines;
+}
+
 // "Want to clear queue?" -- small Yes/No confirmation, stamped over the live
 // Browse view by draw_floating_panel() like Bulk Add / Retry Lyrics. Fixed
 // size (8 rows x kClearQueuePanelWidth) so it overwrites cleanly without a clear.
@@ -8272,7 +8418,7 @@ std::string App::render_frame(TerminalIO& term) {
     // change always has.
     auto mode_family = [](Mode m) {
         switch (m) {
-            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: return 0;
+            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: return 0;
             case Mode::Settings: case Mode::ColorEdit: return 1;
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
@@ -8527,6 +8673,9 @@ std::string App::render_frame(TerminalIO& term) {
         draw_floating_panel(floating, build_retry_lyrics_panel(), kRetryLyricsPanelWidth, W);
     } else if (mode_ == Mode::ClearQueue) {
         draw_floating_panel(floating, build_clear_queue_panel(), kClearQueuePanelWidth, W);
+    } else if (mode_ == Mode::OsciMenu) {
+        // Small centred panel, clear of the scope in the top panel's right-hand side.
+        draw_floating_panel(floating, build_osci_menu_panel(), kOsciMenuPanelWidth, W);
     }
     out += floating.str();
     return out;

@@ -357,6 +357,10 @@ void apply_default_hotkeys(Settings& s) {
             // floated over the main UI). Uppercase on purpose -- plain "l" is
             // HKeyRetryLyrics.
             {"HKeyListOverlay",                 "L"},
+            // Shift+O: the oscilloscope tuning overlay (decay / dot
+            // threshold / tail brightness, live). Uppercase on purpose, same
+            // convention as the other SHIFT+letter overlays above.
+            {"HKeyOscMenu",                     "O"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -571,6 +575,8 @@ static Settings load_from_config(const fs::path& path) {
             {"ElimentDisk", "Eliment_disk"}, {"ElimentDummyButtons", "Element_dummy_buttons"},
             {"ElimentQueue", "Eliment_queue"}, {"ElimentWaveForm", "Eliment_waveform_progress_bar"},
             {"ElimentLyrics", "Eliment_lyrics"}, {"LyricsPlaceholderBall", "Eliment_lyrics_placeholder_ball"},
+            {"LyricViz", "lyric_viz"},
+            {"OsciDecay", "osci_decay"}, {"OsciDotThreshold", "osci_dot_threshold"}, {"OsciTailBrightness", "osci_tail_brightness"},
             {"Visualizer", "Eliment_visualizer"},
             {"VisualizerFluidity", "visualizer_fluidity"}, {"DiskRotationSpeed", "disk_rotation_speed"},
             {"VisualizerDegradationSpeed", "visualizer_degradation_speed"}, {"VisualizerViscosity", "visualizer_viscosity"},
@@ -604,7 +610,25 @@ static Settings load_from_config(const fs::path& path) {
         if (key == "Eliment_queue" || key == "Element_queue") { s.element_queue = parse_bool(value); continue; }
         if (key == "Eliment_waveform_progress_bar" || key == "Element_waveform") { s.element_waveform = parse_bool(value); continue; }
         if (key == "Eliment_lyrics" || key == "Element_lyrics") { s.element_lyrics = parse_bool(value); continue; }
-        if (key == "Eliment_lyrics_placeholder_ball" || key == "Element_lyrics_placeholder_ball") { s.element_lyrics_placeholder_ball = parse_bool(value); continue; }
+        if (key == "Eliment_lyrics_placeholder_ball" || key == "Element_lyrics_placeholder_ball") {
+            // Legacy "Lyric Ball" on/off switch, now a two-way pick
+            // (LyricViz=sphere|osci) with no "off" state: true keeps the
+            // ball, false -- "not the ball" -- picks the oscilloscope, so
+            // an old config never gets the ball it had turned off.
+            s.lyric_viz = parse_bool(value) ? 0 : 1;
+            continue;
+        }
+        if (key == "lyric_viz") {
+            std::string v = value;
+            for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (v == "osci" || v == "oscilloscope") s.lyric_viz = 1;
+            else if (v == "sphere") s.lyric_viz = 0;
+            continue; // anything unrecognized keeps the current value
+        }
+        if (key == "osci_stereo") continue; // retired setting: old configs may still contain it, it is ignored
+        if (key == "osci_decay") { try { s.osci_decay = std::clamp(std::stof(value), 0.00f, 0.99f); } catch (...) {} continue; }
+        if (key == "osci_dot_threshold") { try { s.osci_dot_threshold = std::clamp(std::stof(value), 0.01f, 1.00f); } catch (...) {} continue; }
+        if (key == "osci_tail_brightness") { try { s.osci_tail_brightness = std::clamp(std::stof(value), 0.0f, 1.0f); } catch (...) {} continue; }
         if (key == "lyrics_alignment") {
             std::string v = value;
             for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -984,7 +1008,13 @@ void save_settings(const Settings& s) {
     out << "ElimentQueue=" << tf(s.element_queue) << "\n";
     out << "ElimentWaveForm=" << tf(s.element_waveform) << "\n";
     out << "ElimentLyrics=" << tf(s.element_lyrics) << "\n";
-    out << "LyricsPlaceholderBall=" << tf(s.element_lyrics_placeholder_ball) << "\n";
+    out << "LyricViz=" << (s.lyric_viz == 1 ? "osci" : "sphere") << "\n";
+    out << "## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors)\n";
+    out << "## Pick it live from this tab's \"Lyric Viz\" row (replaces the old LyricsPlaceholderBall on/off).\n";
+    out << "OsciDecay=" << s.osci_decay << "\n## afterglow, 0.00 to 0.99 (higher = longer trails)\n";
+    out << "OsciDotThreshold=" << s.osci_dot_threshold << "\n## 0.01 to 1.00 (lower = thicker line)\n";
+    out << "OsciTailBrightness=" << s.osci_tail_brightness << "\n## 0.00 to 1.00 (brightness of the oldest part of the trace)\n";
+    out << "## Tune these three live with SHIFT+O in the main UI\n";
     out << "Visualizer=" << tf(s.element_visualizer) << "\n";
     out << "MetaDataOnly=" << tf(s.meta_only) << "\n";
     out << "## true  = the (search-)lists show embedded metadata only -- the title tag is used\n";

@@ -107,6 +107,16 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     // than that just skips the feed rather than allocating on the audio thread).
     if (feed_fft) self->fft_sink_->push_samples(mono_out, frame_count, self->sample_rate_.load());
 
+    // The oscilloscope wants the raw time-domain signal instead: the very
+    // same interleaved stereo block just written to `out` (post gain,
+    // post normalisation, post limiter), left and right kept apart so it
+    // can draw a stereo pair or fold to the mono mix itself.
+    // push_frames() writes a fixed-size ring, so -- like the FFT feed
+    // above -- this never allocates on the audio thread. While paused the
+    // callback returns before any of this runs, which freezes the scope on
+    // the last drawn waveform, exactly like the frozen spectrum bars.
+    if (self->scope_sink_) self->scope_sink_->push_frames(out, frame_count);
+
     long long new_cur = cur + static_cast<long long>(frame_count);
     // Only truly "finished" once decode is done AND playback has caught
     // all the way up to everything it ever produced — not just the
@@ -119,7 +129,7 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
 }
 
 bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volume_pct,
-                   FftVisualizer* fft_sink) {
+                   FftVisualizer* fft_sink, OscilloscopeVisualizer* scope_sink) {
     // Give the loudness measurement a moment to exist so the track starts at
     // its final level instead of gliding into it. Decoding runs far faster
     // than real time, so this normally returns immediately; capped so a slow
@@ -147,6 +157,7 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
 
     pcm_ = std::move(pcm);
     fft_sink_ = fft_sink;
+    scope_sink_ = scope_sink;
     fft_mono_.assign(16384, 0.0f); // > any realistic device period (16384 frames = 370 ms at 44.1 kHz)
     sample_rate_.store(pcm_->sample_rate > 0 ? pcm_->sample_rate : 44100);
     volume_pct_.store(std::clamp(volume_pct, 0, 100));
@@ -247,6 +258,7 @@ void Player::stop_locked() {
     }
     pcm_.reset();
     fft_sink_ = nullptr;
+    scope_sink_ = nullptr;
 }
 
 } // namespace muisc

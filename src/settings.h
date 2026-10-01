@@ -22,7 +22,19 @@ struct Settings {
     bool element_queue = true;           // replaces the old queue_visible
     bool element_waveform = true;
     bool element_lyrics = true;
-    bool element_lyrics_placeholder_ball = true;
+    // Which visual fills the lyrics panel whenever there is nothing to
+    // show there (no synced lyrics found / fetch still running / lyrics
+    // engine off): 0 = the audio-reactive sphere, 1 = the oscilloscope.
+    // config.txt: LyricViz=sphere|osci. This replaces the old
+    // element_lyrics_placeholder_ball on/off switch ("Lyric Ball") --
+    // the panel now always shows one of the two and this row picks
+    // which, from the ON/OFF tab's "Lyric Viz" entry.
+    int lyric_viz = 0;
+    // Oscilloscope look (config.txt OsciDecay / OsciDotThreshold /
+    // OsciTailBrightness), tuned live from the SHIFT+O overlay in the main UI.
+    float osci_decay = 0.80f;          // afterglow per frame, 0.00 .. 0.99
+    float osci_dot_threshold = 0.28f;  // brightness a subpixel needs to light a dot, 0.01 .. 1.00
+    float osci_tail_brightness = 0.45f; // brightness of the oldest trace sample, 0.00 .. 1.00
     int lyrics_alignment = 0; // 0=center (default), 1=left, 2=right
     int lyrics_animation = 0; // 0=full (default), 1=word by word, 2=letter by letter, 3=only active line, 4=only active word
     bool element_visualizer = true;

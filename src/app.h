@@ -19,6 +19,7 @@
 #include "metadata_probe.h"
 #include "native_duration.h"
 #include "online_source.h"
+#include "oscilloscope_visualizer.h"
 #include "player.h"
 #include "playlist_manager.h"
 #include "settings.h"
@@ -32,7 +33,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu };
 enum class ListSource { Local, Online, Playlist, Folder };
 
 // One row of the main UI's "/f:" folder list: a folder that directly
@@ -404,6 +405,11 @@ private:
     static constexpr double kAngularVelocity = (2.0 * 3.14159265358979323846 / 48.0) / 0.035;
     mutable FftVisualizer fft_;
     mutable SphereVisualizer sphere_;
+    // The scope alternative to sphere_ (Settings -> ON/OFF -> "Lyric Viz"):
+    // fed live by the audio callback via player_.play(..., &scope_), drawn
+    // by whoever renders the lyrics panel. mutable, like sphere_, because
+    // that renderer is const and the panel's visuals are animation state.
+    mutable OscilloscopeVisualizer scope_;
     mutable std::string last_lyrics_status_;
     mutable std::chrono::steady_clock::time_point lyrics_status_shown_at_;
     mutable double viz_dt_ = 0.08;
@@ -880,6 +886,17 @@ private:
     int clear_queue_choice_ = 1;       // 0 = Yes, 1 = No
     static constexpr int kClearQueuePanelWidth = 40;
     std::vector<std::string> build_clear_queue_panel() const;
+
+    // Shift+O (HKeyOscMenu): small overlay (Mode::OsciMenu) to tune the
+    // oscilloscope's afterglow / dot threshold / tail brightness live. It is
+    // a small centred floating panel (draw_floating_panel()), which leaves
+    // the scope on the right of the top panel visible while it is adjusted.
+    // Up/Down pick a row, Left/Right change it, R resets, ESC / Shift+O close
+    // (and save the values to config.txt).
+    int osci_menu_row_ = 0;
+    static constexpr int kOsciMenuPanelWidth = 44; // just wide enough for the key legend
+    std::vector<std::string> build_osci_menu_panel() const;
+    void osci_menu_adjust(int dir);
     void queue_move_hovering(int dir); // dir=-1 up, +1 down
     void clamp_queue_selected();
     void handle_key(int key);
