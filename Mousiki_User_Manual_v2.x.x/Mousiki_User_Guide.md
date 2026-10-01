@@ -123,7 +123,7 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | `T` (Shift+T) | Cycle local list sort mode | Cycles the sort of the local list through three modes: **folder order → title A-Z → artist A-Z**. The current mode is shown in the pane title (see below). |
 | `k` | Refresh UI | Forces a full redraw. Use it when a terminal resize or a switch of terminal session left the screen torn or stale. |
 | `w` | Toggle waveform style | Switches the waveform between **raw** and **smooth**. |
-| `+` | Toggle lyrics on/off | Turns the lyrics engine on or off. While off, the lyrics area shows the lyric visual (sphere or oscilloscope, `Lyric Viz` setting) and no lyrics are fetched from the network. Turning it on mid-track fetches lyrics for the current track right away. |
+| `+` | Cycle lyrics area | Cycles the lyrics area through three views: **lyrics → sphere → oscilloscope → lyrics …**. The two visuals are the lyrics engine's *off* states: no lyrics are fetched from the network while one of them is shown, and the choice is stored in the **Lyric Viz** setting. Coming back to the lyrics fetches them for the current track right away. |
 | `N` (Shift+N) | Toggle metadata-only track list | Switches every list row between **filename** and **metadata title** (the embedded title tag). Files with no title tag, or whose tags have not been read yet, keep showing their filename. This also switches what "title A-Z" sorts by (see below). Also available in **Settings → ON/OFF**. |
 | `l` | Retry lyrics | Opens a small form to fetch lyrics again with a **manual title and artist**. Use it when the automatic match was wrong. |
 | `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope's afterglow, line thickness and tail **live**. See *The oscilloscope* below. |
@@ -160,7 +160,7 @@ A **search** always ranks by match quality, so while a query is active the sort 
 
 ### The oscilloscope (lyric visual)
 
-When there are no lyrics to show (lyrics engine off, nothing found, or the fetch is still running) the lyrics area is filled by a **lyric visual**. With Settings → ON/OFF → **Lyric Viz** set to `osci` that visual is an **XY oscilloscope** instead of the sphere.
+When there are no lyrics to show (lyrics engine off, nothing found, or the fetch is still running) the lyrics area is filled by a **lyric visual**. With Settings → ON/OFF → **Lyric Viz** set to `osci` (or after pressing `+` to the oscilloscope view) that visual is an **XY oscilloscope** instead of the sphere.
 
 **How it draws.** Like a real scope in X-Y mode, the **left channel moves the beam horizontally and the right channel moves it vertically**. A track with a wide stereo image fills the area with a cloud, a pure tone with a phase shift between the channels draws an ellipse, and out-of-phase material leans the other way. The picture is drawn into the largest centred square of the lyrics area, so circles stay circles. A quiet track is boosted automatically, so it still fills the area.
 
@@ -511,7 +511,7 @@ The first part is a list of **switches** (change them with `←`/`→`). Most ar
 | Dummy Buttons | Shows or hides the three decorative buttons next to the progress bar. |
 | Queue Display | Shows or hides the Queue panel. |
 | WaveForm | Shows or hides the waveform. With it off, a plain bar is drawn instead. |
-| Lyrics Engine | Turns lyric fetching and display on or off. Same as the `+` key. |
+| Lyrics Engine | Turns lyric fetching and display on or off. `+` also switches this: it cycles lyrics (on) → sphere (off) → oscilloscope (off). |
 | Lyric Viz | Which visual fills the lyrics area while a track is loaded and there are no lyrics to show: `sphere` (the audio-reactive ball) or `osci` (the XY oscilloscope, see *The oscilloscope* above). Both are drawn in the **VIZ** colors (Settings → Colors → VIZ). Replaces the old *Lyric Ball* on/off switch. The oscilloscope's look is tuned with `SHIFT+O`. |
 | Visualizer | Shows or hides the spectrum visualizer. |
 | Stereo Sound | On plays in stereo (about twice the memory per loaded track), off folds left and right into mono. Turning it **off** is immediate. Turning it **on** applies from the next track. |
