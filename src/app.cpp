@@ -2051,7 +2051,12 @@ void App::queue_remove_last() {
 void App::clamp_queue_selected() {
     if (queue_.empty()) { queue_selected_ = 0; queue_scroll_ = 0; return; }
     queue_selected_ = std::clamp(queue_selected_, 0, static_cast<int>(queue_.size()) - 1);
-    if (queue_selected_ >= queue_scroll_ + list_visible_rows_) queue_scroll_ = queue_selected_ - list_visible_rows_ + 1;
+    // queue_nav_rows() is the big overlay's row count while it is open, the
+    // small pane's otherwise. The window is also kept inside the queue so
+    // no empty rows trail the last entry once the queue is long enough.
+    const int rows = std::max(1, queue_nav_rows());
+    queue_scroll_ = std::clamp(queue_scroll_, 0, std::max(0, static_cast<int>(queue_.size()) - rows));
+    if (queue_selected_ >= queue_scroll_ + rows) queue_scroll_ = queue_selected_ - rows + 1;
     if (queue_selected_ < queue_scroll_) queue_scroll_ = queue_selected_;
 }
 
@@ -2320,6 +2325,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
     {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
+    {nullptr, "HKeyQueueOverlay", "Big Queue Overlay"}, // larger QUEUE pane floated over the main UI
     {nullptr, "HKeyOscMenu", "Oscilloscope Tuning"},  // decay / dot threshold / tail brightness, live
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
@@ -3375,6 +3381,14 @@ void App::handle_key(int key) {
         }
         if (key == 27) { list_overlay_close(); return; }
     }
+    // Big queue overlay (SHIFT+K): same keys as the list overlay above.
+    if (queue_overlay_active()) {
+        if (last_key_was_arrow() && last_key_was_shifted() && (key == 'A' || key == 'B')) {
+            queue_overlay_page(key == 'A' ? -1 : 1);
+            return;
+        }
+        if (key == 27) { queue_overlay_close(); return; }
+    }
 
     // SHIFT+B -- AcoustID lookup of the hovered title (by audio fingerprint).
     //
@@ -3444,10 +3458,13 @@ void App::handle_key(int key) {
         mode_ = Mode::OsciMenu;
     } else if (action == "HKeyListOverlay") { // SHIFT+L: big list overlay on/off
         if (list_overlay_open_) list_overlay_close(); else list_overlay_open();
+    } else if (action == "HKeyQueueOverlay") { // SHIFT+K: big queue overlay on/off
+        if (queue_overlay_open_) queue_overlay_close(); else queue_overlay_open();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
-        // The queue pane is hidden behind the big list overlay, so there is
-        // nothing to switch to while it is up.
-        if (!list_overlay_active()) queue_focus_ = !queue_focus_;
+        // The queue pane is hidden behind the big list overlay and the queue
+        // always has focus inside the big queue overlay, so there is nothing
+        // to switch to while either is up.
+        if (!list_overlay_active() && !queue_overlay_active()) queue_focus_ = !queue_focus_;
     } else if (action == "HKeyNavigateUp") {
         if (queue_focus_) {
             if (queue_selected_ > 0) --queue_selected_;
@@ -3683,6 +3700,7 @@ void App::handle_key(int key) {
     } else if (action == "HKeyPlay") {
         play_selected();
     } else if (action == "HKeySearch") {
+        if (queue_overlay_open_) queue_overlay_close(); // the search filters the list underneath, which the queue overlay covers
         mode_ = Mode::Search;
         search_buffer_.clear();
         pre_search_list_source_ = list_source_;
@@ -7710,8 +7728,9 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
         {nullptr, "HKeyRetryLyrics", "Retry lyrics"},
         {nullptr, "HKeyListOverlay", "Big list overlay: larger LOCAL AUDIO FILES pane (toggle)"},
-        {nullptr, "#SHIFT+UP/DOWN", "Big list overlay: previous / next page (faster scrolling)"},
-        {nullptr, "#ESC", "Big list overlay: close (play, sort, filter, search, queue keep working)"},
+        {nullptr, "HKeyQueueOverlay", "Big queue overlay: larger QUEUE pane (toggle; replaces the list overlay)"},
+        {nullptr, "#SHIFT+UP/DOWN", "Big list / queue overlay: previous / next page (faster scrolling)"},
+        {nullptr, "#ESC", "Big list / queue overlay: close (playback, queue and list keys keep working)"},
         {nullptr, "HKeyOscMenu", "Oscilloscope overlay: tune decay / dot threshold / tail live (toggle)"},
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
         // --- Search ---
@@ -7888,6 +7907,7 @@ void App::list_overlay_fit_scroll(int rows) {
 }
 
 void App::list_overlay_open() {
+    queue_overlay_open_ = false; // the two overlays are mutually exclusive (focus is reset just below)
     list_overlay_open_ = true;
     queue_focus_ = false; // the queue pane is hidden while the overlay is up
     list_overlay_fit_scroll(overlay_list_rows_);
@@ -7950,6 +7970,94 @@ std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_row
         list.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
     }
     out.insert(out.end(), list.begin(), list.end());
+    return out;
+}
+
+// ---------------------------------------------------------------------
+// Big queue overlay (HKeyQueueOverlay, SHIFT+K) -- see app.h for the design.
+// ---------------------------------------------------------------------
+
+// Shown in the same modes as the list overlay (the ones with the main UI
+// underneath); in the full-screen takeovers the flag just stays set.
+bool App::queue_overlay_active() const {
+    if (!queue_overlay_open_) return false;
+    switch (mode_) {
+        case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: return true;
+        default: return false;
+    }
+}
+
+void App::queue_overlay_geometry(int W, int& panel_w, int& queue_rows) const {
+    panel_w = std::min(W, std::max(40, std::min(W - 6, 160)));
+    // Rows 2 .. term_rows_-1 belong to the panel: queue box border (2) + the queue rows.
+    queue_rows = std::max(1, term_rows_ - 2 - kQueueOverlayChromeRows);
+}
+
+void App::queue_overlay_open() {
+    if (list_overlay_open_) list_overlay_close(); // mutually exclusive with the big list overlay
+    // Remember the focus to give it back on close. Coming from the list
+    // overlay the queue was unfocused (list_overlay_open() forces that), so
+    // closing the queue overlay then lands on the list again.
+    queue_overlay_prev_focus_ = queue_focus_;
+    queue_overlay_open_ = true;
+    queue_focus_ = true; // arrow keys, d, 4/5 and a all act on the queue while it is open
+    clamp_queue_selected();
+}
+
+void App::queue_overlay_close() {
+    queue_overlay_open_ = false;
+    queue_focus_ = queue_overlay_prev_focus_;
+    // Both panes share queue_selected_/queue_scroll_: pull the window back so
+    // the cursor is inside the small pane's (much shorter) view again.
+    clamp_queue_selected();
+}
+
+// One page up/down; same behaviour as list_overlay_page(): the cursor keeps
+// its row within the window, and at either end it jumps to the last/first entry.
+void App::queue_overlay_page(int dir) {
+    const int total = static_cast<int>(queue_.size());
+    if (total <= 0) return;
+    const int rows = std::max(1, overlay_queue_rows_);
+    const int max_scroll = std::max(0, total - rows);
+    const int rel = std::clamp(queue_selected_ - queue_scroll_, 0, rows - 1);
+    const int new_scroll = std::clamp(queue_scroll_ + dir * rows, 0, max_scroll);
+    if (new_scroll == queue_scroll_) {
+        queue_selected_ = (dir > 0) ? total - 1 : 0;
+    } else {
+        queue_scroll_ = new_scroll;
+        queue_selected_ = std::clamp(new_scroll + rel, 0, total - 1);
+    }
+    clamp_queue_selected();
+}
+
+// The normal build_queue_panel() (same rows and colours) in the wider/taller
+// box; only its bottom border is replaced, to carry the page counter, the
+// number of tracks and the key hints.
+std::vector<std::string> App::build_queue_overlay_panel(int panel_w, int queue_rows) const {
+    std::vector<std::string> out = build_queue_panel(panel_w, queue_rows);
+    if (!out.empty()) {
+        const int total = static_cast<int>(queue_.size());
+        const int rows = std::max(1, queue_rows);
+        const int pages = std::max(1, (total + rows - 1) / rows);
+        const int page = std::clamp((queue_scroll_ + rows / 2) / rows + 1, 1, pages);
+        const int remaining = total - (queue_scroll_ + rows);
+
+        std::vector<std::string> parts; // dropped from the back until it fits
+        if (remaining > 0) parts.push_back("( " + std::to_string(remaining) + " more )");
+        parts.push_back("page " + std::to_string(page) + "/" + std::to_string(pages));
+        parts.push_back(std::to_string(total) + (total == 1 ? " track" : " tracks"));
+        parts.push_back("[SHIFT+UP/DOWN] page  [ESC] close");
+        std::string footer;
+        for (;;) {
+            footer.clear();
+            for (size_t i = 0; i < parts.size(); ++i) footer += (i ? "  " : "") + parts[i];
+            if (parts.empty() || display_width(footer) + 5 <= panel_w) break;
+            parts.pop_back();
+        }
+        if (parts.empty()) footer.clear();
+        out.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
+    }
     return out;
 }
 
@@ -8408,6 +8516,12 @@ std::string App::render_frame(TerminalIO& term) {
         list_overlay_geometry(W, overlay_panel_w, overlay_list_rows_);
         list_overlay_fit_scroll(overlay_list_rows_);
     }
+    // Big queue overlay (SHIFT+K): same per-frame sizing for the queue window.
+    // (Never open together with the list overlay, so they can share overlay_panel_w.)
+    if (queue_overlay_active()) {
+        queue_overlay_geometry(W, overlay_panel_w, overlay_queue_rows_);
+        clamp_queue_selected();
+    }
 
     // Browse/BulkAdd/RetryLyrics all share the same live background (the
     // latter two float a small panel on top of it -- see
@@ -8661,6 +8775,16 @@ std::string App::render_frame(TerminalIO& term) {
         auto lines = build_list_overlay_panel(overlay_panel_w, overlay_list_rows_);
         const int start_col = 1 + std::max(0, (W - overlay_panel_w) / 2);
         const int start_row = 2; // one background row stays visible above and below
+        for (size_t i = 0; i < lines.size(); ++i) {
+            const int row = start_row + static_cast<int>(i);
+            if (row > term_rows_ - 1) break;
+            floating << "\x1b[" << row << ";" << start_col << "H" << lines[i];
+        }
+    } else if (queue_overlay_active()) {
+        // Same placement as the list overlay; the queue pane's own rows live in it.
+        auto lines = build_queue_overlay_panel(overlay_panel_w, overlay_queue_rows_);
+        const int start_col = 1 + std::max(0, (W - overlay_panel_w) / 2);
+        const int start_row = 2;
         for (size_t i = 0; i < lines.size(); ++i) {
             const int row = start_row + static_cast<int>(i);
             if (row > term_rows_ - 1) break;

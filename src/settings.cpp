@@ -357,6 +357,11 @@ void apply_default_hotkeys(Settings& s) {
             // floated over the main UI). Uppercase on purpose -- plain "l" is
             // HKeyRetryLyrics.
             {"HKeyListOverlay",                 "L"},
+            // Shift+K: the big queue overlay (a larger QUEUE pane floated
+            // over the main UI). Uppercase on purpose -- plain "k" is
+            // HKeyRefreshUi, and "q" stays Quit so the overlay can't quit
+            // the app by accident.
+            {"HKeyQueueOverlay",                "K"},
             // Shift+O: the oscilloscope tuning overlay (decay / dot
             // threshold / tail brightness, live). Uppercase on purpose, same
             // convention as the other SHIFT+letter overlays above.
@@ -934,9 +939,10 @@ Settings load_settings() {
         s.about_app_lines = {
             "Devloper : ender                Github   : itzender5820",
             "Email    : itz.ender5820@gmail.com",
-            "Version  : orignal and final v1.0        Licence  : Apache licence 2.0",
+            "Version  : original and final v1.0       Licence  : Apache licence 2.0",
             "",
             "Windows port : Steffen Schwerdtfeger   Github   : StSchwerdtfeger",
+            "Version      : v2.3.0                  Licence  : Apache licence 2.0",
             "Adjusted to run on Windows, with the help of AI tools.",
             "",
             "Mousiki",

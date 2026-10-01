@@ -145,6 +145,27 @@ private:
     std::vector<std::string> build_list_overlay_panel(int panel_w, int list_rows) const;
     std::string clamp_output_rows(const std::string& frame, int term_rows) const;
 
+    // --- queue overlay (HKeyQueueOverlay, SHIFT+K) -----------------------
+    // The same idea as the list overlay above, for the QUEUE pane: a large
+    // floating copy drawn over the main UI. Also a plain flag (not a Mode),
+    // so every queue command (move, remove, bulk add, clear, playback keys)
+    // keeps working through the normal key dispatch; it shares
+    // queue_selected_/queue_scroll_ with the small pane and only the row
+    // count differs (queue_nav_rows()). The queue gets focus while it is
+    // open and gets its previous focus back on close. The two overlays are
+    // mutually exclusive: opening one closes the other.
+    bool queue_overlay_open_ = false;
+    bool queue_overlay_prev_focus_ = false;       // queue_focus_ before the overlay opened
+    int overlay_queue_rows_ = kListVisibleRows;   // queue rows the overlay fits; recomputed every frame
+    static constexpr int kQueueOverlayChromeRows = 2; // queue box top/bottom border
+    bool queue_overlay_active() const; // open AND in a mode that shows the main UI underneath it
+    int queue_nav_rows() const { return queue_overlay_active() ? overlay_queue_rows_ : list_visible_rows_; }
+    void queue_overlay_geometry(int W, int& panel_w, int& queue_rows) const;
+    void queue_overlay_open();
+    void queue_overlay_close();
+    void queue_overlay_page(int dir); // dir=-1 page up, +1 page down
+    std::vector<std::string> build_queue_overlay_panel(int panel_w, int queue_rows) const;
+
     mutable std::mutex row_meta_mutex_;
     std::unordered_map<std::string, RowMeta> row_meta_cache_;
     std::atomic<bool> row_meta_resolver_started_{false};
