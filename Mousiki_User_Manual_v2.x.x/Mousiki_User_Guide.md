@@ -604,5 +604,5 @@ The longest tab. It scrolls as one list and has three parts.
 | | | | |
 |---|---|---|---|
 | **Developer** | Steffen Schwerdtfeger | **GitHub** | [StSchwerdtfeger](https://github.com/StSchwerdtfeger) |
-| **Email** | fanti.blub@gmail.com | **Version** | current v2.2.0 |
+| **Email** | fanti.blub@gmail.com | **Version** | current v2.3.0 |
 | | | **Licence** | Apache Licence 2.0 |
