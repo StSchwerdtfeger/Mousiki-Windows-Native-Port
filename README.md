@@ -173,7 +173,8 @@ See the new **user manual** in the repo above or use `?` for the cheat sheet wit
 | **Volume** | `1` / `2` |  Increase / Decrease in-app volume |
 | **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab |
 | **Change Play-/Cyclemode** | `m` | Toggle Playmode (shuffle, stop, repeat queue, loop, list) |
-| **Toggle Lyrics** | `+` | Turn Lyrics on/off |
+| **Cycle Lyrics View** | `+` | Cycle the lyrics area: lyrics → sphere → oscilloscope |
+| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live |
 
 ### Navigation & Queue
 | Action | Keybinding | Description |
