@@ -123,9 +123,10 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | `T` (Shift+T) | Cycle local list sort mode | Cycles the sort of the local list through three modes: **folder order → title A-Z → artist A-Z**. The current mode is shown in the pane title (see below). |
 | `k` | Refresh UI | Forces a full redraw. Use it when a terminal resize or a switch of terminal session left the screen torn or stale. |
 | `w` | Toggle waveform style | Switches the waveform between **raw** and **smooth**. |
-| `+` | Toggle lyrics on/off | Turns the lyrics engine on or off. While off, the lyrics area shows the sphere visualizer and no lyrics are fetched from the network. Turning it on mid-track fetches lyrics for the current track right away. |
+| `+` | Toggle lyrics on/off | Turns the lyrics engine on or off. While off, the lyrics area shows the lyric visual (sphere or oscilloscope, `Lyric Viz` setting) and no lyrics are fetched from the network. Turning it on mid-track fetches lyrics for the current track right away. |
 | `N` (Shift+N) | Toggle metadata-only track list | Switches every list row between **filename** and **metadata title** (the embedded title tag). Files with no title tag, or whose tags have not been read yet, keep showing their filename. This also switches what "title A-Z" sorts by (see below). Also available in **Settings → ON/OFF**. |
 | `l` | Retry lyrics | Opens a small form to fetch lyrics again with a **manual title and artist**. Use it when the automatic match was wrong. |
+| `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope's afterglow, line thickness and tail **live**. See *The oscilloscope* below. |
 
 ### How the sort mode and `SHIFT+N` work together
 
@@ -156,6 +157,40 @@ A **search** always ranks by match quality, so while a query is active the sort 
 `l` only works while the lyrics engine is on (`+`).
 
 ---
+
+### The oscilloscope (lyric visual)
+
+When there are no lyrics to show (lyrics engine off, nothing found, or the fetch is still running) the lyrics area is filled by a **lyric visual**. With Settings → ON/OFF → **Lyric Viz** set to `osci` that visual is an **XY oscilloscope** instead of the sphere.
+
+**How it draws.** Like a real scope in X-Y mode, the **left channel moves the beam horizontally and the right channel moves it vertically**. A track with a wide stereo image fills the area with a cloud, a pure tone with a phase shift between the channels draws an ellipse, and out-of-phase material leans the other way. The picture is drawn into the largest centred square of the lyrics area, so circles stay circles. A quiet track is boosted automatically, so it still fills the area.
+
+**Mono tracks.** In a true XY scope a mono signal (left = right) can only draw a diagonal line. When a track is (nearly) mono, the scope therefore fades over to a *phase portrait* of the signal instead (the signal against its own rate of change), which draws loops and circles whose shape follows the sound. The switch is smooth, so a track hovering near the limit does not flicker.
+
+**Look.** The trace is drawn with smooth, anti-aliased lines. Like the phosphor of an old oscilloscope it leaves a short **afterglow** that fades out, and the newest part of the trace is brighter than the oldest. The colour is the **VIZ** gradient (Settings → Colors → VIZ) running left to right, dimmed where the beam is weaker, so the fading trail also fades in colour.
+
+### Oscilloscope tuning overlay (`SHIFT+O`)
+
+Opens a small window in the middle of the screen where the three look settings can be changed **while the music plays**. It is deliberately small and sits clear of the lyrics area, so you can watch the scope while you adjust it.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Select a value (wraps around) |
+| `←` / `→` | Decrease / increase the selected value |
+| `R` | Reset all three values to their defaults |
+| `ESC` or `SHIFT+O` | Close the overlay. The values are **saved to `config.txt`** when it closes. |
+
+Playback keeps running while the overlay is open, but its keys are the only ones that react until you close it. The overlay opens on every main screen. If **Lyric Viz** is set to `sphere`, it shows a hint, because the values only affect the oscilloscope.
+
+| Value | Range | Step | Default | What it does |
+|---|---|---|---|---|
+| Decay | 0.00 – 0.99 | 0.01 | 0.80 | The **afterglow**. Each frame the picture is dimmed by this factor, so higher values leave longer trails. `0.00` shows only the current trace. Values near `0.99` smear for a long time. |
+| Dot threshold | 0.01 – 1.00 | 0.01 | 0.28 | How bright a point must be before it is drawn. **Lower** values give a thicker, softer line with a long visible fade. **Higher** values give a thin, sharp core, but fast parts of the trace can break into gaps. |
+| Tail | 0.00 – 1.00 | 0.02 | 0.45 | The brightness of the **oldest** part of the trace compared with the newest (`1.00`). Low values give a comet with a bright head and a fading tail, `1.00` makes the trace uniformly bright. |
+
+Two starting points: for a crisp, "real oscilloscope" look try Decay `0.65`, Dot threshold `0.35`, Tail `0.60`. For a glowing, dreamy look try `0.90`, `0.20`, `0.25`.
+
+![The oscillator parameter overlay menu next to the oscillator itself](images/Playback_Main_UI_OSCI_MENU.png)
+
 
 ## 4. Search (main UI)
 
@@ -468,7 +503,7 @@ Sets the colours of the interface. There are **15 rows**, each with a name, one 
 *The ON/OFF tab: switches at the top, then the LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST PATH lists.*
 
 
-The first part is a list of **true/false switches** (change them with `←`/`→`). Below it are the folder settings, which you edit with `ENTER`.
+The first part is a list of **switches** (change them with `←`/`→`). Most are true/false, but **Lyric Viz** picks between `sphere` and `osci`. Below it are the folder settings, which you edit with `ENTER`.
 
 | Setting | What it does |
 |---|---|
@@ -477,7 +512,7 @@ The first part is a list of **true/false switches** (change them with `←`/`→
 | Queue Display | Shows or hides the Queue panel. |
 | WaveForm | Shows or hides the waveform. With it off, a plain bar is drawn instead. |
 | Lyrics Engine | Turns lyric fetching and display on or off. Same as the `+` key. |
-| Lyric Ball | Draws the audio-reactive sphere in the lyrics area while a track is loaded. |
+| Lyric Viz | Which visual fills the lyrics area while a track is loaded and there are no lyrics to show: `sphere` (the audio-reactive ball) or `osci` (the XY oscilloscope, see *The oscilloscope* above). Both are drawn in the **VIZ** colors (Settings → Colors → VIZ). Replaces the old *Lyric Ball* on/off switch. The oscilloscope's look is tuned with `SHIFT+O`. |
 | Visualizer | Shows or hides the spectrum visualizer. |
 | Stereo Sound | On plays in stereo (about twice the memory per loaded track), off folds left and right into mono. Turning it **off** is immediate. Turning it **on** applies from the next track. |
 | Normalize Volume | Loudness normalization on or off. Same as the `v` key. Target and boost are set on the REFERENCE tab. |
@@ -548,6 +583,7 @@ The longest tab. It scrolls as one list and has three parts.
 | `ConsoleVerbosity` | `basic` logs every command the app runs and its raw output. `verbose` adds internal and OS-level events. |
 | `AutoSave` | Resumes the exact song, position, queue and play mode at the next launch. |
 | `AutoSaveIndicator`, `AutoSaveChr`, `AutoSaveIndicatorType`, `AutoSaveC1`, `AutoSaveC2` | The small autosave indicator: whether it shows, its character, `blink` or `color` style, and the two pulse colours. |
+| `OsciDecay`, `OsciDotThreshold`, `OsciTailBrightness` | The oscilloscope's afterglow (0.00 – 0.99), dot threshold (0.01 – 1.00) and tail brightness (0.00 – 1.00). Normally changed with the `SHIFT+O` overlay, which writes them here. Values outside the range are limited to it when the file is loaded. |
 | `AutoSaveDelayInSec` | How often the session snapshot is saved (default 30 seconds). |
 | `UpperLeftCorner`, `Vertical`, `Horizontal`, `Seprator`, `ListSeparator` and the other border entries | The characters used to draw frames and the list column separator. |
 
