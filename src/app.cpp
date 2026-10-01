@@ -2321,7 +2321,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyCycleSortMode", "Cycle Sort Mode"},
     {nullptr, "HKeyRefreshUi", "Refresh UI"},
     {nullptr, "HKeyToggleWaveform", "Toggle Waveform"},
-    {nullptr, "HKeyToggleLyrics", "Toggle Lyrics"},
+    {nullptr, "HKeyToggleLyrics", "Cycle Lyrics / Visual"},
     {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
     {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
@@ -3523,21 +3523,30 @@ void App::handle_key(int key) {
         // it around at random would defeat the point of it.
         play_relative_random();
     } else if (action == "HKeyToggleLyrics") {
-        // Toggle the Lyrics Engine without going through Settings >
-        // On/Off. Turning it off needs nothing extra -- the panel
-        // already checks element_lyrics every frame and falls back to
-        // the sphere on its own. Turning it *on* mid-track does need a
-        // nudge though: the only other place that starts a fetch is
-        // track load (poll_pending_load), so without this, flipping it
-        // on here would just sit showing the sphere with no caption
-        // until the next track change.
-        settings_.element_lyrics = !settings_.element_lyrics;
-        if (settings_.element_lyrics && has_track_) {
-            std::string artist = (metadata_.artist == "-") ? "" : metadata_.artist;
-            last_lyrics_status_.clear(); // fresh 1.75s caption window, not a leftover from before it was off
-            launch_lyrics_fetch(metadata_.name, artist, current_path_);
+        // Cycle the lyrics area without going through Settings > On/Off:
+        // lyrics -> sphere -> oscilloscope -> lyrics ... The two visuals are
+        // the lyrics engine's "off" states (element_lyrics=false, no network
+        // fetching) with settings_.lyric_viz saying which one is drawn
+        // (0 = sphere, 1 = osci), so the cycle is just a walk over those two
+        // settings. Returning to the lyrics needs a nudge though: the only
+        // other place that starts a fetch is track load (poll_pending_load),
+        // so without it the lyrics would not appear until the next track.
+        if (settings_.element_lyrics) {            // lyrics -> sphere
+            settings_.element_lyrics = false;
+            settings_.lyric_viz = 0;
+            status_line_ = "lyrics area: sphere";
+        } else if (settings_.lyric_viz == 0) {     // sphere -> oscilloscope
+            settings_.lyric_viz = 1;
+            status_line_ = "lyrics area: oscilloscope";
+        } else {                                   // oscilloscope -> lyrics
+            settings_.element_lyrics = true;
+            if (has_track_) {
+                std::string artist = (metadata_.artist == "-") ? "" : metadata_.artist;
+                last_lyrics_status_.clear(); // fresh 1.75s caption window, not a leftover from before it was off
+                launch_lyrics_fetch(metadata_.name, artist, current_path_);
+            }
+            status_line_ = "lyrics area: lyrics";
         }
-        status_line_ = settings_.element_lyrics ? "lyrics engine: on" : "lyrics engine: off";
     } else if (action == "HKeyAddHoveringSongToQueue") {
         // Add hovering song to queue (List focus) -- or, when the Queue
         // panel itself is focused, there's nothing hovering-in-the-list
@@ -7724,7 +7733,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyCycleSortMode", "Cycle local list sort mode"},
         {nullptr, "HKeyRefreshUi", "Refresh UI (redraw)"},
         {nullptr, "HKeyToggleWaveform", "Toggle waveform style (raw/smooth)"},
-        {nullptr, "HKeyToggleLyrics", "Toggle lyrics on/off"},
+        {nullptr, "HKeyToggleLyrics", "Cycle lyrics area: lyrics / sphere / oscilloscope"},
         {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
         {nullptr, "HKeyRetryLyrics", "Retry lyrics"},
         {nullptr, "HKeyListOverlay", "Big list overlay: larger LOCAL AUDIO FILES pane (toggle)"},
