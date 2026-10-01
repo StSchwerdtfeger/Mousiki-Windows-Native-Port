@@ -57,18 +57,21 @@ ElimentDummyButtons=true
 ElimentQueue=true
 ElimentWaveForm=true
 ElimentLyrics=true
-LyricsPlaceholderBall=false
+## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors)
+## Pick it live from this tab's "Lyric Viz" row (replaces the old LyricsPlaceholderBall on/off).
+OsciDecay=0.8
+## afterglow, 0.00 to 0.99 (higher = longer trails)
+OsciDotThreshold=0.28
+## 0.01 to 1.00 (lower = thicker line)
+OsciTailBrightness=0.45
+## 0.00 to 1.00 (brightness of the oldest part of the trace)
+## Tune these three live with SHIFT+O in the main UI
 Visualizer=true
-
-# What a row in the (search-)lists shows:
 MetaDataOnly=false
-## false = filename AND metadata (the filename stem as the title, plus the
-##         artist/duration columns)
-## true  = metadata only: the embedded title tag is shown instead of the
-##         filename (files without a title tag keep their filename, so an
-##         untagged library never turns into a blank list)
-## Toggleable live in this panel ("Show meta data only") or with
-## HKeyToggleMetaOnly (Shift+N by default).
+## true  = the (search-)lists show embedded metadata only -- the title tag is used
+##         instead of the filename (files without a title tag keep their filename)
+## false = lists show filename AND metadata, as before
+## Toggleable live from this panel ("Show meta data only") or with HKeyToggleMetaOnly.
 
 ##-------------------------------------------
 ##             PANEL 3: ANIMATION
@@ -242,47 +245,27 @@ HKeyClearFilter="c"
 HKeyQuit="q"
 HKeyResetPreference="e"
 HKeyDownloadStream="y"
-HKeyRefreshUi="k"
-HKeyConsole="t"
-HKeyToggleMute="x"
-HKeyCheatsheet="?"
-HKeyRetryLyrics="l"
-# Big list overlay: a larger LOCAL AUDIO FILES pane floated over the main UI.
-# SHIFT+UP/DOWN turns a whole page while it is open (not rebindable, the input
-# layer reports the arrows as A/B); ESC or this key again closes it. Deliberately
-# the UPPERCASE letter: plain "l" stays "retry lyrics".
-HKeyListOverlay="L"
-# Big queue overlay: the same for the QUEUE pane. SHIFT+UP/DOWN pages, ESC or this
-# key again closes it. Uppercase on purpose, and NOT "q" (that quits the app).
-HKeyQueueOverlay="K"
-HKeyShuffleNext="#"
-HKeyToggleLyrics="+"
-HKeyToggleWaveform="w"
-HKeyCycleSortMode="T"
-HKeySearchPlaylist="/p:"
-HKeyPlaylist="P"
-# Turns loudness normalization on/off (see NormalizeVolume below) -- handy for
-# comparing a track with and without it.
 HKeyToggleNormalize="v"
-# Show metadata only (no filename) in the lists. Deliberately the UPPERCASE
-# letter: plain "n" stays bound to "next track", so Shift+N is this toggle.
 HKeyToggleMetaOnly="N"
-# Meta/tag editor: edit a file's name plus its artist/title/album/year tags,
-# queue titles for an AcoustID lookup (audio fingerprint via Chromaprint),
-# then apply or throw the pending edits away. Deliberately the UPPERCASE
-# letter: plain "m" is "cycle play mode", so Shift+M is this menu.
 HKeyMetaEditor="M"
-# Three keys of that editor are NOT bindable here and are matched directly
-# in the code instead (rebinding them would collide with the arrow keys,
-# which the input layer reports as the letters A/B/C/D):
-#   SHIFT+B            fetch metadata for the hovered title (AcoustID)
-#   CTRL+SHIFT+S       apply the pending edits to the files (asks first)
-#   CTRL+SHIFT+X       discard the pending edits (asks first)
-# Simply exiting the menu keeps the autosaved edit session -- only
-# Ctrl+Shift+S or Ctrl+Shift+X ever changes or clears it.
-# Move track in queue/playlist up/down:
+HKeyHistory="H"
+HKeyRetryLyrics="l"
+HKeyConsole="t"
+HKeyRefreshUi="k"
+HKeyToggleLyrics="+"
+HKeyCheatsheet="?"
 HKeyQueueMoveUp="4"
+HKeyPlaylist="P"
 HKeyQueueMoveDown="5"
+HKeyCycleSortMode="T"
+HKeyClearQueue="X"
+HKeySearchFolder="/f:"
+HKeyOscMenu="O"
+HKeyListOverlay="L"
+HKeyShuffleNext="#"
+HKeySearchPlaylist="/p:"
+HKeyToggleMute="x"
+HKeyToggleWaveform="w"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
