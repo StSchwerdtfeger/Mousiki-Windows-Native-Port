@@ -36,11 +36,11 @@ Along the Win32 port, **some minor and major additions where made too**. Major c
 - **License:** Apache 2.0 — see [LICENSE](LICENSE)
 - **Windows port:** Steffen Schwerdtfeger ([StSchwerdtfeger](https://github.com/StSchwerdtfeger)), ported and adjusted with the help of AI tools (only free versions, mostly MiMo V2.6 and Sonett 5 set on medium). Therefore take some of the below with a grain of salt (explicitly the documentation of the Win native port and some assumed bugs of the original, which I can't confirm myself), since I am not a developer for applications like this and I do not fully understand how the porting was actually done. Still took me around 50h in the last weeks to perform porting to Win, modify (feature design) and debug this version... The repo code could also be optimized in that respect, but apparently is supposed to be done quite well (from feedback I got so far and evaluated myself, as far as I am capable to do so). Even though I am not that big fan of using AI for scientific applications (which I usually do), e.g. in the context of data science - since someone has to understand how sh** works and understanding is beautiful and mind blowing - I still liked this music player way too much the first time I saw it on social media to not want to use it on my Windows setup... Sooooo, I went this path and vibe coded a lot to create a port for Windows and still learned a lot as well (especially on UI and feature design). *In general, a huge shout out for the great work by itzender5820 for this beautiful music player.* <3 It's the best and most fun music player I ever found. Makes me want to listen to music all the time :D 
 
-![preview](preview.gif)
+<p align="center"><img width="800" alt="preview" src="preview.gif" /></p>
 
 My current setup looks like the below. The config.txt and everything that comes along with it (FastFetch and Oh-My-Posh configs) can be found in my cyber-cat themed [MeowerShell repository](https://github.com/StSchwerdtfeger/Meower-Shell):
 
-<img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" />
+<p align="center"><img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" /></p>
 
 ## Current Status of the Port and Modification (v2.3.0, now with standalone setup.exe / portable, see latest release)
 
@@ -259,18 +259,18 @@ A few things added on top of the original design rather than required to run it 
 
 - **YX mode oscilloscope** as alternative to the lyrics ball
 
-<img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" />
+<p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
 
 - **Installer/portable (x64)** entailed in the latest release (since v2.1.0) as alternative to building the app oneself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
 - **Track and queue list overlay** for the playback UI.
  
-<img width="2292" height="1083" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" />
+<p align="center"><img width="850" height="402" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" /></p>
 
 - **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
-<img width="2287" height="1064" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" />
+<p align="center"><img width="850" height="395" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" /></p>
 
-<img width="2295" height="1056" alt="grafik" src="https://github.com/user-attachments/assets/7ce6f723-ac7d-4a31-900b-efbeb24a3a10" />
+<p align="center"><img width="850" height="391" alt="grafik" src="https://github.com/user-attachments/assets/7ce6f723-ac7d-4a31-900b-efbeb24a3a10" /></p>
 
 - **Meta/tag editor incl. fetch via AcoustID** (`SHIFT+M`, rebindable as `HKeyMetaEditor`) — a second full-screen overlay shaped similar to the playlist menu (tab strip, boxed panels, search field, hint/status footer) for changing a file's **name**, **artist**, **title**, **album** and **year**:
   - `TAB` cycles search field → library list → the five field rows, where typing edits the hovered field directly; `SHIFT+←/→` switches between the **EDIT** tab and the **FETCH LIST** tab.
@@ -282,29 +282,29 @@ A few things added on top of the original design rather than required to run it 
   - **Always-autosaved session**: the pending edits are written to `~/.cache/mousiki/meta_session/session.json` after every keystroke, so ESC, quitting or crashing keeps them as a backup — the audio files themselves are *never* touched by merely editing.
   - `CTRL+SHIFT+S` applies the session (asks *"Want to save?"*) — tags go through an `ffmpeg -c copy` remux into a temp file that is renamed over the original (audio stays bit-for-bit identical), a name edit becomes a plain rename; `CTRL+SHIFT+X` throws the pending edits away (asks *"Want to discard changes?"*). Failed entries stay in the session so they can be retried. These two are deliberately **not** rebindable: the input layer reports the arrow keys as the letters A/B/C/D, so a rebindable `"B"`/`"S"` would race the arrows — the same reason `SHIFT+B` is matched directly too.
 
-<img width="1794" height="873" alt="grafik" src="https://github.com/user-attachments/assets/01642720-6e02-4fb2-a7be-a030a16ca1f6" />
+<p align="center"><img width="850" height="414" alt="grafik" src="https://github.com/user-attachments/assets/01642720-6e02-4fb2-a7be-a030a16ca1f6" /></p>
 
-<img width="1798" height="863" alt="grafik" src="https://github.com/user-attachments/assets/60822ff7-32f0-4e9a-ba09-bcd58f0eb2fe" />
+<p align="center"><img width="850" height="408" alt="grafik" src="https://github.com/user-attachments/assets/60822ff7-32f0-4e9a-ba09-bcd58f0eb2fe" /></p>
 
 - **New Screen when no title loaded in Playmode "stop" mode** Added an Braille-Ascii music cassette and centered the statement that no track is currently loaded. Not thaaat of major change, but since it adds a design feature, which I didn't do before, I listeded here. 
 
-<img width="2294" height="1077" alt="grafik" src="https://github.com/user-attachments/assets/f04a4225-f4d1-48c4-a8c5-8ff9adf80a0a" />
+<p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/f04a4225-f4d1-48c4-a8c5-8ff9adf80a0a" /></p>
 
 - **Editable path lists in the settings panel** — Settings → ON/OFF now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
   - are *live*: committing a local path rescans the library on the spot instead of waiting for the next launch;
   - take effect for playlists too — playlist folders are now searched across **all** configured `PlaylistsPath=` lines (listed/loaded from every one of them, saved/deleted in the first), instead of only a single one.
   - yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
     
-<img width="2301" height="1046" alt="grafik" src="https://github.com/user-attachments/assets/43241d83-9cdb-41f4-ad37-8793d2fae580" />
+<p align="center"><img width="850" height="386" alt="grafik" src="https://github.com/user-attachments/assets/43241d83-9cdb-41f4-ad37-8793d2fae580" /></p>
 
 - **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most played tracks on top" second sort is "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
   - top tracks can be added to queue in the second menu tab. In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
 
-<img width="2295" height="1009" alt="grafik" src="https://github.com/user-attachments/assets/9e1b1971-5223-4f0d-b3d6-02e9da4874ba" />
+<p align="center"><img width="850" height="374" alt="grafik" src="https://github.com/user-attachments/assets/9e1b1971-5223-4f0d-b3d6-02e9da4874ba" /></p>
 
-<img width="2280" height="1016" alt="grafik" src="https://github.com/user-attachments/assets/7b69dd69-81e2-4a15-a6ae-16f6d08d0f02" />
+<p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/7b69dd69-81e2-4a15-a6ae-16f6d08d0f02" /></p>
 
-<img width="2284" height="1019" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" />
+<p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" /></p>
 
 
 ### Minor Additions / Modifications
@@ -322,11 +322,11 @@ A few things added on top of the original design rather than required to run it 
 - **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
 - **Categorized** Key commands in Reference tab within the Settings. The header color is no longer hardcoded: the COLORS tab has an **`HEADER`** field (config.txt: `ColorHeader=`, default `10` = palette index 10 of 256) which drives both those category titles and the path-list titles described below.
  
-  <img width="2294" height="1080" alt="grafik" src="https://github.com/user-attachments/assets/e060895e-e6fa-4132-a9c9-67e2d0ea2167" />
+  <p align="center"><img width="850" height="400" alt="grafik" src="https://github.com/user-attachments/assets/e060895e-e6fa-4132-a9c9-67e2d0ea2167" /></p>
 
 - **Categorized cheat sheet** available via `?`.
 
-  <img width="2286" height="964" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" />
+  <p align="center"><img width="850" height="358" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" /></p>
   
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à, Japanese letters etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown (can be turned off in settings)... 
 - **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Also applies to the field between the disk animation and lyrics/sphere. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
