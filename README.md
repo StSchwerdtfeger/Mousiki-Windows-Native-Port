@@ -268,7 +268,7 @@ A few things added on top of the original design rather than required to run it 
 
 <img width="2295" height="1056" alt="grafik" src="https://github.com/user-attachments/assets/7ce6f723-ac7d-4a31-900b-efbeb24a3a10" />
 
-- **Meta/tag editor incl. fetch via AcoustID** (`SHIFT+M`, rebindable as `HKeyMetaEditor`) — a second full-screen overlay shaped exactly like the playlist menu (tab strip, boxed panels, search field, hint/status footer) for changing a file's **name**, **artist**, **title**, **album** and **year**:
+- **Meta/tag editor incl. fetch via AcoustID** (`SHIFT+M`, rebindable as `HKeyMetaEditor`) — a second full-screen overlay shaped similar to the playlist menu (tab strip, boxed panels, search field, hint/status footer) for changing a file's **name**, **artist**, **title**, **album** and **year**:
   - `TAB` cycles search field → library list → the five field rows, where typing edits the hovered field directly; `SHIFT+←/→` switches between the **EDIT** tab and the **FETCH LIST** tab.
   - Every field that was touched — typed *or* filled in by a lookup — stays drawn in the **header colour**, and the matching **file rows in the LIBRARY panel are drawn in that same header colour** (with an `[ N edited ]` count in the panel's footer), so "which files does this session touch, and what exactly will be written?" is answerable at a glance.
   - sorting of the library pane for titles without any meta data (`x`) with missing title (`SHIFT+t`), missing artist (`SHIFT+a`) and missing year (`SHIFT+y`) is possible for better overview. 
