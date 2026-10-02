@@ -308,7 +308,7 @@ Email    : itz.ender5820@gmail.com
 Version  : original and final v1.0       Licence  : Apache licence 2.0
 
 Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
-Version      : v2.4.0                    Licence  : Apache licence 2.0
+Version      : v2.5.0                    Licence  : Apache licence 2.0
 
 Adjusted to run on Windows. A couple of features and modifications were
 added, the general design remained. Additions: playlist menu, meta data 
