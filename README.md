@@ -1,6 +1,6 @@
 <div align="center">
     
-# Mousiki Windows Native Port v2.3.0 🎵 
+# Mousiki Windows Native Port v2.4.0 🎵 
 
 <p align="center">
   <a href="https://opensource.org/" target="_blank">
@@ -28,7 +28,7 @@ Build yourself (see [prerequisites](#prerequisites) below) **or use the installe
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all. This native port uses no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
-Along the Win32 port, **some minor and major additions were made too**. The major ones are a **playlist menu** to create playlists from local (or downloaded) tracks, a **meta data editor** including **fetching artist/title via AcoustID** (audio fingerprinting), a **listening history** (incl. the ability to add top tracks to the playback queue), an **XY oscilloscope** as an alternative to the lyrics ball, enlarged **list/queue overlays**, and a **user manual** (.md and .pdf). Minor changes/additions are e.g. a general key to shuffle to a next title (before only the next title in the list was possible), stereo audio and loudness normalization, adding paths via the settings menu, toggling the lyrics on/off (also via a key command), an optimized search engine for Windows (searching metadata was very slow and only available 2-3 min. after starting the app), fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without the dash), a categorized cheat sheet... The design remained the same for obvious reasons; the only thing added is a Braille-ASCII music cassette shown when no track is loaded. See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list.  
+Along the Win32 port, **some minor and major additions were made too**. The major ones are a **playlist menu** to create playlists from local (or downloaded) tracks, a **meta data editor** including **fetching artist/title via AcoustID** (audio fingerprinting), a **listening history** (incl. the ability to add top tracks to the playback queue), an **XY oscilloscope** as an alternative to the lyrics ball, a **10 band EQ with 12 presets**, enlarged **list/queue overlays**, and a **user manual** (.md and .pdf). Minor changes/additions are e.g. a general key to shuffle to a next title (before only the next title in the list was possible), stereo audio and loudness normalization, adding paths via the settings menu, toggling the lyrics on/off (also via a key command), an optimized search engine for Windows (searching metadata was very slow and only available 2-3 min. after starting the app), fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without the dash), a categorized cheat sheet... The design remained the same for obvious reasons; the only thing added is a Braille-ASCII music cassette shown when no track is loaded... See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list.  
 
 - **Original:** [github.com/itzender5820/mousiki](https://github.com/itzender5820/mousiki) — ender ([itzender5820](https://github.com/itzender5820))
 - **License:** Apache 2.0 — see [LICENSE](LICENSE)
@@ -40,7 +40,7 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <p align="center"><img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" /></p>
 
-## Current Status of the Port and Modification (v2.3.0, now with standalone setup.exe / portable, see latest release)
+## Current Status of the Port and Modification (v2.4.0, now with standalone setup.exe / portable, see latest release)
 
 For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB) ... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
 Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
@@ -198,6 +198,7 @@ See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for 
 | **Track list overlay** | `SHIFT + l` | Enlarged overlay of the track list pane; `SHIFT + ↑/↓` pages, `ESC` closes |
 | **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
 | **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live (`R` resets, saved on close) |
+| **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 13 presets. | 
 
 ### Search
 | Action | Keybinding | Description |
@@ -291,6 +292,10 @@ A few things added on top of the original design rather than required to run it 
 - **YX mode oscilloscope** as alternative to the lyrics ball
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
+
+- **10 band EQ** overlay with 13 presets which can be opend in the main playback UI via `SHIFT+e`.
+
+<p align="center"><img width="815" height="380" alt="grafik" src="https://github.com/user-attachments/assets/861491c8-68d5-46f1-bf9f-c38e413f1f12" /></p>
 
 - **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
 - **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays.
