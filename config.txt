@@ -267,6 +267,10 @@ HKeyPlaylist="P"
 HKeyQueueMoveDown="5"
 HKeyCycleSortMode="T"
 HKeyClearQueue="X"
+HKeyQueueAddEnd="e"
+HKeyQueueLock="!"
+HKeyQueueMoveTop="$"
+HKeyQueueMoveBottom="%"
 HKeySearchFolder="/f:"
 HKeyOscMenu="O"
 HKeyListOverlay="L"
@@ -276,6 +280,7 @@ HKeySearchPlaylist="/p:"
 HKeyToggleMute="x"
 HKeyToggleWaveform="w"
 HKeyEqualizer="E"
+HKeySleepTimer="Z"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
