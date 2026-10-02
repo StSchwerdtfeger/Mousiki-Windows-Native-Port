@@ -11,7 +11,13 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <csignal>
+#include <cstdlib>
+#include <memory>
+#include <system_error>
 #include <cwchar>
+#include <filesystem>
+#include "process_util.h"
 #endif
 
 namespace muisc {
@@ -21,7 +27,56 @@ static struct termios g_orig_termios;
 // Text-entry mode (see set_text_entry()): while true, ISIG stays cleared so
 // Ctrl+C reaches poll_key() as a keystroke instead of a SIGINT.
 static bool g_text_entry = false;
-static std::string g_clipboard; // no portable system clipboard on POSIX
+// In-process fallback for machines with no clipboard tool installed (a bare
+// SSH session, a minimal container). When a system clipboard is reachable
+// (see the clipboard section below) it is used instead, so copy/paste also
+// works across applications -- the same behaviour the Windows build has.
+static std::string g_clipboard;
+
+// ---------------------------------------------------------------------------
+// Terminal restore on fatal signals
+//
+// The Windows build installs a console control handler for exactly this
+// reason (see win_console_init()): Ctrl+C / closing the terminal /
+// `kill` would otherwise terminate the process while it is still inside the
+// alternate screen, with the cursor hidden and ECHO/ICANON switched off --
+// leaving the user's shell unusable until they type `reset` blind. POSIX had
+// no equivalent. Only async-signal-safe calls are allowed in here, hence the
+// raw write() and tcsetattr() and nothing else.
+// ---------------------------------------------------------------------------
+static volatile sig_atomic_t g_signals_installed = 0;
+
+static void fatal_signal_handler(int sig) {
+    if (g_signals_installed) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
+        static const char kLeave[] = "\x1b[?25h\x1b[?1049l";
+        ssize_t ignored = write(STDOUT_FILENO, kLeave, sizeof(kLeave) - 1);
+        (void)ignored;
+    }
+    // Hand the signal back to the default disposition so the shell still sees
+    // "terminated by SIGINT" (exit status 130) rather than a normal exit.
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void install_fatal_signal_handlers() {
+    struct sigaction sa;
+    sa.sa_handler = fatal_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGHUP, &sa, nullptr);
+    g_signals_installed = 1;
+}
+
+static void remove_fatal_signal_handlers() {
+    if (!g_signals_installed) return;
+    g_signals_installed = 0;
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+    signal(SIGHUP, SIG_DFL);
+}
 #endif
 
 TerminalIO::TerminalIO() {
@@ -38,6 +93,7 @@ TerminalIO::TerminalIO() {
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    install_fatal_signal_handlers();
 #endif
     raw_mode_active_ = true;
     // Alternate screen buffer: the terminal keeps a second, separate
@@ -69,6 +125,7 @@ void TerminalIO::restore() {
 #if defined(_WIN32)
         win_raw_mode_exit();
 #else
+        remove_fatal_signal_handlers();
         tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
 #endif
         std::cout << "\x1b[?25h" << "\x1b[?1049l" << std::flush; // show cursor, leave alt-screen
@@ -139,11 +196,91 @@ void set_text_entry(bool on) {
 #endif
 }
 
+#if !defined(_WIN32)
+namespace {
+
+// POSIX has no clipboard API of its own: it belongs to the desktop session, and
+// the portable way to reach it is the command-line tool that session ships.
+// macOS always has pbcopy/pbpaste; on Linux it is wl-clipboard (Wayland), xclip
+// or xsel (X11), and on Termux termux-clipboard-*. Which one exists is probed
+// once. spawn_capture() is used rather than run_capture() on purpose:
+// run_capture() writes every command's complete output to the console log,
+// which for a paste would put whatever is on the clipboard (a password, say)
+// into a log file on disk.
+enum class ClipTool { Unknown, None, Pasteboard, Wayland, Xclip, Xsel, Termux };
+ClipTool g_clip_tool = ClipTool::Unknown;
+
+bool have_command(const char* name) {
+    std::unique_ptr<ChildProcess> child = spawn_capture(std::string("command -v ") + name, false);
+    if (!child) return false;
+    char buf[256];
+    std::ptrdiff_t n = child->read(buf, sizeof(buf));
+    return child->wait() == 0 && n > 0;
+}
+
+ClipTool detect_clip_tool() {
+#if defined(__APPLE__)
+    if (have_command("pbcopy") && have_command("pbpaste")) return ClipTool::Pasteboard;
+#else
+    const char* wayland = std::getenv("WAYLAND_DISPLAY");
+    const char* x11 = std::getenv("DISPLAY");
+    if (wayland && *wayland && have_command("wl-copy") && have_command("wl-paste")) return ClipTool::Wayland;
+    if (x11 && *x11) {
+        if (have_command("xclip")) return ClipTool::Xclip;
+        if (have_command("xsel")) return ClipTool::Xsel;
+    }
+    if (have_command("termux-clipboard-set") && have_command("termux-clipboard-get")) return ClipTool::Termux;
+#endif
+    return ClipTool::None;
+}
+
+ClipTool clip_tool() {
+    if (g_clip_tool == ClipTool::Unknown) g_clip_tool = detect_clip_tool();
+    return g_clip_tool;
+}
+
+const char* clip_paste_command(ClipTool t) {
+    switch (t) {
+        case ClipTool::Pasteboard: return "pbpaste";
+        case ClipTool::Wayland:    return "wl-paste --no-newline";
+        case ClipTool::Xclip:      return "xclip -selection clipboard -o";
+        case ClipTool::Xsel:       return "xsel --clipboard --output";
+        case ClipTool::Termux:     return "termux-clipboard-get";
+        default:                   return nullptr;
+    }
+}
+
+const char* clip_copy_command(ClipTool t) {
+    switch (t) {
+        case ClipTool::Pasteboard: return "pbcopy";
+        case ClipTool::Wayland:    return "wl-copy";
+        case ClipTool::Xclip:      return "xclip -selection clipboard -i";
+        case ClipTool::Xsel:       return "xsel --clipboard --input";
+        case ClipTool::Termux:     return "termux-clipboard-set";
+        default:                   return nullptr;
+    }
+}
+
+} // namespace
+#endif
+
 std::string clipboard_get() {
 #if defined(_WIN32)
     return win_clipboard_get();
 #else
-    return g_clipboard;
+    const char* cmd = clip_paste_command(clip_tool());
+    if (!cmd) return g_clipboard;
+    std::unique_ptr<ChildProcess> child = spawn_capture(cmd, false);
+    if (!child) return g_clipboard;
+    std::string out;
+    char buf[4096];
+    std::ptrdiff_t n;
+    while ((n = child->read(buf, sizeof(buf))) > 0) out.append(buf, static_cast<size_t>(n));
+    // A non-zero exit is how these tools report "nothing usable on the
+    // clipboard" (empty, or an image) as well as "no display reachable"; either
+    // way the text last copied inside this app is the best answer left.
+    if (child->wait() != 0) return g_clipboard;
+    return out;
 #endif
 }
 
@@ -152,6 +289,37 @@ void clipboard_set(const std::string& utf8) {
     win_clipboard_set(utf8);
 #else
     g_clipboard = utf8;
+    const char* cmd = clip_copy_command(clip_tool());
+    if (!cmd) return;
+    // The text goes in through a file the tool reads on stdin: spawn_capture()
+    // detaches the child's stdin, and building the text into the command line
+    // would need quoting for arbitrary bytes. mkstemp() creates it 0600, so the
+    // clipboard text is never readable by other users while it exists.
+    std::error_code ec;
+    std::string tmpl = (std::filesystem::temp_directory_path(ec) / "mousiki-clip-XXXXXX").string();
+    if (ec) return;
+    int fd = mkstemp(&tmpl[0]);
+    if (fd < 0) return;
+    size_t off = 0;
+    while (off < utf8.size()) {
+        ssize_t w = write(fd, utf8.data() + off, utf8.size() - off);
+        if (w <= 0) break;
+        off += static_cast<size_t>(w);
+    }
+    close(fd);
+    if (off == utf8.size()) {
+        // Output goes to /dev/null so the pipe closes as soon as the shell exits:
+        // xclip, xsel and wl-copy fork into the background to keep serving the
+        // selection, and would otherwise hold the pipe open and block this read.
+        std::unique_ptr<ChildProcess> child =
+            spawn_capture(std::string(cmd) + " < " + shell_quote(tmpl) + " > /dev/null 2>&1", false);
+        if (child) {
+            char buf[256];
+            while (child->read(buf, sizeof(buf)) > 0) {}
+            child->wait();
+        }
+    }
+    unlink(tmpl.c_str());
 #endif
 }
 
@@ -173,6 +341,12 @@ int TerminalIO::poll_key() {
         // Alt+L: terminals send ESC followed by the letter (a lone byte, so it
         // has to be recognised before the two-byte read below).
         if (seq[0] == 'l' || seq[0] == 'L') { g_last_key_was_arrow = false; return kKeyAltL; }
+        // Option/Alt+Left and +Right as macOS Terminal.app and iTerm2 send them
+        // out of the box: the readline word-movement pair ESC b / ESC f rather
+        // than xterm's "ESC [ 1 ; 3 D" / "ESC [ 1 ; 3 C" (still handled below).
+        // Without this the playlist editor's tab switch was unreachable there.
+        if (seq[0] == 'b') { g_last_key_was_arrow = false; return kKeyAltLeft; }
+        if (seq[0] == 'f') { g_last_key_was_arrow = false; return kKeyAltRight; }
         if (read(STDIN_FILENO, &seq[1], 1) != 1) { g_last_key_was_arrow = false; return 27; }
         if (seq[0] == '[') {
             switch (seq[1]) {

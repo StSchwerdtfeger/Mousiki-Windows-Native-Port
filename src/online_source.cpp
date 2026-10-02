@@ -90,8 +90,13 @@ static std::vector<OnlineResult> parse_json_lines(const std::string& out) {
 }
 
 static std::vector<OnlineResult> search_via_ytdlp(const std::string& query, int count) {
-    std::string cmd = "yt-dlp -4 --no-warnings --match-filters \"categories *= 'Music' & duration >= 90\" --flat-playlist -j "
-                       "\"ytsearch" + std::to_string(count) + ":" + query + "\"";
+    // The query is user-typed text, so it goes through shell_quote() like every
+    // other interpolated argument. Wrapped in plain double quotes (as before) a
+    // POSIX shell would still expand $VAR, $(...), backticks and backslashes
+    // inside it -- a search for `cost $5` or `"Heroes" (live)` ran a different
+    // query than the one typed, and a crafted one could run a command.
+    std::string cmd = "yt-dlp -4 --no-warnings --match-filters \"categories *= 'Music' & duration >= 90\" --flat-playlist -j " +
+                       shell_quote("ytsearch" + std::to_string(count) + ":" + query);
     ProcResult r = run_capture(cmd);
     return parse_json_lines(r.out);
 }
