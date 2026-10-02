@@ -67,6 +67,18 @@ constexpr int kKeyEnd = 309;        // End (VK_END / xterm "ESC [ F")
 constexpr int kKeyAltLeft = 310;
 constexpr int kKeyAltRight = 311;
 
+// Ctrl+Shift+U / Ctrl+Shift+Z -- the queue's "save the queue as a playlist"
+// and "undo the last clear" commands (main UI, incl. the big queue overlay).
+// Modifier combinations again, so sentinels like kKeyCtrlShiftS/X above.
+// (U rather than P: Windows Terminal binds Ctrl+Shift+P to its command
+// palette, which swallowed the keystroke before this app ever saw it.)
+constexpr int kKeyCtrlShiftU = 312;
+constexpr int kKeyCtrlShiftZ = 313;
+
+// Alt+L -- the lyrics timing overlay (main UI). Another modifier combination,
+// so another sentinel (see kKeyCtrlShiftS/X above); not rebindable.
+constexpr int kKeyAltL = 314;
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {

@@ -315,7 +315,6 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyFilterForFolder",             "f"},
             {"HKeyClearFilter",                 "c"},
             {"HKeyQuit",                        "q"},
-            {"HKeyResetPreference",             "e"},
             {"HKeyDownloadStream",              "y"},
             {"HKeyRefreshUi",                   "k"},
             {"HKeyConsole",                     "t"},
@@ -369,7 +368,30 @@ void apply_default_hotkeys(Settings& s) {
             // Shift+E: the equaliser overlay (10 bands + presets). Uppercase
             // on purpose -- plain "e" is HKeyResetPreference.
             {"HKeyEqualizer",                   "E"},
+            // Shift+Z: the sleep timer overlay (15/30/60/90/120 min, stop after
+            // the current song). Uppercase on purpose, same convention as the
+            // other SHIFT+letter overlays. (Ctrl+Shift+Z is the separate "undo
+            // clear queue" key and never reaches the hotkey table.)
+            {"HKeySleepTimer",                  "Z"},
+            // Queue additions. "e" = add the hovering track to the END of the
+            // queue ("a" adds it as NEXT, see App::queue_add_selected()); "e"
+            // used to be the never-wired HKeyResetPreference, which is migrated
+            // away below. "!" locks the queue (played tracks stay in it).
+            // "$" / "%" are SHIFT+4 / SHIFT+5 on both US and German layouts:
+            // move the hovering queue item to the top / bottom.
+            {"HKeyQueueAddEnd",                 "e"},
+            {"HKeyQueueLock",                   "!"},
+            {"HKeyQueueMoveTop",                "$"},
+            {"HKeyQueueMoveBottom",             "%"},
         };
+        // HKeyResetPreference was defined but nothing ever read it; configs
+        // written by older builds still carry it as "e", which would now
+        // collide with HKeyQueueAddEnd (resolve_hotkey_action() would pick
+        // one of the two nondeterministically).
+        {
+            auto it = s.hotkeys.find("HKeyResetPreference");
+            if (it != s.hotkeys.end() && it->second == "e") s.hotkeys.erase(it);
+        }
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
             // A key explicitly set to "" (user unbound it on purpose) is

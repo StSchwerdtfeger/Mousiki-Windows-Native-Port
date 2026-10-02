@@ -1623,6 +1623,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
 // the manual retry hotkey (handle_key's 'l' case).
 void App::launch_lyrics_fetch(std::string title, std::string artist, fs::path path, bool force_network) {
     lyrics_ready_ = false;
+    lyrics_path_ = path;
     int my_epoch = ++lyrics_epoch_;
     std::thread([this, title, artist, path, force_network, my_epoch]() { run_guarded("lyrics fetch", [&] {
         LyricsResult r = fetch_synced_lyrics(title, artist, path_utf8(lyrics_script_), path, force_network);
@@ -1917,18 +1918,37 @@ void App::play_next_from_queue() {
     // repeat" bug: previously advance_track()'s queue branch always did
     // plain FIFO regardless of play_mode.
     int idx = 0;
-    if (settings_.play_mode == 2 /*shuffle*/ && queue_.size() > 1) {
-        static std::mt19937 rng(std::random_device{}());
-        std::uniform_int_distribution<int> dist(0, static_cast<int>(queue_.size()) - 1);
-        idx = dist(rng);
+    queue_next_run_ = 0; // the head is moving: "a" starts a fresh run
+    QueueItem item;
+    if (queue_locked_) {
+        // Locked ("!"): nothing is erased, the queue is walked in place. Next
+        // = the item after the one played last (wrapping to the top), or a
+        // random other one in Shuffle.
+        const int n = static_cast<int>(queue_.size());
+        if (settings_.play_mode == 2 /*shuffle*/ && n > 1) {
+            static std::mt19937 rng(std::random_device{}());
+            std::uniform_int_distribution<int> dist(0, n - 1);
+            do { idx = dist(rng); } while (idx == queue_play_idx_);
+        } else {
+            idx = (queue_play_idx_ + 1) % n; // -1 (nothing played yet) -> 0
+        }
+        queue_play_idx_ = idx;
+        item = queue_[idx];
+        clamp_queue_selected();
+    } else {
+        if (settings_.play_mode == 2 /*shuffle*/ && queue_.size() > 1) {
+            static std::mt19937 rng(std::random_device{}());
+            std::uniform_int_distribution<int> dist(0, static_cast<int>(queue_.size()) - 1);
+            idx = dist(rng);
+        }
+        item = queue_[idx];
+        queue_.erase(queue_.begin() + idx);
+        if (settings_.play_mode == 4 /*repeat queue*/) {
+            queue_.push_back(item); // rotate to the back instead of discarding -- keeps the queue looping
+        }
+        if (queue_selected_ >= idx && queue_selected_ > 0) --queue_selected_; // index shifted down by the erase
+        clamp_queue_selected();
     }
-    QueueItem item = queue_[idx];
-    queue_.erase(queue_.begin() + idx);
-    if (settings_.play_mode == 4 /*repeat queue*/) {
-        queue_.push_back(item); // rotate to the back instead of discarding -- keeps the queue looping
-    }
-    if (queue_selected_ >= idx && queue_selected_ > 0) --queue_selected_; // index shifted down by the erase
-    clamp_queue_selected();
     if (item.is_local) {
         LocalTrack t{path_utf8(item.local_path.stem()), item.local_path, item.artist};
         start_local_track(t);
@@ -1954,6 +1974,17 @@ void App::advance_track() {
     // queue's state now -- previously these were only ever consulted
     // once the queue was already empty, which was the other half of the
     // "queue mode won't respect repeat" bug.
+    // Sleep timer's "stop after current song": a one-shot, checked before
+    // everything else so it beats Repeat and the queue. It is NOT the Stop play
+    // mode -- play_mode is left exactly as it was -- it just ends playback the
+    // same way Stop mode does and clears itself.
+    if (sleep_stop_after_track_) {
+        sleep_stop_after_track_ = false;
+        has_track_ = false;
+        history_end_current_play(); // playback really ends here: nothing follows it
+        status_line_ = "sleep timer: stopped after the song";
+        return;
+    }
     if (settings_.play_mode == 1 /*loop*/) {
         launch_device_play_async(); // same track, already fully decoded, no reload needed
         has_track_ = true;
@@ -2008,17 +2039,36 @@ char App::play_mode_letter() const {
     }
 }
 
-void App::queue_add_selected() {
+// "a" -- the hovering track goes in as NEXT: the front of the queue, or right
+// after the track played last while the queue is locked. Consecutive presses
+// keep their order (queue_next_run_), so A, B, C play as A, B, C.
+void App::queue_add_selected() { queue_add_selected_impl(false); }
+
+// "e" -- the hovering track goes to the END of the queue.
+void App::queue_add_selected_end() { queue_add_selected_impl(true); }
+
+void App::queue_add_selected_impl(bool at_end) {
+    // A playlist row queues the whole playlist; that always appends (there is
+    // no meaningful "next" for a block of tracks), for "a" and "e" alike.
     if (list_source_ == ListSource::Playlist) { playlist_add_selected_to_queue(); return; }
     if (list_source_ == ListSource::Folder) { status_line_ = "Enter opens the folder -- then add its tracks"; return; }
     size_t list_len = (list_source_ == ListSource::Local) ? local_view_.size() : online_view_.size();
     if (list_len == 0 || selected_ < 0 || selected_ >= static_cast<int>(list_len)) return;
+    QueueItem item;
     if (list_source_ == ListSource::Local) {
         const auto& t = local_view_[selected_];
-        queue_.push_back({true, t.title, t.folder_artist, t.path, ""});
+        item = {true, t.title, t.folder_artist, t.path, ""};
     } else {
         const auto& r = online_view_[selected_];
-        queue_.push_back({false, r.title, r.uploader, {}, r.video_id});
+        item = {false, r.title, r.uploader, {}, r.video_id};
+    }
+    if (at_end) {
+        queue_.push_back(std::move(item));
+    } else {
+        const int base = queue_locked_ ? queue_play_idx_ + 1 : 0;
+        const int pos = std::clamp(base + queue_next_run_, 0, static_cast<int>(queue_.size()));
+        queue_.insert(queue_.begin() + pos, std::move(item));
+        ++queue_next_run_;
     }
     clamp_queue_selected();
 }
@@ -2046,6 +2096,8 @@ void App::playlist_add_selected_to_queue() {
 
 void App::queue_remove_last() {
     if (!queue_.empty()) queue_.pop_back();
+    if (queue_play_idx_ >= static_cast<int>(queue_.size())) queue_play_idx_ = static_cast<int>(queue_.size()) - 1;
+    queue_next_run_ = 0;
     clamp_queue_selected();
 }
 
@@ -2063,15 +2115,75 @@ void App::clamp_queue_selected() {
 
 void App::queue_remove_hovering() {
     if (queue_.empty() || queue_selected_ < 0 || queue_selected_ >= static_cast<int>(queue_.size())) return;
-    queue_.erase(queue_.begin() + queue_selected_);
+    const int idx = queue_selected_;
+    queue_.erase(queue_.begin() + idx);
+    // Keep queue_play_idx_ on the track it pointed at. Removing the one that
+    // was played last leaves it just in front of the item that slid into its
+    // place, so "next" still lands on that item.
+    if (idx <= queue_play_idx_) --queue_play_idx_;
+    queue_next_run_ = 0;
     clamp_queue_selected();
 }
 
 void App::queue_clear() {
     const size_t n = queue_.size();
+    // One level of undo (Ctrl+Shift+Z): what was just cleared, and where the
+    // locked queue's "played last" marker stood.
+    if (n > 0) {
+        queue_undo_ = queue_;
+        queue_undo_play_idx_ = queue_play_idx_;
+    }
     queue_.clear();
+    queue_play_idx_ = -1;
+    queue_next_run_ = 0;
     clamp_queue_selected(); // empty queue -> cursor and scroll back to 0
-    log_event("queue cleared (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + " removed)");
+    log_event("queue cleared (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + " removed) -- "
+              + "CTRL+SHIFT+Z undoes it");
+}
+
+// Ctrl+Shift+Z. Puts the last cleared queue back in FRONT of whatever was
+// queued since, then forgets the backup (single level).
+void App::queue_undo_clear() {
+    if (queue_undo_.empty()) { status_line_ = "nothing to undo -- the queue has not been cleared"; return; }
+    const int n = static_cast<int>(queue_undo_.size());
+    const bool was_empty = queue_.empty();
+    queue_.insert(queue_.begin(), queue_undo_.begin(), queue_undo_.end());
+    if (was_empty) queue_play_idx_ = queue_undo_play_idx_;
+    else if (queue_play_idx_ >= 0) queue_play_idx_ += n;
+    queue_undo_.clear();
+    queue_undo_play_idx_ = -1;
+    queue_next_run_ = 0;
+    clamp_queue_selected();
+    log_event("queue restored (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + ")");
+}
+
+// "!" -- lock / unlock. Switching it on points queue_play_idx_ at the track
+// that is playing right now (if it is in the queue), so playback continues
+// with the item after it; otherwise the first "next" is the queue's head.
+void App::queue_toggle_lock() {
+    queue_locked_ = !queue_locked_;
+    queue_play_idx_ = -1;
+    queue_next_run_ = 0;
+    if (queue_locked_ && has_track_) {
+        for (int i = 0; i < static_cast<int>(queue_.size()); ++i) {
+            const auto& q = queue_[i];
+            const bool same = current_is_local_ ? (q.is_local && q.local_path == current_path_)
+                                                : (!q.is_local && q.video_id == current_video_id_);
+            if (same) { queue_play_idx_ = i; break; }
+        }
+    }
+    log_event(queue_locked_ ? "queue locked: played tracks stay in the queue"
+                            : "queue unlocked: played tracks leave the queue again");
+}
+
+// Re-points queue_play_idx_ after the item at `from` moved to `to`.
+void App::queue_after_move(int from, int to) {
+    queue_next_run_ = 0;
+    int& p = queue_play_idx_;
+    if (p < 0) return;
+    if (p == from) p = to;
+    else if (from < to && p > from && p <= to) --p;
+    else if (from > to && p >= to && p < from) ++p;
 }
 
 void App::queue_move_hovering(int dir) {
@@ -2079,8 +2191,55 @@ void App::queue_move_hovering(int dir) {
     int target = queue_selected_ + dir;
     if (target < 0 || target >= static_cast<int>(queue_.size())) return; // already at an edge
     std::swap(queue_[queue_selected_], queue_[target]);
+    queue_after_move(queue_selected_, target);
     queue_selected_ = target;
     clamp_queue_selected();
+}
+
+// Shift+4 / Shift+5: the hovering item to the very top / bottom.
+void App::queue_move_to_edge(int dir) {
+    if (queue_.empty()) return;
+    const int from = std::clamp(queue_selected_, 0, static_cast<int>(queue_.size()) - 1);
+    const int to = (dir < 0) ? 0 : static_cast<int>(queue_.size()) - 1;
+    if (from == to) return; // already there
+    QueueItem item = std::move(queue_[from]);
+    queue_.erase(queue_.begin() + from);
+    queue_.insert(queue_.begin() + to, std::move(item));
+    queue_after_move(from, to);
+    queue_selected_ = to;
+    clamp_queue_selected();
+}
+
+// Ctrl+Shift+U: the queue becomes a new playlist in the playlist editor, with
+// the name field focused so it only needs a name and HOME. Playlists are
+// local-files-only, so streamed (online) queue entries are left out and
+// counted in the status line.
+void App::queue_to_playlist() {
+    if (queue_.empty()) { status_line_ = "the queue is empty -- nothing to save as a playlist"; return; }
+    std::vector<PlaylistTrack> tracks;
+    int skipped = 0;
+    for (const auto& q : queue_) {
+        if (!q.is_local) { ++skipped; continue; }
+        bool dup = false;
+        for (const auto& t : tracks) { if (t.path == q.local_path) { dup = true; break; } }
+        if (dup) continue;
+        PlaylistTrack pt;
+        pt.title = q.title;
+        pt.artist = q.artist;
+        pt.path = q.local_path;
+        pt.missing = false;
+        tracks.push_back(std::move(pt));
+    }
+    if (tracks.empty()) { status_line_ = "no local tracks in the queue (playlists hold local files only)"; return; }
+    const int n = static_cast<int>(tracks.size());
+    playlist_open_editor();           // fresh editor, tab 0
+    playlist_edit_tracks_ = std::move(tracks);
+    playlist_edit_track_selected_ = 0;
+    playlist_edit_focus_ = 0;         // the name field
+    playlist_edit_dirty_ = true;
+    playlist_status_ = "queue -> playlist: " + std::to_string(n) + " track" + (n == 1 ? "" : "s")
+                     + (skipped > 0 ? " (" + std::to_string(skipped) + " online skipped)" : "")
+                     + " -- type a name, HOME saves";
 }
 
 // ---------------------------------------------------------------------
@@ -2105,6 +2264,7 @@ SnapshotData App::build_snapshot() const {
         snap.position_sec = player_.poll_elapsed();
     }
 
+    snap.queue_locked = queue_locked_;
     for (const auto& item : queue_) {
         SnapshotTrack t;
         t.is_local = item.is_local;
@@ -2130,6 +2290,9 @@ void App::restore_snapshot(const SnapshotData& snap) {
     }
 
     queue_.clear();
+    queue_locked_ = snap.queue_locked;
+    queue_play_idx_ = -1;
+    queue_next_run_ = 0;
     for (const auto& t : snap.queue) {
         queue_.push_back({t.is_local, t.title, t.artist, t.is_local ? path_from_utf8(t.path) : fs::path(), t.video_id});
     }
@@ -2328,17 +2491,22 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
     {nullptr, "HKeyQueueOverlay", "Big Queue Overlay"}, // larger QUEUE pane floated over the main UI
     {nullptr, "HKeyOscMenu", "Oscilloscope Tuning"},  // decay / dot threshold / tail brightness, live
+    {nullptr, "HKeySleepTimer", "Sleep Timer"},       // 15/30/60/90/120 min or stop after the current song
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
     {nullptr, "HKeySearchOnline", "Search Online"},
     {nullptr, "HKeySearchPlaylist", "Search Playlists"},
     {nullptr, "HKeySearchFolder", "Search Folders"},
     // --- Queue ---
-    {"QUEUE", "HKeyAddHoveringSongToQueue", "Add To Queue"},
+    {"QUEUE", "HKeyAddHoveringSongToQueue", "Add To Queue (Next)"},
     {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove From Queue"},
     {nullptr, "HKeyQueueMoveUp", "Queue Move Up"},
     {nullptr, "HKeyQueueMoveDown", "Queue Move Down"},
     {nullptr, "HKeyClearQueue", "Clear Queue"},
+    {nullptr, "HKeyQueueAddEnd", "Add To End Of Queue"},
+    {nullptr, "HKeyQueueLock", "Lock Queue"},
+    {nullptr, "HKeyQueueMoveTop", "Queue Move To Top"},
+    {nullptr, "HKeyQueueMoveBottom", "Queue Move To Bottom"},
     // --- Playlists ---
     {"PLAYLISTS", "HKeyPlaylist", "Open Playlist Editor"}, // opens the playlist create/manage screen
     // --- Meta editor ---
@@ -3208,6 +3376,56 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::LyricsEdit) {
+        // Lyrics timing. Playback keeps running underneath; only this overlay
+        // takes keys. Unknown keys are ignored (the footer lists every key).
+        const bool arrow = last_key_was_arrow();
+        if (arrow && key == 'C') { lyrics_edit_adjust(+0.1); return; } // right: lyrics later
+        if (arrow && key == 'D') { lyrics_edit_adjust(-0.1); return; } // left: lyrics earlier
+        if (arrow && key == 'A') { lyrics_edit_adjust(+0.5); return; } // up
+        if (arrow && key == 'B') { lyrics_edit_adjust(-0.5); return; } // down
+        if (arrow) return;
+        if (key == 'r' || key == 'R') {
+            std::lock_guard<std::mutex> lk(lyrics_mutex_);
+            lyrics_result_.delay = 0.0;
+            return;
+        }
+        if (key == '\r' || key == '\n' || key == 's' || key == 'S') {
+            double d = 0.0;
+            { std::lock_guard<std::mutex> lk(lyrics_mutex_); d = lyrics_result_.delay; }
+            char num[24];
+            std::snprintf(num, sizeof num, "%+.1f s", d);
+            if (save_lyrics_delay(lyrics_path_, d)) status_line_ = std::string("lyrics timing saved: ") + num;
+            else status_line_ = std::string("lyrics timing ") + num + " applied, but could not be saved (no lyrics file for this track)";
+            mode_ = Mode::Browse;
+            return;
+        }
+        if (key == 27 || key == kKeyAltL) { // cancel: the value from before the overlay opened comes back
+            { std::lock_guard<std::mutex> lk(lyrics_mutex_); lyrics_result_.delay = lyrics_edit_orig_delay_; }
+            mode_ = Mode::Browse;
+        }
+        return;
+    }
+
+    if (mode_ == Mode::SleepTimer) {
+        // Sleep timer. Playback keeps running underneath; only this overlay takes
+        // keys. Unknown keys are ignored (the footer lists every key).
+        const int rows = 7; // 15 / 30 / 60 / 90 / 120 min, stop after song, off
+        const bool arrow = last_key_was_arrow();
+        if (arrow && key == 'A') { sleep_menu_row_ = (sleep_menu_row_ + rows - 1) % rows; return; } // up
+        if (arrow && key == 'B') { sleep_menu_row_ = (sleep_menu_row_ + 1) % rows; return; }        // down
+        if (!arrow && (key == '\r' || key == '\n')) {
+            sleep_timer_apply(sleep_menu_row_);
+            mode_ = Mode::Browse;
+            return;
+        }
+        std::string sl_action = resolve_hotkey_action(key);
+        if (sl_action.empty() && key >= 'a' && key <= 'z') sl_action = resolve_hotkey_action(key - 32);
+        if (sl_action.empty() && key >= 'A' && key <= 'Z') sl_action = resolve_hotkey_action(key + 32);
+        if (!arrow && (key == 27 || sl_action == "HKeySleepTimer")) mode_ = Mode::Browse;
+        return;
+    }
+
     if (mode_ == Mode::Equalizer) {
         // Equaliser. Playback keeps running underneath and the sound follows
         // every change immediately; only this overlay takes keys. Unknown keys
@@ -3427,6 +3645,12 @@ void App::handle_key(int key) {
         if (key == 27) { queue_overlay_close(); return; }
     }
 
+    // Ctrl+Shift+U / Ctrl+Shift+Z: queue -> playlist editor / undo the last
+    // clear. Sentinel keys (see terminal_ui.h), so they are matched directly.
+    if (key == kKeyCtrlShiftU) { queue_to_playlist(); return; }
+    if (key == kKeyCtrlShiftZ) { queue_undo_clear(); return; }
+    if (key == kKeyAltL) { if (mode_ == Mode::Browse) lyrics_edit_open(); return; } // lyrics timing overlay
+
     // SHIFT+B -- AcoustID lookup of the hovered title (by audio fingerprint).
     //
     // Deliberately matched on the raw key + last_key_was_arrow() instead of
@@ -3493,6 +3717,12 @@ void App::handle_key(int key) {
     } else if (action == "HKeyOscMenu") { // SHIFT+O: oscilloscope tuning overlay
         osci_menu_row_ = 0;
         mode_ = Mode::OsciMenu;
+    } else if (action == "HKeySleepTimer") { // SHIFT+Z: sleep timer overlay
+        sleep_menu_row_ = sleep_stop_after_track_ ? 5
+                        : sleep_timer_active_ ? (sleep_timer_minutes_ == 15 ? 0 : sleep_timer_minutes_ == 30 ? 1
+                                               : sleep_timer_minutes_ == 60 ? 2 : sleep_timer_minutes_ == 90 ? 3 : 4)
+                        : 0;
+        mode_ = Mode::SleepTimer;
     } else if (action == "HKeyEqualizer") { // SHIFT+E: equaliser overlay
         eq_open();
     } else if (action == "HKeyListOverlay") { // SHIFT+L: big list overlay on/off
@@ -3531,6 +3761,19 @@ void App::handle_key(int key) {
         queue_move_hovering(-1);
     } else if (action == "HKeyQueueMoveDown") { // move the hovering queue item down (only meaningful once you've Tab'd into the queue)
         queue_move_hovering(1);
+    } else if (action == "HKeyQueueMoveTop") {    // Shift+4: hovering queue item to the top
+        queue_move_to_edge(-1);
+    } else if (action == "HKeyQueueMoveBottom") { // Shift+5: hovering queue item to the bottom
+        queue_move_to_edge(1);
+    } else if (action == "HKeyQueueLock") {       // "!": locked queue keeps played tracks
+        queue_toggle_lock();
+    } else if (action == "HKeyQueueAddEnd") {     // "e": hovering list track to the end of the queue
+        if (queue_focus_) {
+            status_line_ = "focus the track list (TAB) to add a track to the end of the queue";
+        } else {
+            queue_add_selected_end();
+            log_event("added to end of queue");
+        }
     } else if (action == "HKeyTogglePlayPause") {
         if (has_track_) { if (player_.is_paused()) player_.resume(); else player_.pause(); }
     } else if (action == "HKeyIncreaseVolume") {
@@ -4239,10 +4482,12 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
     bool lyrics_avail = false;
     std::vector<LyricLine> lines_copy;
     std::string lyrics_status;
+    double lyrics_delay = 0.0; // lyrics timing correction (ALT+L), seconds, + = lyrics later
     {
         std::lock_guard<std::mutex> lock(lyrics_mutex_);
         if (settings_.element_lyrics && lyrics_ready_) {
             lines_copy = lyrics_result_.lines;
+            lyrics_delay = lyrics_result_.delay;
             lyrics_status = lyrics_result_.message;
             lyrics_avail = !lines_copy.empty();
         } else if (settings_.element_lyrics && has_track_) {
@@ -4359,9 +4604,10 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
             lyric_rows[0] = pad_right(std::string(pad, ' ') + lyrics_status, lyrics_w);
         }
     } else {
+        const double lyric_t = elapsed - lyrics_delay; // the time the lyrics are looked up at
         int active = 0;
         for (size_t i = 0; i < lines_copy.size(); ++i) {
-            if (lines_copy[i].start_time <= elapsed) active = static_cast<int>(i);
+            if (lines_copy[i].start_time <= lyric_t) active = static_cast<int>(i);
             else break;
         }
 
@@ -4374,7 +4620,7 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
             std::string word = al.full_text;
             if (!al.words.empty()) {
                 word = al.words.front().second;
-                for (const auto& wt : al.words) if (wt.first <= elapsed) word = wt.second; // last one <= elapsed
+                for (const auto& wt : al.words) if (wt.first <= lyric_t) word = wt.second; // last one <= lyric_t
             }
             word = apply_font_map(word, settings_.font_map);
             int pad = std::max(0, (lyrics_w - display_width(word)) / 2);
@@ -4384,7 +4630,7 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
         } else if (settings_.lyrics_animation == 3) {
             // Only active line: same per-word rendering as the default
             // view, just without the scrolling context lines around it.
-            auto wrapped = render_lyric_line_wrapped(lines_copy[active], elapsed, lyrics_w, true, settings_);
+            auto wrapped = render_lyric_line_wrapped(lines_copy[active], lyric_t, lyrics_w, true, settings_);
             int start_row = std::max(0, (panel_h - static_cast<int>(wrapped.size())) / 2);
             for (size_t i = 0; i < wrapped.size() && start_row + static_cast<int>(i) < panel_h; ++i) {
                 lyric_rows[start_row + i] = wrapped[i];
@@ -4403,7 +4649,7 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
             std::vector<std::string> flat_rows;
             int active_row_start = 0, active_row_count = 1;
             for (int li = lo; li <= hi; ++li) {
-                auto wrapped = render_lyric_line_wrapped(lines_copy[li], elapsed, lyrics_w, li == active, settings_);
+                auto wrapped = render_lyric_line_wrapped(lines_copy[li], lyric_t, lyrics_w, li == active, settings_);
                 if (li == active) {
                     active_row_start = static_cast<int>(flat_rows.size());
                     active_row_count = static_cast<int>(wrapped.size());
@@ -4632,6 +4878,11 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
                        : (list_source_ == ListSource::Folder) ? "SEARCH FOLDERS"
                        : "SEARCH LOCAL";
 
+    {
+        const std::string sl = sleep_timer_label();
+        if (!sl.empty()) label += "  [" + sl + "]";
+    }
+
     std::string content;
     if (mode_ == Mode::Search) {
         content.clear(); // caret/selection box built lower down
@@ -4816,7 +5067,10 @@ std::vector<std::string> App::build_queue_panel(int total_width, int height) con
     std::string border_ansi_bottom = ansi_for(settings_.border_color_bottom, false);
     std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     std::vector<std::string> out;
-    std::string title = queue_focus_ ? "QUEUE (focused)" : "QUEUE";
+    // "locked" sits next to "focused" (and shows without focus too, because
+    // the lock changes what playback does whether or not the pane has focus).
+    std::string title = queue_focus_ ? (queue_locked_ ? "QUEUE (focused, locked)" : "QUEUE (focused)")
+                                     : (queue_locked_ ? "QUEUE (locked)" : "QUEUE");
     out.push_back(box_top(title, total_width, border_ansi));
 
     if (queue_.empty()) {
@@ -7781,17 +8035,27 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#ESC", "Big list / queue overlay: close (playback, queue and list keys keep working)"},
         {nullptr, "HKeyOscMenu", "Oscilloscope overlay: tune decay / dot threshold / tail live (toggle)"},
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
+        {nullptr, "#ALT+L", "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
+        {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
+        {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min or stop after this song (toggle)"},
+        {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it   [ESC] close (the Stop play mode is left alone)"},
         // --- Search ---
         {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
         {nullptr, "HKeySearchPlaylist", "Search saved playlists (type /p:query)"},
         {nullptr, "HKeySearchFolder", "Search folders (type /f:query), ENTER lists all files of that folder"},
         // --- Queue ---
-        {"QUEUE (MAIN UI)", "HKeyAddHoveringSongToQueue", "Add hovering track to queue"},
+        {"QUEUE (MAIN UI)", "HKeyAddHoveringSongToQueue", "Add hovering track as NEXT (repeated presses keep their order)"},
+        {nullptr, "HKeyQueueAddEnd", "Add hovering track to the END of the queue"},
         {nullptr, "HKeyRemoveHoveringSongFromQueue", "Remove hovering track from queue"},
         {nullptr, "HKeyQueueMoveUp", "Move hovering queue item up"},
         {nullptr, "HKeyQueueMoveDown", "Move hovering queue item down"},
+        {nullptr, "HKeyQueueMoveTop", "Move hovering queue item to the top"},
+        {nullptr, "HKeyQueueMoveBottom", "Move hovering queue item to the bottom"},
+        {nullptr, "HKeyQueueLock", "Lock / unlock the queue (locked: played tracks stay in it)"},
         {nullptr, "HKeyClearQueue", "Clear the whole queue (asks Yes / No first)"},
+        {nullptr, "#CTRL+SHIFT+Z", "Undo the last queue clear"},
+        {nullptr, "#CTRL+SHIFT+U", "Save the queue as a playlist (opens the playlist editor)"},
         // --- Playlists -- HKeyPlaylist opens the overlay; every other row
         // is the playlist editor's own fixed legend (build_playlist_screen()'s
         // footer), none of which is a rebindable hotkey.
@@ -7936,16 +8200,104 @@ bool App::list_overlay_active() const {
     if (!list_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return true;
         default: return false;
     }
 }
+
+// The key as it should read in a legend: what is actually bound (so a
+// rebinding shows up), with the SHIFT+ spelling used in the README for an
+// uppercase letter and for "$" / "%" (Shift+4 / Shift+5 on US and German
+// layouts alike).
+std::string App::hotkey_text(const char* action, const char* fallback) const {
+    auto it = settings_.hotkeys.find(action);
+    std::string k = (it != settings_.hotkeys.end()) ? it->second : std::string(fallback);
+    if (k.empty()) return "-"; // unbound
+    if (k == "$") return "SHIFT+4";
+    if (k == "%") return "SHIFT+5";
+    if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') return "SHIFT+" + k;
+    return k;
+}
+
+namespace {
+// "[a] first  [b] second ..." packed greedily into lines of at most `inner_w`
+// columns, at most `max_lines` of them (items that no longer fit are dropped
+// from the end, which is why the most important ones come first).
+std::vector<std::string> pack_legend(const std::vector<std::string>& items, int inner_w, int max_lines) {
+    std::vector<std::string> lines;
+    if (max_lines <= 0) return lines;
+    std::string cur;
+    for (const auto& it : items) {
+        const std::string candidate = cur.empty() ? it : cur + "   " + it;
+        if (cur.empty() || display_width(candidate) <= inner_w) { cur = candidate; continue; }
+        lines.push_back(cur);
+        if (static_cast<int>(lines.size()) >= max_lines) return lines;
+        cur = it;
+    }
+    if (!cur.empty()) lines.push_back(cur);
+    return lines;
+}
+// "SHIFT+4" + "SHIFT+5" -> "SHIFT+4/5", anything else -> "a/b".
+std::string join_keys(const std::string& a, const std::string& b) {
+    const std::string pre = "SHIFT+";
+    if (a.rfind(pre, 0) == 0 && b.rfind(pre, 0) == 0) return a + "/" + b.substr(pre.size());
+    return a + "/" + b;
+}
+} // namespace
+
+// Key legend of the big list overlay: ONE OR MORE plain lines BELOW the frame
+// (like the playlist / meta editor footers), in their gray. Every entry is
+// kept whole -- an entry that no longer fits the panel width moves to the next
+// line instead of being cut in two -- and the lines are padded to the panel
+// width so they also wipe the background underneath. Never more lines than
+// leave >= 3 list rows. Geometry (which shortens the frame by these lines)
+// and painter both ask this.
+std::vector<std::string> App::list_overlay_legend(int panel_w) const {
+    const int max_lines = std::clamp(term_rows_ - kListOverlayChromeRows - 5, 1, 3);
+    std::vector<std::string> items = {
+        "[" + hotkey_text("HKeyAddHoveringSongToQueue", "a") + "] add to queue (next)",
+        "[" + hotkey_text("HKeyQueueAddEnd", "e") + "] add to end of queue",
+        "[SHIFT+UP/DOWN] page",
+        "[ESC] close",
+    };
+    return pack_legend(items, std::max(0, panel_w), max_lines);
+}
+
+// Key legend of the big queue overlay; same scheme as list_overlay_legend().
+std::vector<std::string> App::queue_overlay_legend(int panel_w) const {
+    const int max_lines = std::clamp(term_rows_ - kQueueOverlayChromeRows - 5, 1, 3);
+    std::vector<std::string> items = {
+        "[" + hotkey_text("HKeyRemoveHoveringSongFromQueue", "d") + "] delete",
+        "[" + hotkey_text("HKeyClearQueue", "X") + "] clear all",
+        "[" + join_keys(hotkey_text("HKeyQueueMoveUp", "4"), hotkey_text("HKeyQueueMoveDown", "5")) + "] move up/down",
+        "[" + join_keys(hotkey_text("HKeyQueueMoveTop", "$"), hotkey_text("HKeyQueueMoveBottom", "%")) + "] move to top/bottom",
+        "[" + hotkey_text("HKeyQueueLock", "!") + "] " + (queue_locked_ ? "unlock" : "lock"),
+        "[CTRL+SHIFT+U] queue to playlist",
+        "[CTRL+SHIFT+Z] undo clear",
+        "[SHIFT+UP/DOWN] page",
+        "[ESC] close",
+    };
+    return pack_legend(items, std::max(0, panel_w), max_lines);
+}
+
+namespace {
+// One legend line as drawn below an overlay frame: gray, padded to the panel
+// width (so it overwrites whatever the background has under it).
+std::string legend_row(const std::string& text, int panel_w) {
+    const int pad = std::max(0, panel_w - display_width(text));
+    return "\x1b[90m" + text + std::string(pad, ' ') + "\x1b[0m";
+}
+} // namespace
 
 void App::list_overlay_geometry(int W, int& panel_w, int& list_rows) const {
     panel_w = std::min(W, std::max(40, std::min(W - 6, 160)));
     // Rows 2 .. term_rows_-1 belong to the panel: search bar (3) + list box
     // border (2) + the list rows themselves.
-    list_rows = std::max(1, term_rows_ - 2 - kListOverlayChromeRows);
+    // ...minus the key legend lines below the frame, so the whole overlay
+    // still ends on row term_rows_ - 1 and never clips (30-row terminals
+    // included).
+    const int legend = static_cast<int>(list_overlay_legend(panel_w).size());
+    list_rows = std::max(1, term_rows_ - 2 - kListOverlayChromeRows - legend);
 }
 
 // Keeps selected_ inside a window of `rows` rows and the window inside the
@@ -7996,8 +8348,9 @@ void App::list_overlay_page(int dir) {
 // The search bar and the list pane at overlay size. The list itself is the
 // normal build_list_panel() (same rows, colours, sort/folder title), just
 // given the wider/taller box -- only its bottom border is replaced, to carry
-// the page counter, the queue size (the queue pane is hidden, so this is the
-// only feedback for "add to queue") and the key hints.
+// the page counter and the queue size (the queue pane is hidden, so this is
+// the only feedback for "add to queue"); the key legend follows as separate
+// gray lines BELOW the frame.
 std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_rows) const {
     std::vector<std::string> out = build_search_bar(panel_w);
     std::vector<std::string> list = build_list_panel(panel_w, list_rows);
@@ -8012,7 +8365,6 @@ std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_row
         if (remaining > 0) parts.push_back("( " + std::to_string(remaining) + " more )");
         parts.push_back("page " + std::to_string(page) + "/" + std::to_string(pages));
         parts.push_back("queue: " + std::to_string(queue_.size()));
-        parts.push_back("[SHIFT+UP/DOWN] page  [ESC] close");
         std::string footer;
         for (;;) {
             footer.clear();
@@ -8022,6 +8374,8 @@ std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_row
         }
         if (parts.empty()) footer.clear();
         list.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
+        // Key legend: below the frame, outside it, in gray.
+        for (const auto& l : list_overlay_legend(panel_w)) list.push_back(legend_row(l, panel_w));
     }
     out.insert(out.end(), list.begin(), list.end());
     return out;
@@ -8037,7 +8391,7 @@ bool App::queue_overlay_active() const {
     if (!queue_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return true;
         default: return false;
     }
 }
@@ -8045,7 +8399,9 @@ bool App::queue_overlay_active() const {
 void App::queue_overlay_geometry(int W, int& panel_w, int& queue_rows) const {
     panel_w = std::min(W, std::max(40, std::min(W - 6, 160)));
     // Rows 2 .. term_rows_-1 belong to the panel: queue box border (2) + the queue rows.
-    queue_rows = std::max(1, term_rows_ - 2 - kQueueOverlayChromeRows);
+    // ...minus the key legend lines below the frame (see list_overlay_geometry()).
+    const int legend = static_cast<int>(queue_overlay_legend(panel_w).size());
+    queue_rows = std::max(1, term_rows_ - 2 - kQueueOverlayChromeRows - legend);
 }
 
 void App::queue_overlay_open() {
@@ -8087,7 +8443,7 @@ void App::queue_overlay_page(int dir) {
 
 // The normal build_queue_panel() (same rows and colours) in the wider/taller
 // box; only its bottom border is replaced, to carry the page counter, the
-// number of tracks and the key hints.
+// number of tracks; the key legend follows below the frame (see build_list_overlay_panel()).
 std::vector<std::string> App::build_queue_overlay_panel(int panel_w, int queue_rows) const {
     std::vector<std::string> out = build_queue_panel(panel_w, queue_rows);
     if (!out.empty()) {
@@ -8101,7 +8457,6 @@ std::vector<std::string> App::build_queue_overlay_panel(int panel_w, int queue_r
         if (remaining > 0) parts.push_back("( " + std::to_string(remaining) + " more )");
         parts.push_back("page " + std::to_string(page) + "/" + std::to_string(pages));
         parts.push_back(std::to_string(total) + (total == 1 ? " track" : " tracks"));
-        parts.push_back("[SHIFT+UP/DOWN] page  [ESC] close");
         std::string footer;
         for (;;) {
             footer.clear();
@@ -8111,6 +8466,8 @@ std::vector<std::string> App::build_queue_overlay_panel(int panel_w, int queue_r
         }
         if (parts.empty()) footer.clear();
         out.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
+        // Key legend: below the frame, outside it, in gray.
+        for (const auto& l : queue_overlay_legend(panel_w)) out.push_back(legend_row(l, panel_w));
     }
     return out;
 }
@@ -8488,6 +8845,183 @@ std::vector<std::string> App::build_osci_menu_panel() const {
     return lines;
 }
 
+// ---------------------------------------------------------------------
+// Lyrics timing overlay (Alt+L) -- see app.h for the design.
+// ---------------------------------------------------------------------
+void App::lyrics_edit_open() {
+    std::lock_guard<std::mutex> lk(lyrics_mutex_);
+    if (!settings_.element_lyrics || !has_track_ || !lyrics_ready_ || lyrics_result_.lines.empty()) {
+        status_line_ = "lyrics timing: no synced lyrics are loaded for this track";
+        return;
+    }
+    lyrics_edit_orig_delay_ = lyrics_result_.delay;
+    mode_ = Mode::LyricsEdit;
+}
+
+void App::lyrics_edit_adjust(double step) {
+    std::lock_guard<std::mutex> lk(lyrics_mutex_);
+    // Round to hundredths so repeated presses never accumulate float drift.
+    const double next = std::round((lyrics_result_.delay + step) * 100.0) / 100.0;
+    lyrics_result_.delay = std::clamp(next, -120.0, 120.0);
+}
+
+std::vector<std::string> App::build_lyrics_edit_panel() const {
+    const int W = kLyricsEditPanelWidth;
+    const int inner = W - 4;
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string R = "\x1b[0m", HI = "\x1b[7m", DIM = "\x1b[90m";
+    const std::string bar = border + settings_.box_vertical + R;
+    auto row = [&](const std::string& plain, const std::string& sgr) {
+        const std::string body = pad_right(truncate_str(plain, inner), inner);
+        return bar + " " + (sgr.empty() ? body : sgr + body + R) + " " + bar;
+    };
+
+    std::vector<LyricLine> lines;
+    double delay = 0.0;
+    {
+        std::lock_guard<std::mutex> lk(lyrics_mutex_);
+        lines = lyrics_result_.lines;
+        delay = lyrics_result_.delay;
+    }
+    const double elapsed = has_track_ ? player_.poll_elapsed() : 0.0;
+    const double lyric_t = elapsed - delay;
+    int active = 0;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].start_time <= lyric_t) active = static_cast<int>(i); else break;
+    }
+    auto text_at = [&](int i) { return (i >= 0 && i < static_cast<int>(lines.size())) ? lines[i].full_text : std::string(); };
+
+    char num[32];
+    std::snprintf(num, sizeof num, "%+.1f s", delay);
+    const std::string state = delay > 0.0049 ? "lyrics appear later" : delay < -0.0049 ? "lyrics appear earlier" : "as in the lyrics file";
+
+    std::vector<std::string> out;
+    out.push_back(box_top("Lyrics Timing", W, border));
+    out.push_back(row(std::string("Offset  ") + num + "   (" + state + ")", ""));
+    out.push_back(row("", ""));
+    out.push_back(row("  " + text_at(active - 1), DIM));
+    out.push_back(row("> " + text_at(active), HI));
+    out.push_back(row("  " + text_at(active + 1), DIM));
+    out.push_back(row("[LEFT/RIGHT] -/+ 0.1 s   [DOWN/UP] -/+ 0.5 s", ""));
+    out.push_back(box_bottom(W, "[R] reset  [ENTER] save  [ESC] cancel", border_bottom));
+    return out;
+}
+
+// ---------------------------------------------------------------------
+// Sleep timer (HKeySleepTimer = Shift+Z) -- see app.h for the design.
+// ---------------------------------------------------------------------
+namespace {
+constexpr int kSleepMinutes[5] = {15, 30, 60, 90, 120};
+std::string fmt_countdown(long long secs) {
+    if (secs < 0) secs = 0;
+    char buf[24];
+    if (secs >= 3600) std::snprintf(buf, sizeof buf, "%lld:%02lld:%02lld", secs / 3600, (secs / 60) % 60, secs % 60);
+    else std::snprintf(buf, sizeof buf, "%lld:%02lld", secs / 60, secs % 60);
+    return buf;
+}
+} // namespace
+
+void App::sleep_timer_cancel() {
+    sleep_timer_active_ = false;
+    sleep_timer_minutes_ = 0;
+    sleep_stop_after_track_ = false;
+}
+
+void App::sleep_timer_apply(int row) {
+    // The two kinds of timer are mutually exclusive: whatever was armed is
+    // replaced (picking the running minute entry again simply restarts it).
+    sleep_timer_cancel();
+    if (row >= 0 && row < 5) {
+        sleep_timer_minutes_ = kSleepMinutes[row];
+        sleep_timer_deadline_ = std::chrono::steady_clock::now() + std::chrono::minutes(sleep_timer_minutes_);
+        sleep_timer_active_ = true;
+        status_line_ = "sleep timer: playback pauses in " + std::to_string(sleep_timer_minutes_) + " min";
+    } else if (row == 5) {
+        if (!has_track_) {
+            status_line_ = "sleep timer: nothing is playing, so there is no current song to stop after";
+            return;
+        }
+        sleep_stop_after_track_ = true;
+        status_line_ = settings_.play_mode == 3
+            ? "sleep timer: stops after this song (Stop mode is on as well)"
+            : "sleep timer: stops after this song";
+    } else {
+        status_line_ = "sleep timer: off";
+    }
+}
+
+void App::sleep_timer_tick() {
+    // A pending "stop after song" with nothing playing (and nothing about to
+    // start) has no song left to wait for -- drop it rather than letting it
+    // hit whatever track is started next.
+    if (sleep_stop_after_track_ && !has_track_ && !advancing_ && !load_in_progress_.load())
+        sleep_stop_after_track_ = false;
+    if (!sleep_timer_active_) return;
+    if (std::chrono::steady_clock::now() < sleep_timer_deadline_) return;
+    if (has_track_ && !advancing_ && device_play_pending_gen_.load() == 0) {
+        // Pause, not stop: the position survives and one press of play resumes.
+        if (!player_.is_paused()) player_.pause();
+        sleep_timer_active_ = false;
+        sleep_timer_minutes_ = 0;
+        status_line_ = "sleep timer: playback paused";
+    } else if (!has_track_ && !advancing_ && !load_in_progress_.load()) {
+        // Nothing is playing any more (Stop mode, end of the list, ...).
+        sleep_timer_active_ = false;
+        sleep_timer_minutes_ = 0;
+        status_line_ = "sleep timer: finished";
+    }
+    // else: a track is loading / being handed over -- try again next frame, so
+    // the pause lands on the new track instead of racing its start.
+}
+
+std::string App::sleep_timer_label() const {
+    if (sleep_timer_active_) {
+        const auto left = std::chrono::duration_cast<std::chrono::seconds>(
+            sleep_timer_deadline_ - std::chrono::steady_clock::now()).count();
+        return "SLEEP " + fmt_countdown(left);
+    }
+    if (sleep_stop_after_track_) return "SLEEP after song";
+    return "";
+}
+
+std::vector<std::string> App::build_sleep_timer_panel() const {
+    const int W = kSleepTimerPanelWidth;
+    const int inner = W - 4;
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string R = "\x1b[0m", HI = "\x1b[7m";
+    const std::string bar = border + settings_.box_vertical + R;
+    auto row = [&](const std::string& plain, bool hi) {
+        const std::string body = pad_right(truncate_str(plain, inner), inner);
+        return bar + " " + (hi ? HI + body + R : body) + " " + bar;
+    };
+    // "label ........ right" within `inner` columns.
+    auto two = [&](bool cursor, const std::string& left, const std::string& right) {
+        const std::string l = std::string(cursor ? "> " : "  ") + left;
+        const int gap = std::max(1, inner - display_width(l) - display_width(right));
+        return l + std::string(static_cast<size_t>(gap), ' ') + right;
+    };
+
+    long long left_secs = 0;
+    if (sleep_timer_active_)
+        left_secs = std::chrono::duration_cast<std::chrono::seconds>(sleep_timer_deadline_ - std::chrono::steady_clock::now()).count();
+
+    std::vector<std::string> lines;
+    lines.push_back(box_top("Sleep Timer", W, border));
+    for (int i = 0; i < 5; ++i) {
+        const bool running = sleep_timer_active_ && sleep_timer_minutes_ == kSleepMinutes[i];
+        lines.push_back(row(two(i == sleep_menu_row_, std::to_string(kSleepMinutes[i]) + " minutes",
+                                running ? fmt_countdown(left_secs) + " left" : ""), i == sleep_menu_row_));
+    }
+    lines.push_back(row(two(sleep_menu_row_ == 5, "Stop after current song", sleep_stop_after_track_ ? "on" : ""), sleep_menu_row_ == 5));
+    lines.push_back(row(two(sleep_menu_row_ == 6, "Off", (!sleep_timer_active_ && !sleep_stop_after_track_) ? "(no timer)" : ""), sleep_menu_row_ == 6));
+    lines.push_back(row(sleep_timer_active_ ? "Playback is paused when the time is up."
+                                            : "Minute timers pause, they do not stop.", false));
+    lines.push_back(box_bottom(W, "[UP/DOWN] [ENTER] set  [ESC] close", border_bottom));
+    return lines;
+}
+
 // "Want to clear queue?" -- small Yes/No confirmation, stamped over the live
 // Browse view by draw_floating_panel() like Bulk Add / Retry Lyrics. Fixed
 // size (8 rows x kClearQueuePanelWidth) so it overwrites cleanly without a clear.
@@ -8701,7 +9235,7 @@ std::string App::render_frame(TerminalIO& term) {
     // change always has.
     auto mode_family = [](Mode m) {
         switch (m) {
-            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: return 0;
+            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return 0;
             case Mode::Settings: case Mode::ColorEdit: return 1;
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
@@ -8969,6 +9503,10 @@ std::string App::render_frame(TerminalIO& term) {
     } else if (mode_ == Mode::OsciMenu) {
         // Small centred panel, clear of the scope in the top panel's right-hand side.
         draw_floating_panel(floating, build_osci_menu_panel(), kOsciMenuPanelWidth, W);
+    } else if (mode_ == Mode::LyricsEdit) {
+        draw_floating_panel(floating, build_lyrics_edit_panel(), kLyricsEditPanelWidth, W);
+    } else if (mode_ == Mode::SleepTimer) {
+        draw_floating_panel(floating, build_sleep_timer_panel(), kSleepTimerPanelWidth, W);
     } else if (mode_ == Mode::Equalizer) {
         draw_floating_panel(floating, build_eq_panel(), kEqPanelWidth, W);
     }
@@ -9109,6 +9647,7 @@ int App::run() {
             // new one in (see device_play_pending_gen_).
             if (!advancing_ && device_play_pending_gen_.load() == 0 && player_.finished()) advance_track();
         }
+        sleep_timer_tick();
         // Disk only spins while something is actually playing — frozen
         // when idle or paused, per instruction.
         if (has_track_ && !player_.is_paused()) {

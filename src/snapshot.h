@@ -33,6 +33,7 @@ struct SnapshotData {
     int volume = 70;         // the pre-mute/real volume, not the forced-0 muted value
 
     std::vector<SnapshotTrack> queue;
+    bool queue_locked = false; // "!": played tracks stay in the queue
 };
 
 fs::path snapshot_path();

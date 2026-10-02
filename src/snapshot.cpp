@@ -65,6 +65,7 @@ bool load_snapshot(SnapshotData& out) {
     if (auto* p2 = root.find("play_mode")) d.play_mode = static_cast<int>(p2->as_number(0));
     if (auto* p2 = root.find("muted")) d.muted = p2->as_bool(false);
     if (auto* p2 = root.find("volume")) d.volume = static_cast<int>(p2->as_number(70));
+    if (auto* p2 = root.find("queue_locked")) d.queue_locked = p2->as_bool(false);
     if (auto* qp = root.find("queue")) {
         if (qp->type == Type::Array) {
             for (const auto& item : qp->arr) d.queue.push_back(track_from_json(item));
@@ -95,6 +96,7 @@ void save_snapshot(const SnapshotData& data) {
     Value qarr = Value::make_arr();
     for (const auto& t : data.queue) qarr.arr.push_back(track_to_json(t));
     root.set("queue", qarr);
+    root.set("queue_locked", Value::make_bool(data.queue_locked));
 
     // Single canonical file, always overwritten (trunc) -- never
     // appended/accumulated. Written to a temp file first and renamed

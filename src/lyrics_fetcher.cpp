@@ -2,6 +2,8 @@
 #include "TextSanitizer.h"
 #include "process_util.h"
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <regex>
 #include <sstream>
@@ -193,6 +195,50 @@ static bool json_get_string(const std::string& json, const std::string& key, std
     return true;
 }
 
+// --- "[offset:+500]" tag --------------------------------------------------
+// LRC convention: milliseconds, POSITIVE shifts the lyrics EARLIER. The app's
+// own `delay` (see LyricsResult) is the opposite way round (positive = later,
+// which is how the editor presents it), so the sign flips here and in
+// save_lyrics_delay().
+static bool is_offset_tag_line(const std::string& line) {
+    static const std::regex re(R"(^\s*\[\s*offset\s*:\s*[+-]?\d+(?:\.\d+)?\s*\]\s*$)", std::regex::icase);
+    return std::regex_match(line, re);
+}
+
+static double parse_lrc_delay(const std::string& lrc_text) {
+    static const std::regex re(R"(\[\s*offset\s*:\s*([+-]?\d+(?:\.\d+)?)\s*\])", std::regex::icase);
+    std::smatch m;
+    if (!std::regex_search(lrc_text, m, re)) return 0.0;
+    try { return -std::stod(m[1].str()) / 1000.0; } catch (...) { return 0.0; }
+}
+
+bool save_lyrics_delay(const fs::path& track_path, double delay_sec) {
+    std::string text;
+    if (!load_sidecar(track_path, text)) return false; // nothing cached for this track
+    const std::string nl = (text.find("\r\n") != std::string::npos) ? "\r\n" : "\n";
+    std::string out;
+    if (std::abs(delay_sec) >= 0.0005) {
+        char tag[40];
+        std::snprintf(tag, sizeof tag, "[offset:%+ld]", std::lround(-delay_sec * 1000.0));
+        out += tag + nl;
+    }
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (is_offset_tag_line(line)) continue; // replaced by the new tag above
+        out += line + nl;
+    }
+    fs::path p = sidecar_path(track_path);
+    if (p.empty()) return false;
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
+    std::ofstream o(p, std::ios::binary | std::ios::trunc);
+    if (!o.is_open()) return false;
+    o << out;
+    return o.good();
+}
+
 // --- enhanced/plain LRC parsing ----------------------------------------
 
 static std::vector<LyricLine> parse_lrc(const std::string& lrc_text, bool enhanced) {
@@ -269,6 +315,7 @@ LyricsResult fetch_synced_lyrics(const std::string& title, const std::string& ar
             result.status = LyricsStatus::Ok;
             result.source = "local";
             result.raw_lrc = local_lrc;
+            result.delay = parse_lrc_delay(local_lrc);
             result.message = "lyrics loaded (cached)";
             return result;
         }

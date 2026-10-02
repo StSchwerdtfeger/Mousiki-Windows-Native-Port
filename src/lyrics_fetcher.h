@@ -30,6 +30,12 @@ struct LyricsResult {
     std::string message;   // human-readable status/error, shown in the lyrics panel
     std::string source;    // "local" | "better-lyrics" | "lrclib" | ""
     std::string raw_lrc;   // the raw LRC text, kept so it can be cached to a sidecar file
+    // Timing correction in seconds, as the lyrics editor (ALT+L) shows it:
+    // POSITIVE = the lyrics appear LATER than their timestamps say, negative =
+    // earlier. Read from the sidecar's "[offset:...]" tag (which uses the LRC
+    // convention, in milliseconds, positive = earlier -- the sign is flipped on
+    // the way in and out), 0 when there is none.
+    double delay = 0.0;
 };
 
 // Priority chain: a local sidecar .lrc file in a "lyrics" subfolder of the
@@ -45,5 +51,11 @@ LyricsResult fetch_synced_lyrics(const std::string& title, const std::string& ar
                                   const std::string& helper_script_path,
                                   const fs::path& track_path = fs::path(),
                                   bool force_network = false);
+
+// Writes `delay_sec` (same sign as LyricsResult::delay) into the track's sidecar
+// .lrc as an "[offset:...]" tag, replacing an existing one (0 removes the tag).
+// The timestamps themselves are not touched. False when there is no sidecar to
+// write into (nothing fetched/cached for this track) or the write failed.
+bool save_lyrics_delay(const fs::path& track_path, double delay_sec);
 
 } // namespace muisc

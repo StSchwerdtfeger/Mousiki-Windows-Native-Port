@@ -447,6 +447,20 @@ int win_poll_key() {
         if (ctrl && (st & SHIFT_PRESSED) != 0) {
             if (k.wVirtualKeyCode == 'S') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
             if (k.wVirtualKeyCode == 'X') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
+            if (k.wVirtualKeyCode == 'U') { g_last_key_was_arrow = false; return kKeyCtrlShiftU; }
+            if (k.wVirtualKeyCode == 'Z') { g_last_key_was_arrow = false; return kKeyCtrlShiftZ; }
+        }
+    }
+
+    // Alt+L (the lyrics timing overlay). LEFT Alt only and no Ctrl: AltGr on a
+    // European layout is reported as Ctrl + right Alt and must stay a plain
+    // character for whatever it types.
+    {
+        DWORD st = k.dwControlKeyState;
+        const bool ctrl = (st & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+        if ((st & LEFT_ALT_PRESSED) != 0 && !ctrl && k.wVirtualKeyCode == 'L') {
+            g_last_key_was_arrow = false;
+            return kKeyAltL;
         }
     }
 

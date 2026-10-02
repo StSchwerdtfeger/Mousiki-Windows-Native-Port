@@ -33,7 +33,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, Equalizer };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, Equalizer, SleepTimer, LyricsEdit };
 enum class ListSource { Local, Online, Playlist, Folder };
 
 // One row of the main UI's "/f:" folder list: a folder that directly
@@ -135,6 +135,12 @@ private:
     bool list_overlay_open_ = false;
     int overlay_list_rows_ = kListVisibleRows; // list rows the overlay fits; recomputed every frame
     static constexpr int kListOverlayChromeRows = 5; // search bar (3) + list box top/bottom border (2)
+    // The key legend sits BELOW the frame as separate gray lines (like the
+    // playlist / meta editor footers) and takes rows away from the list so
+    // the overlay never grows past the terminal (term_rows_ - 2 rows, from
+    // row 2): geometry and painter both ask this. Entries are never split
+    // across two lines.
+    std::vector<std::string> list_overlay_legend(int panel_w) const;
     bool list_overlay_active() const; // open AND in a mode that shows the main UI underneath it
     int list_nav_rows() const { return list_overlay_active() ? overlay_list_rows_ : list_visible_rows_; }
     void list_overlay_geometry(int W, int& panel_w, int& list_rows) const;
@@ -158,6 +164,7 @@ private:
     bool queue_overlay_prev_focus_ = false;       // queue_focus_ before the overlay opened
     int overlay_queue_rows_ = kListVisibleRows;   // queue rows the overlay fits; recomputed every frame
     static constexpr int kQueueOverlayChromeRows = 2; // queue box top/bottom border
+    std::vector<std::string> queue_overlay_legend(int panel_w) const; // see list_overlay_legend()
     bool queue_overlay_active() const; // open AND in a mode that shows the main UI underneath it
     int queue_nav_rows() const { return queue_overlay_active() ? overlay_queue_rows_ : list_visible_rows_; }
     void queue_overlay_geometry(int W, int& panel_w, int& queue_rows) const;
@@ -186,6 +193,30 @@ private:
     int queue_selected_ = 0;   // cursor/"hovering" row, only meaningful once queue_focus_ has been used
     int queue_scroll_ = 0;
     bool queue_focus_ = false; // Tab toggles which panel Up/Down navigates
+
+    // "!" (HKeyQueueLock): a LOCKED queue keeps its tracks when they are
+    // played -- nothing is erased by auto-advance or by "n". Playback walks
+    // the queue in place instead (queue_play_idx_ = the item played last, -1
+    // = none yet; the next one is the following item, wrapping around, or a
+    // random one in Shuffle). "d" and Shift+X still remove tracks: locking
+    // only stops tracks from disappearing by themselves.
+    bool queue_locked_ = false;
+    int queue_play_idx_ = -1;
+    // Number of tracks "a" (add as NEXT) has put in front of everything else
+    // since the queue head last moved, so pressing "a" on A, B, C plays them
+    // as A, B, C rather than C, B, A. Reset whenever the head moves / the
+    // queue is reshuffled by hand.
+    int queue_next_run_ = 0;
+    // What Shift+X cleared, so Ctrl+Shift+Z can bring it back (one level).
+    std::vector<QueueItem> queue_undo_;
+    int queue_undo_play_idx_ = -1;
+    void queue_toggle_lock();
+    void queue_add_selected_end();       // "e": hovering track to the END of the queue
+    void queue_move_to_edge(int dir);    // Shift+4 / Shift+5: dir=-1 top, +1 bottom
+    void queue_after_move(int from, int to); // keeps queue_play_idx_ on its track after a move
+    void queue_undo_clear();             // Ctrl+Shift+Z
+    void queue_to_playlist();            // Ctrl+Shift+U: queue -> playlist editor (name field)
+    std::string hotkey_text(const char* action, const char* fallback) const; // bound key, as shown in a legend
 
     // --- playlists (local-files-only; see playlist_manager.h) -----------
     // Main UI: results of a "/p:" search (list_source_==Playlist), i.e.
@@ -897,7 +928,8 @@ private:
     // L=list, R=repeat, S=shuffle, Q=repeat queue, O=stop (play-and-stop
     // -- not "S", that's shuffle's letter already).
     char play_mode_letter() const;
-    void queue_add_selected();
+    void queue_add_selected_impl(bool at_end);
+    void queue_add_selected();           // "a": hovering track as NEXT (see queue_next_run_)
     void queue_remove_last();
     void queue_remove_hovering();
     // Shift+X (HKeyClearQueue): asks "Want to clear queue?" (Mode::ClearQueue,
@@ -918,6 +950,46 @@ private:
     static constexpr int kOsciMenuPanelWidth = 44; // just wide enough for the key legend
     std::vector<std::string> build_osci_menu_panel() const;
     void osci_menu_adjust(int dir);
+    // Shift+Z (HKeySleepTimer): the sleep timer overlay (Mode::SleepTimer), a
+    // small floating panel over the live playback UI. Pick 15 / 30 / 60 / 90 /
+    // 120 minutes (playback is PAUSED when it runs out, so it can be resumed),
+    // "stop after current song", or Off. Up/Down pick a row, ENTER sets it and
+    // closes, ESC / Shift+Z close without changing anything. Playback keeps
+    // running underneath. Not persisted (a sleep timer must not survive a restart).
+    //
+    // Interplay with the Stop play mode (settings_.play_mode == 3): "stop after
+    // current song" does NOT touch play_mode. It is a one-shot flag consumed in
+    // advance_track(), checked BEFORE the repeat / stop / queue logic, so it wins
+    // over Repeat and over the queue, and the play mode is exactly what it was
+    // afterwards. With Stop mode already on it is simply redundant. The minute
+    // timers and the one-shot flag are mutually exclusive (setting one clears the
+    // other); a minute timer never changes the play mode either, it only pauses.
+    int sleep_menu_row_ = 0;
+    int sleep_timer_minutes_ = 0;                       // the minute choice that is running (0 = none)
+    bool sleep_timer_active_ = false;
+    std::chrono::steady_clock::time_point sleep_timer_deadline_{};
+    bool sleep_stop_after_track_ = false;               // one-shot: end playback when the current song ends
+    static constexpr int kSleepTimerPanelWidth = 44;
+    std::vector<std::string> build_sleep_timer_panel() const;
+    void sleep_timer_apply(int row);                    // row of the menu: 0..4 minutes, 5 stop after song, 6 off
+    void sleep_timer_cancel();
+    void sleep_timer_tick();                            // once per frame
+    std::string sleep_timer_label() const;              // "" when nothing is armed, else e.g. "SLEEP 24:10"
+    // Alt+L (kKeyAltL, fixed key): the lyrics timing overlay (Mode::LyricsEdit),
+    // a small floating panel over the live playback UI for tracks whose lyrics
+    // run early or late. The offset ("delay", seconds, + = lyrics later) lives in
+    // lyrics_result_.delay and is applied live by render (lyrics time = elapsed -
+    // delay), so the lyrics behind / inside the panel move while it is adjusted.
+    // Left/Right = -/+ 0.1 s, Down/Up = -/+ 0.5 s, R = back to 0, ENTER / S =
+    // save into the track's .lrc ("[offset:...]" tag, so it is remembered and
+    // read back with the lyrics), ESC / Alt+L = cancel (the value from before the
+    // overlay opened comes back). Opens only while synced lyrics are loaded.
+    double lyrics_edit_orig_delay_ = 0.0;               // delay when the overlay opened (ESC restores it)
+    fs::path lyrics_path_;                              // track path the current lyrics belong to (sidecar location)
+    static constexpr int kLyricsEditPanelWidth = 60;
+    void lyrics_edit_open();
+    void lyrics_edit_adjust(double step);
+    std::vector<std::string> build_lyrics_edit_panel() const;
     // Shift+E (HKeyEqualizer): the equaliser overlay (Mode::Equalizer), a
     // floating panel over the live playback UI. Ten vertical sliders
     // (31 Hz .. 16 kHz, +/-12 dB), a preset line and an on/off state. Left/

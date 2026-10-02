@@ -170,6 +170,9 @@ int TerminalIO::poll_key() {
     if (c == '\x1b') {
         unsigned char seq[2] = {0, 0};
         if (read(STDIN_FILENO, &seq[0], 1) != 1) { g_last_key_was_arrow = false; return 27; }
+        // Alt+L: terminals send ESC followed by the letter (a lone byte, so it
+        // has to be recognised before the two-byte read below).
+        if (seq[0] == 'l' || seq[0] == 'L') { g_last_key_was_arrow = false; return kKeyAltL; }
         if (read(STDIN_FILENO, &seq[1], 1) != 1) { g_last_key_was_arrow = false; return 27; }
         if (seq[0] == '[') {
             switch (seq[1]) {
@@ -214,6 +217,8 @@ int TerminalIO::poll_key() {
                 if (mod == 6) { // Ctrl+Shift
                     if (code == 'S' || code == 's') { g_last_key_was_arrow = false; return kKeyCtrlShiftS; }
                     if (code == 'X' || code == 'x') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
+                    if (code == 'U' || code == 'u') { g_last_key_was_arrow = false; return kKeyCtrlShiftU; }
+                    if (code == 'Z' || code == 'z') { g_last_key_was_arrow = false; return kKeyCtrlShiftZ; }
                 }
                 // "1;<mod> A" -- an arrow (or Home/End) pressed WITH a
                 // modifier, which is how xterm-style terminals report
