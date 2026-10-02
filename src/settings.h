@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "equalizer.h"
 
 namespace muisc {
 
@@ -179,6 +180,13 @@ struct Settings {
     bool   normalize = true;
     double normalize_target_lufs = -16.0;   // -14 = YouTube/Spotify reference, -16 = a bit more headroom
     double normalize_max_boost_db = 9.0;    // never amplify a quiet track by more than this
+
+    // --- equaliser (config.txt: EqualizerEnabled / EqualizerBands) --------
+    // Ten band gains in dB (31 Hz .. 16 kHz, see equalizer.h), edited in the
+    // Shift+E overlay. Which preset is "selected" is not stored: it is derived
+    // by matching the gains against the preset table (no match = Custom).
+    bool   eq_enabled = false;
+    EqGains eq_gains = {};
 
     // --- autosave / session snapshot (config.txt: AutoSave*) -----------
     bool autosave_enabled = true;

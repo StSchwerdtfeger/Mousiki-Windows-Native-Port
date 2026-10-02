@@ -876,6 +876,7 @@ App::App() {
     player_.set_normalization(settings_.normalize,
                               static_cast<float>(settings_.normalize_target_lufs),
                               static_cast<float>(settings_.normalize_max_boost_db));
+    eq_apply();
     lyrics_script_ = find_lyrics_script();
     fast_search_script_ = find_fast_search_script();
     meta_script_ = find_scripts_file("fetch_meta.py"); // AcoustID helper for Mode::MetaEdit
@@ -2344,6 +2345,8 @@ static const RefHotkeyRow kRefRows[] = {
     {"META EDITOR", "HKeyMetaEditor", "Open Meta Editor"}, // edit file names/tags, AcoustID fetch
     // --- Listening history ---
     {"HISTORY", "HKeyHistory", "Open Listening History"}, // HISTORY / TOP TRACKS / HABITS overlay
+    // --- Equalizer ---
+    {"EQUALIZER", "HKeyEqualizer", "Open Equalizer"}, // 10-band EQ with presets
     // --- Downloads ---
     {"DOWNLOADS", "HKeyDownloadStream", "Download Stream"},
     // --- System ---
@@ -3205,6 +3208,40 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::Equalizer) {
+        // Equaliser. Playback keeps running underneath and the sound follows
+        // every change immediately; only this overlay takes keys. Unknown keys
+        // are ignored (the footer lists every key). ESC or the overlay hotkey
+        // closes and saves.
+        const bool arrow = last_key_was_arrow();
+        if (arrow && key == 'C') { eq_band_ = (eq_band_ + 1) % kEqBands; return; }               // right
+        if (arrow && key == 'D') { eq_band_ = (eq_band_ + kEqBands - 1) % kEqBands; return; }    // left
+        if (arrow && key == 'A') { eq_set_gain(eq_band_, settings_.eq_gains[eq_band_] + 1.0f); return; } // up
+        if (arrow && key == 'B') { eq_set_gain(eq_band_, settings_.eq_gains[eq_band_] - 1.0f); return; } // down
+        if (!arrow && (key == ',' || key == '<')) { eq_select_preset(-1); return; }
+        if (!arrow && (key == '.' || key == '>' || key == 9)) { eq_select_preset(+1); return; }
+        if (!arrow && key == '0') { eq_set_gain(eq_band_, 0.0f); return; }
+        if (!arrow && key == ' ') {
+            settings_.eq_enabled = !settings_.eq_enabled;
+            eq_apply();
+            return;
+        }
+        if (!arrow && (key == 'r' || key == 'R')) { // back to Flat; the on/off state is left alone
+            settings_.eq_gains = kEqPresets[0].gains;
+            eq_last_preset_ = 0;
+            eq_apply();
+            return;
+        }
+        std::string eq_action = resolve_hotkey_action(key);
+        if (eq_action.empty() && key >= 'a' && key <= 'z') eq_action = resolve_hotkey_action(key - 32);
+        if (eq_action.empty() && key >= 'A' && key <= 'Z') eq_action = resolve_hotkey_action(key + 32);
+        if (!arrow && (key == 27 || eq_action == "HKeyEqualizer")) {
+            mode_ = Mode::Browse;
+            save_settings(settings_);
+        }
+        return;
+    }
+
     if (mode_ == Mode::Cheatsheet) {
         if (key == 27 || key == '?') mode_ = Mode::Browse;
         else if (key == 'A') --cheatsheet_scroll_; // up -- the table is longer than the screen
@@ -3456,6 +3493,8 @@ void App::handle_key(int key) {
     } else if (action == "HKeyOscMenu") { // SHIFT+O: oscilloscope tuning overlay
         osci_menu_row_ = 0;
         mode_ = Mode::OsciMenu;
+    } else if (action == "HKeyEqualizer") { // SHIFT+E: equaliser overlay
+        eq_open();
     } else if (action == "HKeyListOverlay") { // SHIFT+L: big list overlay on/off
         if (list_overlay_open_) list_overlay_close(); else list_overlay_open();
     } else if (action == "HKeyQueueOverlay") { // SHIFT+K: big queue overlay on/off
@@ -7787,6 +7826,12 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
         {nullptr, "#ARROWS", "History overlay: move the cursor / scroll Habits"},
         {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
+        // --- Equalizer ---
+        {"EQUALIZER", "HKeyEqualizer", "Equalizer: 10 bands, presets, on/off"},
+        {nullptr, "#LEFT / RIGHT", "Equalizer: select band"},
+        {nullptr, "#UP / DOWN", "Equalizer: band gain +1 / -1 dB"},
+        {nullptr, "#, / . / TAB", "Equalizer: previous / next preset"},
+        {nullptr, "#SPACE / 0 / r", "Equalizer: on-off / zero the band / reset to Flat"},
         {nullptr, "#TAB / ENTER", "Top Tracks tab: switch pane / add top 10-25-50-100 to queue"},
         // --- Downloads ---
         {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
@@ -7891,7 +7936,7 @@ bool App::list_overlay_active() const {
     if (!list_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: return true;
         default: return false;
     }
 }
@@ -7992,7 +8037,7 @@ bool App::queue_overlay_active() const {
     if (!queue_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: return true;
         default: return false;
     }
 }
@@ -8278,6 +8323,121 @@ void App::rl_submit() {
     mode_ = Mode::Browse;
 }
 
+// Equaliser overlay (SHIFT+E).
+void App::eq_open() {
+    const int m = eq_match_preset(settings_.eq_gains);
+    if (m >= 0) eq_last_preset_ = m;
+    mode_ = Mode::Equalizer;
+}
+
+void App::eq_apply() {
+    player_.set_equalizer(settings_.eq_enabled, settings_.eq_gains);
+}
+
+// Changing a band while the EQ is off switches it on: what you adjust is what
+// you hear. Gains snap to whole dB (the grid the sliders are drawn on).
+void App::eq_set_gain(int band, float db) {
+    band = std::clamp(band, 0, kEqBands - 1);
+    settings_.eq_gains[band] = std::clamp(std::round(db), kEqMinDb, kEqMaxDb);
+    settings_.eq_enabled = true;
+    eq_apply();
+}
+
+void App::eq_select_preset(int dir) {
+    const int n = static_cast<int>(kEqPresets.size());
+    const int cur = eq_match_preset(settings_.eq_gains);
+    const int base = cur >= 0 ? cur : std::clamp(eq_last_preset_, 0, n - 1);
+    const int next = ((base + dir) % n + n) % n;
+    settings_.eq_gains = kEqPresets[next].gains;
+    settings_.eq_enabled = true;
+    eq_last_preset_ = next;
+    eq_apply();
+}
+
+std::vector<std::string> App::build_eq_panel() const {
+    const int W = kEqPanelWidth;
+    const int inner = W - 4;               // 54: 4 axis columns + 10 bands x 5 columns
+    constexpr int kCell = 5;
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string head = ansi_for(settings_.header_color, false);
+    const std::string R = "\x1b[0m", HI = "\x1b[7m";
+    const std::string bar = border + settings_.box_vertical + R;
+    auto framed = [&](const std::string& content) { return bar + " " + content + " " + bar; };
+    auto plain_row = [&](const std::string& plain) {
+        return framed(pad_right(truncate_str(plain, inner), inner));
+    };
+    auto centre = [&](const std::string& t) { // exactly kCell columns
+        const int w = display_width(t);
+        const int left = std::max(0, (kCell - w) / 2);
+        return pad_right(std::string(left, ' ') + t, kCell);
+    };
+
+    const EqGains& g = settings_.eq_gains;
+    const bool on = settings_.eq_enabled;
+    const int preset = eq_match_preset(g);
+    char pre[24];
+    { const float pa = eq_auto_preamp_db(g); std::snprintf(pre, sizeof pre, pa > -0.05f ? "0.0 dB" : "%+.1f dB", pa); }
+
+    std::vector<std::string> lines;
+    lines.push_back(box_top("Equalizer", W, border));
+    lines.push_back(plain_row(std::string("Preset: ") + (preset >= 0 ? kEqPresets[preset].name : "Custom") +
+                              "   EQ: " + (on ? "ON" : "OFF") + "   Preamp: " + pre));
+
+    // Plot: 13 rows of 2 dB each, or 7 rows of 4 dB when the terminal is short.
+    const int step = term_rows_ >= 24 ? 2 : 4;
+    const int half_rows = 12 / step;
+    const std::string dim = border;                                   // EQ off: bars in the border grey
+    const std::string full = "\u2588\u2588\u2588", low = "\u2584\u2584\u2584", up = "\u2580\u2580\u2580";
+    for (int i = -half_rows; i <= half_rows; ++i) {
+        const int L = -i * step; // +12 at the top, -12 at the bottom
+        std::string axis;
+        if (L == 0 || L == 12 || L == -12 || L == 6 || L == -6) {
+            char a[8];
+            std::snprintf(a, sizeof a, "%+d", L);
+            axis = pad_left(a, 3) + " ";
+        } else {
+            axis = "    ";
+        }
+        std::string content = axis;
+        for (int b = 0; b < kEqBands; ++b) {
+            const float v = g[b];
+            const bool sel = b == eq_band_;
+            const std::string colour = sel ? head : (on ? std::string() : dim);
+            std::string glyph;
+            if (L == 0) {
+                content += (sel ? head : border) + "\u2500\u2500\u2500\u2500\u2500" + R;
+                continue;
+            } else if (L > 0) {
+                if (v >= L) glyph = full;
+                else if (v > L - step) glyph = low;
+            } else {
+                if (v <= L) glyph = full;
+                else if (v < L + step && v < 0) glyph = up;
+            }
+            if (glyph.empty()) content += "     ";
+            else content += " " + colour + glyph + (colour.empty() ? "" : R) + " ";
+        }
+        lines.push_back(framed(content));
+    }
+
+    // Values and band names underneath; the selected band is reversed.
+    std::string vals = "    ", names = "    ";
+    for (int b = 0; b < kEqBands; ++b) {
+        char num[8];
+        std::snprintf(num, sizeof num, "%+d", static_cast<int>(std::lround(g[b])));
+        const std::string v = centre(g[b] == 0.0f ? "0" : num);
+        const std::string n = centre(kEqLabels[b]);
+        vals += b == eq_band_ ? HI + v + R : v;
+        names += b == eq_band_ ? HI + n + R : n;
+    }
+    lines.push_back(framed(vals));
+    lines.push_back(framed(names));
+    lines.push_back(plain_row("[</>] band  [UP/DOWN] gain  [,/.] preset  [0] zero"));
+    lines.push_back(box_bottom(W, "[SPACE] on/off  [R] flat  [SHIFT+E / ESC] close", border_bottom));
+    return lines;
+}
+
 // Oscilloscope tuning overlay (SHIFT+O). Rows: 0 decay, 1 dot threshold,
 // 2 tail brightness. The ranges match what settings.cpp clamps on load.
 namespace {
@@ -8541,7 +8701,7 @@ std::string App::render_frame(TerminalIO& term) {
     // change always has.
     auto mode_family = [](Mode m) {
         switch (m) {
-            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: return 0;
+            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: return 0;
             case Mode::Settings: case Mode::ColorEdit: return 1;
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
@@ -8809,6 +8969,8 @@ std::string App::render_frame(TerminalIO& term) {
     } else if (mode_ == Mode::OsciMenu) {
         // Small centred panel, clear of the scope in the top panel's right-hand side.
         draw_floating_panel(floating, build_osci_menu_panel(), kOsciMenuPanelWidth, W);
+    } else if (mode_ == Mode::Equalizer) {
+        draw_floating_panel(floating, build_eq_panel(), kEqPanelWidth, W);
     }
     out += floating.str();
     return out;

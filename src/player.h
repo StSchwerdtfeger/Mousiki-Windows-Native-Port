@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <limits>
@@ -9,6 +10,7 @@
 #include "streaming_pcm.h"
 #include "fft_visualizer.h"
 #include "oscilloscope_visualizer.h"
+#include "equalizer.h"
 
 namespace muisc {
 
@@ -80,6 +82,13 @@ public:
     float normalization_gain_db() const { return norm_gain_db_.load(); }   // gain currently being applied
     float track_lufs() const { return track_lufs_.load(); }                // NaN until measured
 
+    // Graphic equaliser (see equalizer.h). `gains_db` are the ten band gains.
+    // Atomics only -- callable from any thread; the audio callback notices the
+    // change on its next block and recomputes its coefficients, so the sound
+    // follows within a few milliseconds and never clicks mid-track.
+    void set_equalizer(bool enabled, const EqGains& gains_db);
+    bool equalizer_enabled() const { return eq_enabled_.load(); }
+
     double poll_elapsed() const;
     bool finished() const { return finished_.load(); }
     // Synchronously clears a stale finished flag left over from the
@@ -147,6 +156,16 @@ private:
     std::atomic<float> norm_gain_db_{0.0f};
     std::atomic<float> track_lufs_{std::numeric_limits<float>::quiet_NaN()};
     float norm_cur_ = -1.0f; // smoothed linear normalisation gain; audio thread only (-1 = not started)
+
+    // Equaliser. The *_ atomics are the hand-over from the UI thread; eq_,
+    // eq_seen_gen_ and eq_sr_ belong to the audio thread alone (reset in
+    // play() while the device is not running).
+    std::atomic<bool> eq_enabled_{false};
+    std::array<std::atomic<float>, kEqBands> eq_gains_{};
+    std::atomic<unsigned> eq_gen_{1};
+    Equalizer eq_;
+    unsigned eq_seen_gen_ = 0;
+    int eq_sr_ = 0;
 
     static void data_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count);
 };

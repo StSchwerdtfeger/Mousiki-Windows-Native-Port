@@ -68,6 +68,25 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     const int sr_now = std::max(1, self->sample_rate_.load());
     const float norm_alpha = 1.0f - std::exp(-1.0f / (1.0f * static_cast<float>(sr_now)));
 
+    // Equaliser: pick up a changed band layout (or a new sample rate) once per
+    // block. configure() does ten sin/cos pairs and no allocation, so doing it
+    // here on the audio thread is fine. Disabled -> bypass entirely.
+    const bool eq_on = self->eq_enabled_.load(std::memory_order_relaxed);
+    if (eq_on) {
+        const unsigned gen = self->eq_gen_.load(std::memory_order_acquire);
+        if (gen != self->eq_seen_gen_ || sr_now != self->eq_sr_) {
+            EqGains g{};
+            for (int b = 0; b < kEqBands; ++b) g[b] = self->eq_gains_[b].load(std::memory_order_relaxed);
+            self->eq_.configure(g, sr_now);
+            self->eq_seen_gen_ = gen;
+            self->eq_sr_ = sr_now;
+        }
+    } else if (self->eq_seen_gen_ != 0) {
+        self->eq_.reset();          // stale filter memory must not leak into the next enable
+        self->eq_seen_gen_ = 0;
+    }
+    const bool eq_run = eq_on && self->eq_.active();
+
     // Acquire-load: pairs with the release-store in StreamingPcm::append(),
     // guaranteeing every frame below `avail` was fully written by the
     // decode thread before we read it here.
@@ -91,11 +110,12 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
             } else {
                 l = r = 0.5f * (src[2 * k] + src[2 * k + 1]);
             }
+            if (eq_run) self->eq_.process(l, r); // before volume/normalisation: tone shaping on the raw signal
             const float g = norm_cur * gain;
             l *= g;
             r *= g;
         }
-        if (norm_on || norm_cur > 1.001f) { l = soft_limit(l); r = soft_limit(r); }
+        if (norm_on || norm_cur > 1.001f || eq_run) { l = soft_limit(l); r = soft_limit(r); }
         out[2 * i]     = l;
         out[2 * i + 1] = r;
         if (mono_out) mono_out[i] = 0.5f * (l + r);
@@ -164,6 +184,9 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
     gain_.store(volume_pct_.load() / 100.0f);
     finished_.store(false);
     paused_.store(false);
+    eq_.reset();       // device isn't running yet: safe to touch audio-thread state
+    eq_seen_gen_ = 0;
+    eq_sr_ = 0;
     norm_cur_ = -1.0f; // audio device isn't running yet: safe to reset; first callback snaps to the target gain
     track_lufs_.store(std::numeric_limits<float>::quiet_NaN());
     norm_gain_db_.store(0.0f);
@@ -230,6 +253,13 @@ void Player::set_normalization(bool enabled, float target_lufs, float max_boost_
     norm_target_lufs_.store(std::clamp(target_lufs, -40.0f, 0.0f));
     norm_max_boost_db_.store(std::clamp(max_boost_db, 0.0f, 24.0f));
     norm_enabled_.store(enabled);
+}
+
+void Player::set_equalizer(bool enabled, const EqGains& gains_db) {
+    for (int b = 0; b < kEqBands; ++b)
+        eq_gains_[b].store(std::clamp(gains_db[b], kEqMinDb, kEqMaxDb), std::memory_order_relaxed);
+    eq_gen_.fetch_add(1, std::memory_order_release); // publish AFTER the gains are stored
+    eq_enabled_.store(enabled);
 }
 
 void Player::set_volume(int volume_pct) {

@@ -33,7 +33,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, Equalizer };
 enum class ListSource { Local, Online, Playlist, Folder };
 
 // One row of the main UI's "/f:" folder list: a folder that directly
@@ -918,6 +918,23 @@ private:
     static constexpr int kOsciMenuPanelWidth = 44; // just wide enough for the key legend
     std::vector<std::string> build_osci_menu_panel() const;
     void osci_menu_adjust(int dir);
+    // Shift+E (HKeyEqualizer): the equaliser overlay (Mode::Equalizer), a
+    // floating panel over the live playback UI. Ten vertical sliders
+    // (31 Hz .. 16 kHz, +/-12 dB), a preset line and an on/off state. Left/
+    // Right pick a band, Up/Down change it by 1 dB, ,/. (or TAB) step through
+    // the presets, E or SPACE switches the EQ on/off, R resets to Flat, ESC /
+    // Shift+E close and save. Touching a band or choosing a preset also turns
+    // the EQ on, so what you change is always what you hear. The values live in
+    // settings_.eq_enabled / eq_gains and reach the audio thread through
+    // Player::set_equalizer().
+    int eq_band_ = 0;                  // selected band 0..kEqBands-1
+    int eq_last_preset_ = 0;           // where the preset cycle continues from while the gains are Custom
+    static constexpr int kEqPanelWidth = 58;
+    std::vector<std::string> build_eq_panel() const;
+    void eq_open();
+    void eq_apply();                   // pushes settings_ -> player_
+    void eq_set_gain(int band, float db);
+    void eq_select_preset(int dir);    // dir = +1 next, -1 previous
     void queue_move_hovering(int dir); // dir=-1 up, +1 down
     void clamp_queue_selected();
     void handle_key(int key);

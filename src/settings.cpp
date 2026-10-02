@@ -366,6 +366,9 @@ void apply_default_hotkeys(Settings& s) {
             // threshold / tail brightness, live). Uppercase on purpose, same
             // convention as the other SHIFT+letter overlays above.
             {"HKeyOscMenu",                     "O"},
+            // Shift+E: the equaliser overlay (10 bands + presets). Uppercase
+            // on purpose -- plain "e" is HKeyResetPreference.
+            {"HKeyEqualizer",                   "E"},
         };
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -755,6 +758,24 @@ static Settings load_from_config(const fs::path& path) {
         if (key == "NormalizeTargetLufs") { try { s.normalize_target_lufs = std::clamp(std::stod(value), -40.0, 0.0); } catch (...) {} continue; }
         if (key == "NormalizeMaxBoostDb") { try { s.normalize_max_boost_db = std::clamp(std::stod(value), 0.0, 24.0); } catch (...) {} continue; }
 
+        // --- Equaliser ---------------------------------------------------
+        if (key == "EqualizerEnabled") { s.eq_enabled = parse_bool(value); continue; }
+        if (key == "EqualizerBands") {
+            // "0,3,-2,..." -- ten comma-separated dB values. Anything short or
+            // malformed is ignored as a whole rather than half-applied.
+            EqGains g{};
+            size_t pos = 0; int n = 0; bool ok = true;
+            while (pos <= value.size() && n < kEqBands) {
+                size_t comma = value.find(',', pos);
+                std::string tok = value.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+                try { g[n++] = std::clamp(std::stof(tok), kEqMinDb, kEqMaxDb); } catch (...) { ok = false; break; }
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+            if (ok && n == kEqBands) s.eq_gains = g;
+            continue;
+        }
+
         // --- Autosave / session snapshot --------------------------------
         if (key == "AutoSave") { s.autosave_enabled = parse_bool(value); continue; }
         if (key == "AutoSaveIndicator") { s.autosave_indicator = parse_bool(value); continue; }
@@ -1081,6 +1102,17 @@ void save_settings(const Settings& s) {
     out << "\n";
 
     out << "##-------------------------------------------\n";
+    out << "##             EQUALIZER (Shift+E)\n";
+    out << "##-------------------------------------------\n\n";
+    out << "EqualizerEnabled=" << (s.eq_enabled ? "true" : "false") << "\n";
+    out << "EqualizerBands=";
+    for (int b = 0; b < kEqBands; ++b) out << (b ? "," : "") << s.eq_gains[b];
+    out << "\n";
+    out << "## Ten gains in dB (-12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8, 16 kHz.\n";
+    out << "## Easier to change with the overlay (Shift+E), which also has presets.\n";
+    out << "\n";
+
+    out << "##-------------------------------------------\n";
     out << "##             CONSOLE / LOGGING\n";
     out << "##-------------------------------------------\n\n";
     out << "ConsoleVerbosity=" << (s.console_verbosity == 1 ? "verbose" : "basic") << "\n## basic , verbose\n";
@@ -1154,7 +1186,7 @@ void save_settings(const Settings& s) {
         "HKeySeekForward", "HKeySeekBackward", "HKeyIncreaseVolume", "HKeyDecreaseVolume",
         "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
         "HKeyFilterForFolder", "HKeyClearFilter", "HKeyQuit", "HKeyResetPreference", "HKeyDownloadStream",
-        "HKeyToggleNormalize", "HKeyToggleMetaOnly", "HKeyMetaEditor", "HKeyHistory",
+        "HKeyToggleNormalize", "HKeyToggleMetaOnly", "HKeyMetaEditor", "HKeyHistory", "HKeyEqualizer",
     };
     for (const char* name : hkey_order) {
         auto it = s.hotkeys.find(name);
