@@ -1,4 +1,4 @@
-# Mousiki User Guide (v2.4.0)
+# Mousiki User Guide (v2.5.0)
 
 This guide walks through **every entry of the in-app cheat sheet** (`?`) in the same order the cheat sheet lists them, and explains what each command does. Some settings that can only be change in the config.txt are also discussed at the end of this manual. 
 The key shown for each command is the **default binding**. Your own bindings may differ if you changed them in `config.txt` or under **Settings → Reference**; the cheat sheet always shows the keys you actually have.
@@ -173,7 +173,11 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | `+` | Cycle lyrics area | Cycles the lyrics area through three views: **lyrics → sphere → oscilloscope → lyrics …**. The two visuals are the lyrics engine's *off* states: no lyrics are fetched from the network while one of them is shown, and the choice is stored in the **Lyric Viz** setting. Coming back to the lyrics fetches them for the current track right away. |
 | `N` (Shift+N) | Toggle metadata-only track list | Switches every list row between **filename** and **metadata title** (the embedded title tag). Files with no title tag, or whose tags have not been read yet, keep showing their filename. This also switches what "title A-Z" sorts by (see below). Also available in **Settings → ON/OFF**. |
 | `l` | Retry lyrics | Opens a small form to fetch lyrics again with a **manual title and artist**. Use it when the automatic match was wrong. |
+| `ALT+l` | Adjust lyrics | Opens a small overlay menu for live adjustment of the lyrics timing. |
+
 | `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope's afterglow, line thickness and tail **live**. See *The oscilloscope* below. |
+| `Z` (Shift+Z) | Sleep timer | Opens a small overlay to pause playback after 15, 30, 60, 90 or 120 minutes, or to stop after the current song. See *Sleep timer overlay* below. |
+
 
 ### How the sort mode and `SHIFT+N` work together
 
@@ -203,7 +207,26 @@ A **search** always ranks by match quality, so while a query is active the sort 
 
 `l` only works while the lyrics engine is on (`+`).
 
----
+![Better lyric form](images/Playback_Main_UI_lyrics_better.png)
+
+### Lyrics timing overlay (`ALT+L`)
+
+For tracks whose synced lyrics run ahead of or behind the music. The overlay shifts **all** lines (and, for word-synced lyrics, all words) of the playing track by the same amount. The change is visible **live** while the music plays, in the lyrics area and in the three lines shown in the overlay itself (previous, current and next line, with the current one highlighted). `ALT+L` opens only while synced lyrics are loaded for the track; otherwise the status line says so.
+
+| Key | What it does |
+| :--- | :--- |
+| `→` / `←` | Lyrics **later** / **earlier** by 0.1 s |
+| `↑` / `↓` | Lyrics **later** / **earlier** by 0.5 s |
+| `R` | Back to 0 (the timing as it is in the lyrics file) |
+| `ENTER` or `S` | **Save** the offset into the track's lyrics file and close |
+| `ESC` or `ALT+l` | Cancel: the offset from before the overlay was opened comes back |
+
+- A **positive** offset (`+0.3 s`) means the lyrics appear later than their timestamps say, so use it when the lyrics are **too early**. A negative offset makes them appear earlier. The range is ±30 s.
+- Saving writes a standard `[offset:...]` tag at the top of the track's `.lrc` file (in the `lyrics` folder next to the track, in milliseconds, with the usual LRC sign convention: positive = earlier). The timestamps themselves are not changed. The offset is read back whenever the lyrics are loaded from that file, and other players that know the tag use it too. Saving `0` removes the tag.
+- The offset belongs to **one track's lyrics file**. Fetching the lyrics again with `l` (retry) replaces the file and resets the offset. If there is no lyrics file for the track, the offset still applies until the track changes, but saving reports that it could not be saved.
+- Playback keeps running while the overlay is open; only its keys react.
+
+![Lyric offset editor overlay](images/Playlist_menu_LYRIC_OFFSET_EDITOR.png)
 
 ### The oscilloscope (lyric visual)
 
@@ -237,6 +260,24 @@ Playback keeps running while the overlay is open, but its keys are the only ones
 Two starting points: for a crisp, "real oscilloscope" look try Decay `0.65`, Dot threshold `0.35`, Tail `0.60`. For a glowing, dreamy look try `0.90`, `0.20`, `0.25`.
 
 ![The oscillator parameter overlay menu next to the oscillator itself](images/Playback_Main_UI_OSCI_MENU.png)
+
+### Sleep timer overlay (`SHIFT+Z`)
+
+A small overlay for falling asleep to music. Playback keeps running while it is open.
+
+| Key | What it does |
+| :--- | :--- |
+| `↑` / `↓` | Pick an entry: **15 / 30 / 60 / 90 / 120 minutes**, **Stop after current song**, or **Off**. |
+| `ENTER` | Set the picked entry and close the overlay. Picking the running minute entry again restarts its countdown. |
+| `ESC` or `SHIFT+Z` | Close the overlay without changing anything. |
+
+- While a timer is armed the remaining time (or `after song`) is shown in the title of the search bar, e.g. `SEARCH LOCAL  [SLEEP 24:10]`.
+- When a minute timer runs out, playback is **paused**, not stopped: the position is kept and `p` resumes it.
+- **Stop after current song** ends playback when the song that is playing ends, even if the queue still has tracks or the play mode is Repeat. It needs a playing song to attach to.
+- The two kinds of timer exclude each other: setting one replaces the other. The timer is **not saved** and is gone after a restart.
+- **Stop play mode:** the sleep timer never changes the play mode (`m`). *Stop after current song* is a one-shot on top of it, so with the Stop mode already on it is simply redundant, and your play mode is unchanged afterwards.
+
+![Sleep timer overlay in action](images/Playlist_menu_SLEEP_TIMER.png)
 
 
 ## 4. Search (main UI)
@@ -276,15 +317,21 @@ Everything else keeps working from inside the overlay: `ENTER` plays, `T` cycles
 
 ## 5. Queue (main UI)
 
-The queue is a list of tracks that play **before** the normal list continues. Press `TAB` to move focus into the queue panel when you want the arrow keys or `d`, `4`, `5` to work on it.
+The queue is a list of tracks that play **before** the normal list continues. Press `TAB` to move focus into the queue panel when you want the arrow keys or `d`, `4`, `5`, `SHIFT+4`, `SHIFT+5` to work on it.
 
 | Key | Action | What it does |
 |---|---|---|
-| `a` | Add hovering track to queue | With the **list** focused, adds the highlighted track (or, on a playlist row, all its tracks) to the end of the queue. With the **queue** focused, it opens the **bulk-add** panel instead (see below). |
+| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next (while the queue is locked: right after the track that was played last). Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
+| `e` | Add hovering track to the **end** | With the **list** focused, adds the highlighted track to the end of the queue. On a playlist row it queues the whole playlist at the end. With the queue focused it only reminds you to focus the list first. |
 | `d` | Remove hovering track from queue | Removes the highlighted queue item. Focus the queue with `TAB` first. |
 | `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
 | `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
+| `$` (Shift+4) | Move to top | Moves the highlighted queue item to the very top of the queue. |
+| `%` (Shift+5) | Move to bottom | Moves the highlighted queue item to the very bottom of the queue. |
+| `!` | Lock / unlock the queue | A **locked** queue keeps its tracks when they are played. See *Locked queue* below. |
 | `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
+| `CTRL+SHIFT+Z` | Undo the last queue clear | Brings back the queue that `SHIFT+X` cleared. See *Undo clear* below. |
+| `CTRL+SHIFT+U` | Queue to playlist | Saves the queue's local tracks as a playlist. See *Queue to playlist* below. |
 | `K` (Shift+K) | Big queue overlay | Floats a larger version of the QUEUE pane over the main UI. See below. |
 
 
@@ -297,16 +344,32 @@ The same idea as the big list overlay, for the queue: a large window that shows 
 | `SHIFT+ARROW_DOWN` / `SHIFT+ARROW_UP` | Next / previous **page**. At the end the cursor jumps to the last / first entry. |
 | `ARROW_UP` / `ARROW_DOWN` | Move one row |
 | `4` / `5` (default) | Move the hovered track up / down in the queue |
+| `SHIFT+4` / `SHIFT+5` (default) | Move the hovered track to the top / bottom of the queue |
+| `!` (default) | Lock / unlock the queue |
 | `d` | Remove the hovered track from the queue |
 | `a` | Open the bulk-add panel (paste a playlist link), as with the queue focused |
 | `SHIFT+X` | Clear the whole queue (asks first) |
+| `CTRL+SHIFT+Z` | Undo the last queue clear |
+| `CTRL+SHIFT+U` | Save the queue as a playlist (opens the playlist editor) |
 | `ESC` or `SHIFT+K` | Close the overlay (the previous focus is restored) |
 
-Only one of the two overlays can be open at a time: `SHIFT+K` while the list overlay is open switches to the queue overlay, and vice versa. Pressing `/` closes the queue overlay, because the search filters the list underneath. Playback keys (`n`, `b`, `p`, seek, volume) keep working. The footer shows the page counter and the number of tracks.
+Only one of the two overlays can be open at a time: `SHIFT+K` while the list overlay is open switches to the queue overlay, and vice versa. Pressing `/` closes the queue overlay, because the search filters the list underneath. Playback keys (`n`, `b`, `p`, seek, volume) keep working. The bottom border of the frame shows the page counter and the number of tracks. All commands of the overlay are listed in a gray **legend below the frame** (`[d] delete`, `[SHIFT+X] clear all`, `[4/5] move up/down`, `[SHIFT+4/5] move to top/bottom`, `[!] lock` / `[!] unlock`, `[CTRL+SHIFT+U] queue to playlist`, `[CTRL+SHIFT+Z] undo clear`, `[SHIFT+UP/DOWN] page`, `[ESC] close`).
 
 ![Big list overlay](images/Playback_Main_UI_QUEUE_OVERLAY.png)
 
 *Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
+
+### Locked queue (`!`)
+
+Normally a track **leaves the queue** when it is played. With the queue **locked** it stays: nothing is erased by auto-advance or by `n`; playback walks through the queue in place instead, from the track that was played last to the one after it, and wraps around from the end to the start (in shuffle mode a random queue item is picked). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`, and `a` then inserts right after the track that was played last. Press `!` again to unlock; played tracks then leave the queue again. The lock state is part of the saved session.
+
+### Undo clear (`CTRL+SHIFT+Z`)
+
+Brings back the queue that was cleared last with `SHIFT+X`. The restored tracks go in **front of** anything that was queued after the clear. There is **one** level of undo: after it is used (or before anything was cleared) the status line says that there is nothing to undo.
+
+### Queue to playlist (`CTRL+SHIFT+U`)
+
+Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` to save. Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
 
 ### Clear queue prompt (`SHIFT+X`)
 
@@ -321,7 +384,7 @@ The prompt starts on **No**, so an accidental `ENTER` never wipes the queue.
 | `y` | Yes: clear the queue |
 | `n`, `ESC` or any other key | No: cancel |
 
-If the queue is already empty, the status line just says so.
+If the queue is already empty, the status line just says so. A cleared queue can be brought back with `CTRL+SHIFT+Z` (see above).
 
 ### Bulk add (`a` with the queue focused)
 
@@ -618,7 +681,7 @@ The longest tab. It scrolls as one list and has three parts.
 - A key is written as the character itself (`n`, `T`, `#`, `+`) or as a name: `ENTER`, `TAB`, `SPACE`, `ESC`, `BACKSPACE`, `ARROW_KEY_UP`, `ARROW_KEY_DOWN`, `ARROW_KEY_LEFT`, `ARROW_KEY_RIGHT`.
 - If the key is **already used by another action**, the change is refused with `KEY "x" ALREADY USED BY <action> -- try another key`, and you can type another one.
 - The search prefixes (`/`, `/s:`, `/p:`) appear here too and are edited the same way.
-- Keys that are **not** rebindable (`ESC`, `SHIFT+B`, the playlist and meta editors' own keys, `CTRL+SHIFT+S/X`) are not listed. The cheat sheet shows those.
+- Keys that are **not** rebindable (`ESC`, `SHIFT+B`, the playlist and meta editors' own keys, `CTRL+SHIFT+S/X`, `CTRL+SHIFT+Z/U`, `ALT+l`) are not listed. The cheat sheet shows those.
 
 **FONT / CHARACTER MAP** (read-only). Shows the `A = A, a` table from `config.txt`, which lets you re-font the interface with fancy Unicode letters without changing the terminal font. It cannot be edited here. Edit the `font_en={ … }` block in `config.txt` while the app is closed.
 
@@ -652,5 +715,5 @@ The longest tab. It scrolls as one list and has three parts.
 | | | | |
 |---|---|---|---|
 | **Developer** | Steffen Schwerdtfeger | **GitHub** | [StSchwerdtfeger](https://github.com/StSchwerdtfeger) |
-| **Email** | fanti.blub@gmail.com | **Version** | current v2.4.0 |
+| **Email** | fanti.blub@gmail.com | **Version** | current v2.5.0 |
 | | | **Licence** | Apache Licence 2.0 |
