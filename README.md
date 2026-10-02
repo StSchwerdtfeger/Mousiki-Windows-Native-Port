@@ -199,6 +199,8 @@ See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for 
 | **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
 | **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live (`R` resets, saved on close) |
 | **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 13 presets. | 
+| **Sleep timer** | `SHIFT + z` | Small overlay: pause playback after 15 / 30 / 60 / 90 / 120 minutes, or stop after the current song (or switch it off). Independent of the Stop play mode |
+
 
 ### Search
 | Action | Keybinding | Description |
@@ -211,11 +213,16 @@ See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for 
 ### Queue
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
-| **Add to Queue** | `a` | Enqueue selected track (with the queue focused: bulk-add panel for a pasted YouTube playlist link) |
+| **Add to Queue (next)** | `a` | Enqueue selected track as the *next* one (several `a` presses keep their order); with the queue focused: bulk-add panel for a pasted YouTube playlist link |
+| **Add to End of Queue** | `e` | Enqueue selected track at the *end* of the queue |
+| **Lock Queue** | `!` | Toggle "locked": played tracks stay in the queue, playback walks through it in place and wraps around (shown as `locked` in the queue title) |
 | **Remove from Queue** | `d` | Dequeue selected track |
 | **Move Track Up** | `4` | Move up in Queue/Playlist |
 | **Move Track down** | `5` | Move down in Queue/Playlist |
+| **Move to Top / Bottom** | `SHIFT + 4` / `SHIFT + 5` | Move the hovering queue item to the very top / bottom |
 | **Clear Queue** | `SHIFT + x` | Clear Queue (asks first) |
+| **Undo Clear Queue** | `CTRL + SHIFT + z` | Bring back the queue that was cleared last (in front of anything queued since) |
+| **Queue to Playlist** | `CTRL + SHIFT + u` | Open the playlist editor with the queue's local tracks, name field focused (type a name, `HOME` saves) |
 
 ### Playlists, Meta Data, History, Downloads
 | Action | Keybinding | Description |
@@ -289,7 +296,9 @@ A few things added on top of the original design rather than required to run it 
 
 ### Major Additions / Modifications
 
-- **YX mode oscilloscope** as alternative to the lyrics ball
+- **Sleep timer** with several options to choose from (open via `SHIFT+z`. Can be truned off gain. Timer resets after restart of the app and "off" is set as default.
+- **Big local audio file list and queue overlay** via `SHIFT+ l / k`. Queues can be locked (so tracks don't disappear anymore) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
+- **YX mode oscilloscope** as alternative to the lyrics ball. Paramters such as decay can be changed in an overlay menu via `SHIFT+o`.
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
 
