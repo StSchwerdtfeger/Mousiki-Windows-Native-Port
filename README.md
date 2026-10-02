@@ -1,6 +1,6 @@
 <div align="center">
     
-# Mousiki Windows Native Port v2.4.0 🎵 
+# Mousiki Windows Native Port v2.5.0 🎵 
 
 <p align="center">
   <a href="https://opensource.org/" target="_blank">
@@ -40,7 +40,7 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 <p align="center"><img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" /></p>
 
-## Current Status of the Port and Modification (v2.4.0, now with standalone setup.exe / portable, see latest release)
+## Current Status of the Port and Modification (v2.5.0, now with standalone setup.exe / portable, see latest release)
 
 For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB) ... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
 Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
@@ -198,6 +198,7 @@ See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for 
 | **Track list overlay** | `SHIFT + l` | Enlarged overlay of the track list pane; `SHIFT + ↑/↓` pages, `ESC` closes |
 | **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
 | **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live (`R` resets, saved on close) |
+| **Lyrics timing** | `ALT + l` | Overlay to shift the lyrics of the playing track earlier / later (`←`/`→` ±0.1 s, `↑`/`↓` ±0.5 s, `R` reset, `ENTER` saves the offset into the track's `.lrc`, `ESC` cancels). Fixed key, not rebindable |
 | **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 13 presets. | 
 | **Sleep timer** | `SHIFT + z` | Small overlay: pause playback after 15 / 30 / 60 / 90 / 120 minutes, or stop after the current song (or switch it off). Independent of the Stop play mode |
 
@@ -297,6 +298,7 @@ A few things added on top of the original design rather than required to run it 
 ### Major Additions / Modifications
 
 - **Sleep timer** with several options to choose from (open via `SHIFT+z`. Can be truned off gain. Timer resets after restart of the app and "off" is set as default.
+- **Adjust lyrics timing** menu where an offset of max. +/-120s can be added tot he lyrics. This is specially helpful when songs where downloaded from yourube, where a video version includes scenes before the actual song starts etc.
 - **Big local audio file list and queue overlay** via `SHIFT+ l / k`. Queues can be locked (so tracks don't disappear anymore) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
 - **YX mode oscilloscope** as alternative to the lyrics ball. Paramters such as decay can be changed in an overlay menu via `SHIFT+o`.
 
@@ -307,6 +309,8 @@ A few things added on top of the original design rather than required to run it 
 <p align="center"><img width="815" height="380" alt="grafik" src="https://github.com/user-attachments/assets/861491c8-68d5-46f1-bf9f-c38e413f1f12" /></p>
 
 - **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
+- **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
+- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab.
 - **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays.
  
 <p align="center"><img width="850" height="402" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" /></p>
@@ -360,8 +364,6 @@ A few things added on top of the original design rather than required to run it 
 - **Copy/Paste/Cut in Search and Path Fields** All search fields now allow copy/paste/cut and the necessary marking. Same for fields to add local path.
 - **Clear QUEUE** In the main UI `SHIFT+x` can now be used to clear the queue incl. a warning message that pops up. 
 - **Fetched Lyrics Folder** is now placed in an extra folder such that lyrics of song_a in folder_a are located in folder_a/lyrics/ and are not placed directly next to track files. Note that changing the name of the file may trigger a new lyrics fetch process (did not find a reasonable solution for that since filenames can eventually also be changed via the Windows explorer or other programs such as Midnight commander or Yazi... Hard to keep track of...
-- **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
-- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab.
 - **Search Engine Optimization** - Added fuzzy search ("X-Files" didn't show up when searched "X Files", i.e. without dash) and optimized speed for also searching through meta data (not only file titles), which in Windows took >2-3 min. after the app was started to be available (cache cap was also an issue and a bunch of subprocess handling via ffprobe, which remains as a fallback method in case the newly included ID3v2.3/2.4 frame-walker that reads TIT2/TPE1/TALB directly out can't handle the tag layout of a file for some reason...). The speedup currently covers MP3 handling FLAC (Vorbis comments), OGG/Opus, and M4A/AAC. 
 - **Hotkey remapping actually works in app (see above)** — as much as I understood a bug fix rather than a feature, but it's new behavior either way.
 - **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
@@ -375,7 +377,6 @@ A few things added on top of the original design rather than required to run it 
   
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à, Japanese letters etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown (can be turned off in settings)... 
 - **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Also applies to the field between the disk animation and lyrics/sphere. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
-
 - **Scrollable settings panel** — ON/OFF (with its path sections) and REFERENCE now scroll with the cursor instead of growing past the panel, so the tab stays usable on a short terminal (32 rows and below).
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
 - **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
