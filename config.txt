@@ -123,6 +123,14 @@ NormalizeMaxBoostDb=9
 ## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.
 ## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.
 
+##-------------------------------------------
+##             EQUALIZER (Shift+E)
+##-------------------------------------------
+
+EqualizerEnabled=false
+EqualizerBands=0,0,0,0,0,0,0,0,0,0
+## Ten gains in dB (-12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8, 16 kHz.
+## Easier to change with the overlay (Shift+E), which also has presets.
 
 ##-------------------------------------------
 ##             CONSOLE / LOGGING
@@ -267,6 +275,7 @@ HKeyShuffleNext="#"
 HKeySearchPlaylist="/p:"
 HKeyToggleMute="x"
 HKeyToggleWaveform="w"
+HKeyEqualizer="E"
 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
@@ -294,7 +303,7 @@ Email    : itz.ender5820@gmail.com
 Version  : original and final v1.0       Licence  : Apache licence 2.0
 
 Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
-Version      : v2.3.0                    Licence  : Apache licence 2.0
+Version      : v2.4.0                    Licence  : Apache licence 2.0
 Adjusted to run on Windows. A couple of features and modifications were
 added, the general design remained. Additions: playlist menu, meta data 
 editor incl. fetch meta data function via AcoustID, listening history, 
