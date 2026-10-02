@@ -1,4 +1,4 @@
-# Mousiki User Guide
+# Mousiki User Guide (v2.3.0)
 
 This guide walks through **every entry of the in-app cheat sheet** (`?`) in the same order the cheat sheet lists them, and explains what each command does. Some settings that can only be change in the config.txt are also discussed at the end of this manual. 
 The key shown for each command is the **default binding**. Your own bindings may differ if you changed them in `config.txt` or under **Settings → Reference**; the cheat sheet always shows the keys you actually have.
@@ -96,6 +96,53 @@ The main screen while a track plays: the disk, the metadata panel, the visualize
 | `2` | Volume down | Lowers the in-app volume in steps of 5 (down to 0). |
 | `x` | Mute | Sets the volume to 0 without pausing. Pressing it again restores the previous volume. |
 | `v` | Toggle loudness normalization | Turns loudness normalization on or off, so you can compare a track with and without it. When turned on, the status line shows the track's measured loudness and the correction applied. The target and maximum boost are set in **Settings → Reference** (loudness section) or `config.txt`. |
+| `E` (Shift+E) | Equalizer | Opens the **10-band equalizer** overlay with presets. The sound changes live while you adjust it. See *Equalizer overlay* below. |
+
+
+### Equalizer overlay (`SHIFT+E`)
+
+Opens a window in the middle of the screen with a **10-band graphic equalizer**. Each band is a vertical slider from **−12 dB** to **+12 dB**, with the center line at 0 dB. The bands sit at **31, 62, 125, 250, 500 Hz, 1, 2, 4, 8 and 16 kHz**. The selected band is highlighted, and its gain and name are shown underneath. The top line of the window shows the current **preset**, whether the **EQ is ON or OFF**, and the **preamp** (see below).
+
+The equalizer works on everything the player plays and changes the sound **while the music plays**, so you can adjust it by ear. Playback keeps running while the overlay is open, but its keys are the only ones that react until you close it. The overlay opens on every main screen.
+
+| Key | Action |
+|---|---|
+| `←` / `→` | Select the previous / next band (wraps around) |
+| `↑` / `↓` | Raise / lower the selected band by 1 dB |
+| `,` or `<` | Previous preset |
+| `.` or `>` or `TAB` | Next preset |
+| `0` | Set the selected band to 0 dB |
+| `SPACE` | Switch the equalizer on / off. The gains stay as they are. |
+| `R` | Reset all bands to **Flat**. The on / off state is not changed. |
+| `ESC` or `SHIFT+E` | Close the overlay. The settings are **saved to `config.txt`** when it closes. |
+
+**Switching on.** Moving a band or choosing a preset also turns the equalizer on, so what you change is always what you hear. Use `SPACE` to compare against the original sound.
+
+**Presets.** The preset keys cycle through the list below in this order. If the gains do not match any preset exactly (for example after you moved a band), the top line shows **Custom**. Stepping to the next or previous preset then continues from the last preset you used.
+
+| Preset | Gains in dB, 31 Hz → 16 kHz |
+|---|---|
+| Flat | `0, 0, 0, 0, 0, 0, 0, 0, 0, 0` |
+| Bass Boost | `+6, +5, +4, +2, +1, 0, 0, 0, 0, 0` |
+| Treble Boost | `0, 0, 0, 0, 0, +1, +2, +4, +5, +6` |
+| Vocal | `-2, -3, -3, +1, +3, +4, +3, +2, 0, -1` |
+| Rock | `+4, +3, +2, -1, -2, -1, +1, +3, +4, +4` |
+| Pop | `-1, +1, +3, +4, +3, 0, -1, -1, -1, -1` |
+| Jazz | `+3, +2, +1, +2, -2, -2, 0, +1, +2, +3` |
+| Classical | `+4, +3, +3, +2, -1, -1, 0, +2, +3, +3` |
+| Electronic | `+5, +4, +1, 0, -2, +2, +1, +1, +4, +5` |
+| Hip-Hop | `+5, +4, +2, +3, -1, -1, +2, 0, +2, +3` |
+| Acoustic | `+4, +4, +3, +1, +2, +2, +3, +3, +3, +2` |
+| Loudness | `+6, +4, +1, 0, -1, -1, 0, +1, +4, +5` |
+
+**Preamp.** Boosting bands makes the whole signal louder and can push it into distortion. The player therefore lowers the level automatically by the height of the loudest point of your curve. The **Preamp** value on the top line shows this (for example `-7.1 dB` for Bass Boost). The sound will be slightly quieter with a strong boost than without the equalizer, and that is intended. Raise the volume if you need it louder. The equalizer is bypassed completely when it is off or all bands are 0 dB.
+
+**Good to know.**
+- On a track with a low sample rate (22.05 kHz, for example) the top band is too close to the limit of the signal and is skipped.
+- **Loudness normalization** (`v`) measures the track *before* the equalizer. With a strong boost or cut a track can therefore end up a little louder or quieter than the normalization target.
+- On a terminal with fewer than 24 rows the sliders are drawn in steps of 4 dB instead of 2 dB, so the window fits. The gains themselves still change in steps of 1 dB.
+
+![Equalizer overlay, main playback UI](images/Playback_Main_UI_EQUALIZER.png)
 
 ### The five play modes (`m`)
 
@@ -200,6 +247,8 @@ Two starting points: for a crisp, "real oscilloscope" look try Decay `0.65`, Dot
 | `/s:` + query | Search online (YouTube) | Type `s:` followed by your query, then press `ENTER`. Online searches only run on `ENTER`, never per keystroke. |
 | `/p:` + query | Search saved playlists | Type `p:` followed by part of a playlist name. The playlist list filters live. `ENTER` on a playlist row queues all of its tracks. |
 | `/f:` + query | Search folders | Type `f:` followed by part of a folder name (or of `<parent folder> <folder>`, e.g. `beatles abbey`). The folder list filters live. `ENTER` on a folder row opens it in the LOCAL AUDIO FILES pane and lists all of its files, exactly like the `f` filter (`c` clears it again). |
+| `L` (Shift+L) | Big list overlay | Floats a larger version of the list pane (LOCAL AUDIO FILES) over the main UI. See below. |
+
 
 **Local search details**
 
@@ -208,22 +257,6 @@ Two starting points: for a crisp, "real oscilloscope" look try Decay `0.65`, Dot
 - Results are ranked purely by match quality, best first.
 - While the search box is open, `↑`/`↓` move through the live preview. `←`/`→` move the text caret, and `SHIFT+←/→` marks text.
 - A folder filter (`f`) keeps applying to search results.
-
----
-
-## 5. Queue (main UI)
-
-The queue is a list of tracks that play **before** the normal list continues. Press `TAB` to move focus into the queue panel when you want the arrow keys or `d`, `4`, `5` to work on it.
-
-| Key | Action | What it does |
-|---|---|---|
-| `a` | Add hovering track to queue | With the **list** focused, adds the highlighted track (or, on a playlist row, all its tracks) to the end of the queue. With the **queue** focused, it opens the **bulk-add** panel instead (see below). |
-| `d` | Remove hovering track from queue | Removes the highlighted queue item. Focus the queue with `TAB` first. |
-| `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
-| `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
-| `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
-| `L` (Shift+L) | Big list overlay | Floats a larger version of the list pane (LOCAL AUDIO FILES) over the main UI. See below. |
-| `K` (Shift+K) | Big queue overlay | Floats a larger version of the QUEUE pane over the main UI. See below. |
 
 ### Big list overlay (`SHIFT+L`)
 
@@ -240,6 +273,20 @@ Everything else keeps working from inside the overlay: `ENTER` plays, `T` cycles
 ![Big list overlay](images/Playback_Main_UI_TRACK_OVERLAY.png)
 
 *Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
+
+## 5. Queue (main UI)
+
+The queue is a list of tracks that play **before** the normal list continues. Press `TAB` to move focus into the queue panel when you want the arrow keys or `d`, `4`, `5` to work on it.
+
+| Key | Action | What it does |
+|---|---|---|
+| `a` | Add hovering track to queue | With the **list** focused, adds the highlighted track (or, on a playlist row, all its tracks) to the end of the queue. With the **queue** focused, it opens the **bulk-add** panel instead (see below). |
+| `d` | Remove hovering track from queue | Removes the highlighted queue item. Focus the queue with `TAB` first. |
+| `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
+| `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
+| `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
+| `K` (Shift+K) | Big queue overlay | Floats a larger version of the QUEUE pane over the main UI. See below. |
+
 
 ### Big queue overlay (`SHIFT+K`)
 
@@ -586,6 +633,7 @@ The longest tab. It scrolls as one list and has three parts.
 | `OsciDecay`, `OsciDotThreshold`, `OsciTailBrightness` | The oscilloscope's afterglow (0.00 – 0.99), dot threshold (0.01 – 1.00) and tail brightness (0.00 – 1.00). Normally changed with the `SHIFT+O` overlay, which writes them here. Values outside the range are limited to it when the file is loaded. |
 | `AutoSaveDelayInSec` | How often the session snapshot is saved (default 30 seconds). |
 | `UpperLeftCorner`, `Vertical`, `Horizontal`, `Seprator`, `ListSeparator` and the other border entries | The characters used to draw frames and the list column separator. |
+| `EqualizerEnabled`, `EqualizerBands` | Whether the equalizer is on, and its ten band gains in dB (−12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8 and 16 kHz, for example `EqualizerBands=0,3,-2,0,0,0,0,0,0,0`. Normally changed with the `SHIFT+E` overlay, which writes them here. Values outside the range are limited to it. A line with fewer or more than ten valid numbers is ignored. |
 
 ---
 
@@ -604,5 +652,5 @@ The longest tab. It scrolls as one list and has three parts.
 | | | | |
 |---|---|---|---|
 | **Developer** | Steffen Schwerdtfeger | **GitHub** | [StSchwerdtfeger](https://github.com/StSchwerdtfeger) |
-| **Email** | fanti.blub@gmail.com | **Version** | current v2.3.0 |
+| **Email** | fanti.blub@gmail.com | **Version** | current v2.4.0 |
 | | | **Licence** | Apache Licence 2.0 |
