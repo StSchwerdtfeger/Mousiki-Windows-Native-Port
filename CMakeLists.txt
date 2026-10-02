@@ -59,10 +59,10 @@ add_executable(mousiki ${MUISC_SOURCES} ${KISSFFT_SOURCES})
 target_include_directories(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/src" "${MINIAUDIO_DIR}" "${KISSFFT_DIR}")
 
 # ---------------------------------------------------------------------------
-# App icon (Windows): mousiki.rc + mousiki.ico in the source root -- the
+# App icon (Windows only): mousiki.rc + mousiki.ico in the source root -- the
 # packaging pipeline copies them in before building. Guarded so a plain
 # source checkout without an icon still builds.
-if(EXISTS "${CMAKE_SOURCE_DIR}/mousiki.rc")
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/mousiki.rc")
     target_sources(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/mousiki.rc")
 endif()
 
@@ -112,6 +112,19 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(mousiki PRIVATE Threads::Threads)
 
+# The lyrics / metadata / search helpers are invoked as script paths, so
+# scripts/ has to sit next to the executable (on every platform -- the Linux
+# and macOS builds look for it there too). Multi-config generators (Visual
+# Studio, Xcode) put the exe in build/Release/, one level deeper than a
+# single-config build. This has to be declared before the fpcalc copy step at
+# the bottom, which drops the helper into that same scripts/ folder.
+if(EXISTS "${CMAKE_SOURCE_DIR}/scripts")
+  add_custom_command(TARGET mousiki POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+              "${CMAKE_SOURCE_DIR}/scripts"
+              "$<TARGET_FILE_DIR:mousiki>/scripts")
+endif()
+
 if(ANDROID)
   target_compile_definitions(mousiki PRIVATE MUISC_PLATFORM_ANDROID=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_OPENSL=1)
   target_link_libraries(mousiki PRIVATE OpenSLES log android)
@@ -141,16 +154,6 @@ elseif(WIN32)
                            # app.cpp is ~3500 lines and exceeds the default
                            # section limit in debug builds.
                            /bigobj)
-  endif()
-
-  # The lyrics helper is invoked as a script path, so scripts/ has to sit
-  # next to the executable. Multi-config generators (Visual Studio) put the
-  # exe in build/Release/, one level deeper than a single-config build.
-  if(EXISTS "${CMAKE_SOURCE_DIR}/scripts")
-    add_custom_command(TARGET mousiki POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/scripts"
-                "$<TARGET_FILE_DIR:mousiki>/scripts")
   endif()
 elseif(APPLE)
   target_compile_definitions(mousiki PRIVATE MUISC_PLATFORM_MACOS=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_COREAUDIO=1)
