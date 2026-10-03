@@ -17,12 +17,8 @@ ColorVizLeft=250
 ColorVizRight=250
 ColorProgressBarPlayed=250
 ColorProgressBarPending=245
-
-# Section headers -- the REFERENCE tab's category titles and the ON/OFF tab's
-# LOCAL PATH / PLAYLIST PATH titles. Default 10 (bright green, palette index
-# of 256), which is what the Reference tab headers have always used. Editable
-# live in the COLORS tab (row "HEADER"), or here. 0 = no color (plain bold).
 ColorHeader=10
+ColorLegend=90
 
 # List
 ColorListInactiveFg=255
