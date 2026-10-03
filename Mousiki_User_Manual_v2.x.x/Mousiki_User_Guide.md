@@ -1,4 +1,4 @@
-# Mousiki User Guide (v2.5.0)
+# Mousiki User Guide v2.5.0 (Windows · Linux · macOS)
 
 This guide walks through **every entry of the in-app cheat sheet** (`?`) in the same order the cheat sheet lists them, and explains what each command does. Some settings that can only be change in the config.txt are also discussed at the end of this manual. 
 The key shown for each command is the **default binding**. Your own bindings may differ if you changed them in `config.txt` or under **Settings → Reference**; the cheat sheet always shows the keys you actually have.
@@ -28,6 +28,13 @@ The key shown for each command is the **default binding**. Your own bindings may
 
 - **Rebindable keys** have an action name like `HKeyPlay` in `config.txt` and appear under **Settings → Reference**. Change them in either place.
 - **Fixed keys** are written as literal key names in the cheat sheet (for example `ESC`, `SHIFT+B`, `CTRL+SHIFT+S`, or the keys inside the playlist and meta editors). These cannot be rebound.
+
+### `ALT` on macOS (`Option`)
+
+This guide writes the modifier as `ALT` (`ALT+L`, `ALT+←` / `ALT+→`). On a Mac that is the **Option (⌥)** key: a macOS build of Mousiki shows `OPTION+L` / `OPTION+LEFT/RIGHT` in the cheat sheet and `[Option+←→]` in the playlist editor's legend, everything else is identical. Two things to know:
+
+- **Terminal setting:** Terminals on macOS only pass Option through as a modifier if you tell them to. In *Terminal.app* tick **Settings → Profiles → Keyboard → "Use Option as Meta key"**; in *iTerm2* set **Settings → Profiles → Keys → Left Option key** to **Esc+**. Without it, Option+L types a special character (e.g. `¬`) that Mousiki never sees as a command.
+- **Option+←/→** (playlist editor tab switch) is sent as `ESC b` / `ESC f` by Terminal.app and iTerm2 out of the box, and Mousiki understands both that and the xterm form, so it works without the setting above.
 
 ### Uppercase letters
 
@@ -710,7 +717,7 @@ The longest tab. It scrolls as one list and has three parts.
 | **Email** | itz.ender5820@gmail.com | **Version** | original and final v1.0 |
 | | | **Licence** | Apache Licence 2.0 |
 
-### Windows port, incl. extensive modifications up to v2.x.x
+### Windows port, incl. extensive modifications up to v2.5.0
 
 | | | | |
 |---|---|---|---|
