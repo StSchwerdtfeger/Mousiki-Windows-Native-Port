@@ -97,6 +97,14 @@ constexpr int kKeyAltL = 314;
 #  define MUISC_ALT_NAME_UC   "ALT"
 #endif
 
+// Label of the lyrics-overlay key: on macOS/Linux Ctrl+L works as well (no terminal
+// setup needed); on Windows only Alt+L exists.
+#if defined(_WIN32)
+#  define MUISC_LYRICS_KEY_UC MUISC_ALT_NAME_UC "+L"
+#else
+#  define MUISC_LYRICS_KEY_UC MUISC_ALT_NAME_UC "+L  CTRL+L"
+#endif
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {

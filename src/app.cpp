@@ -7994,7 +7994,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
         {nullptr, "HKeyNormMenu", "Normalization overlay: on/off, target level, max boost live (toggle)"},
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Normalization overlay: pick a value / change it   [SPACE] on/off   [R] reset   [ESC] close"},
-        {nullptr, "#" MUISC_ALT_NAME_UC "+L", "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
+        {nullptr, "#" MUISC_LYRICS_KEY_UC, "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
         {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
         {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min or stop after this song (toggle)"},
         {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it   [ESC] close (the Stop play mode is left alone)"},

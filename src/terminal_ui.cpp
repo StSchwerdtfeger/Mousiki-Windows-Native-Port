@@ -439,6 +439,11 @@ int TerminalIO::poll_key() {
     if (c == 0x03) { g_last_key_was_arrow = false; return kKeyCtrlC; }
     if (c == 0x18) { g_last_key_was_arrow = false; return kKeyCtrlX; }
     if (c == 0x16) { g_last_key_was_arrow = false; return kKeyCtrlV; }
+    // Ctrl+L = second way to open/close the lyrics timing overlay (same key as
+    // Alt+L). On macOS Option only works as a modifier if the terminal is set to
+    // "Option as Meta", which takes away typing special characters with Option
+    // (e.g. @ on a German keyboard is Option+L). Ctrl+L needs no terminal setup.
+    if (c == 0x0c) { g_last_key_was_arrow = false; return kKeyAltL; }
     g_last_key_was_arrow = false;
     return c;
 #endif
