@@ -80,7 +80,7 @@ WaveformStyle=raw
 DiskRotationSpeed=0.25
 ## 0.01x to 1.00x
 PlaybackMode=list
-## list , loop , shuffle , stop , repeat queue
+## list , loop , shuffle , stop , queue then stop (plays the queue once, then stops -- never falls through to the library)
 VisualizerDegradationSpeed=10
 ## 1 to 10
 VisualizerViscosity=1
