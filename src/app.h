@@ -51,6 +51,10 @@ struct QueueItem {
     std::string artist;
     fs::path local_path;   // valid if is_local
     std::string video_id;  // valid if !is_local
+    // Queue-then-stop mode on a locked queue only: set once this item has been
+    // played in the current pass through the queue (it then sits at the back).
+    // The pass is over -- and playback stops -- when every item has it set.
+    bool played = false;
 };
 
 class App {
@@ -197,14 +201,13 @@ private:
     int queue_scroll_ = 0;
     bool queue_focus_ = false; // Tab toggles which panel Up/Down navigates
 
-    // "!" (HKeyQueueLock): a LOCKED queue keeps its tracks when they are
-    // played -- nothing is erased by auto-advance or by "n". Playback walks
-    // the queue in place instead (queue_play_idx_ = the item played last, -1
-    // = none yet; the next one is the following item, wrapping around, or a
-    // random one in Shuffle). "d" and Shift+X still remove tracks: locking
-    // only stops tracks from disappearing by themselves.
-    bool queue_locked_ = false;
-    int queue_play_idx_ = -1;
+    // "!" (HKeyQueueLock): a LOCKED queue (the default) keeps its tracks when
+    // they are played: the played track moves to the END of the queue (also
+    // for "n"), so the queue loops instead of draining. UNLOCKED, a played
+    // track leaves the queue. The head is always what plays next (or a random
+    // item in Shuffle). "d" and Shift+X still remove tracks: locking only
+    // stops tracks from disappearing by themselves.
+    bool queue_locked_ = true;
     // Number of tracks "a" (add as NEXT) has put in front of everything else
     // since the queue head last moved, so pressing "a" on A, B, C plays them
     // as A, B, C rather than C, B, A. Reset whenever the head moves / the
@@ -212,11 +215,11 @@ private:
     int queue_next_run_ = 0;
     // What Shift+X cleared, so Ctrl+Shift+Z can bring it back (one level).
     std::vector<QueueItem> queue_undo_;
-    int queue_undo_play_idx_ = -1;
     void queue_toggle_lock();
     void queue_add_selected_end();       // "e": hovering track to the END of the queue
     void queue_move_to_edge(int dir);    // Shift+4 / Shift+5: dir=-1 top, +1 bottom
-    void queue_after_move(int from, int to); // keeps queue_play_idx_ on its track after a move
+    void queue_reset_lap(); // clears every item's "played in this pass" flag (queue-then-stop)
+    void queue_after_move(int from, int to); // a manual move just ends the current "a" run
     void queue_undo_clear();             // Ctrl+Shift+Z
     void queue_to_playlist();            // Ctrl+Shift+U: queue -> playlist editor (name field)
     std::string hotkey_text(const char* action, const char* fallback) const; // bound key, as shown in a legend
@@ -918,17 +921,17 @@ private:
     // what's actually playing", not "next after wherever you happen to
     // be looking".
     int current_track_list_index() const;
-    // Pops (or, in Repeat Queue mode, rotates to the back instead of
-    // discarding) the next item to play from queue_, honoring the
-    // current play_mode: Shuffle picks a random queue item rather than
-    // strictly FIFO order, Repeat Queue keeps the queue looping
-    // indefinitely instead of draining it. Shared by advance_track()
+    // Takes the next item to play from queue_ -- it leaves the queue, or goes
+    // to the back of it while the queue is locked -- honoring the current
+    // play_mode: Shuffle picks a random queue item rather than strictly FIFO
+    // order, Queue-then-stop (4) plays a locked queue through once (see
+    // QueueItem::played). Shared by advance_track()
     // (auto-advance on finish) and the manual "n" key (explicit skip),
     // so both respect the queue exactly the same way. Caller must check
     // !queue_.empty() first.
     void play_next_from_queue();
     // Single letter for the mode-indicator button after the search bar:
-    // L=list, R=repeat, S=shuffle, Q=repeat queue, O=stop (play-and-stop
+    // L=list, R=repeat, S=shuffle, Q=queue then stop, O=stop (play-and-stop
     // -- not "S", that's shuffle's letter already).
     char play_mode_letter() const;
     void queue_add_selected_impl(bool at_end);

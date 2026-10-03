@@ -161,7 +161,7 @@ struct Settings {
 
     // --- playback ------------------------------------------------------
     bool waveform_smooth = true;
-    int play_mode = 0; // 0=list 1=loop(repeat) 2=shuffle 3=stop 4=repeat queue
+    int play_mode = 0; // 0=list 1=loop(repeat) 2=shuffle 3=stop 4=queue then stop (play the queue through once, then stop)
 
     // --- console logging (config.txt: ConsoleVerbosity) -----------------
     // "basic" = every external command mousiki ran (yt-dlp/ffprobe/

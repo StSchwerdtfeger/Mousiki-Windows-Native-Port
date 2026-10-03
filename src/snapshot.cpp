@@ -65,7 +65,7 @@ bool load_snapshot(SnapshotData& out) {
     if (auto* p2 = root.find("play_mode")) d.play_mode = static_cast<int>(p2->as_number(0));
     if (auto* p2 = root.find("muted")) d.muted = p2->as_bool(false);
     if (auto* p2 = root.find("volume")) d.volume = static_cast<int>(p2->as_number(70));
-    if (auto* p2 = root.find("queue_locked")) d.queue_locked = p2->as_bool(false);
+    if (auto* p2 = root.find("queue_locked")) d.queue_locked = p2->as_bool(true);
     if (auto* qp = root.find("queue")) {
         if (qp->type == Type::Array) {
             for (const auto& item : qp->arr) d.queue.push_back(track_from_json(item));

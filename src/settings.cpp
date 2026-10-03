@@ -218,7 +218,7 @@ const char* play_mode_name(int mode) {
         case 1: return "loop";
         case 2: return "shuffle";
         case 3: return "stop";
-        case 4: return "repeat queue";
+        case 4: return "queue then stop";
         default: return "list";
     }
 }
@@ -633,7 +633,7 @@ static Settings load_from_config(const fs::path& path) {
             if (v == "loop") s.play_mode = 1;
             else if (v == "shuffle") s.play_mode = 2;
             else if (v == "stop") s.play_mode = 3;
-            else if (v == "repeat queue") s.play_mode = 4;
+            else if (v == "queue then stop" || v == "queue stop" || v == "repeat queue") s.play_mode = 4; // "repeat queue" = what older versions called it
             else s.play_mode = 0; // "list" or anything unrecognized
             continue;
         }
@@ -1086,7 +1086,7 @@ void save_settings(const Settings& s) {
     out << "VisualizerFluidity=" << s.visualizer_fluidity << "\n## 1 to 10\n";
     out << "WaveformStyle=" << (s.waveform_smooth ? "smooth" : "raw") << "\n## raw , smooth\n";
     out << "DiskRotationSpeed=" << s.disk_rotation_speed << "\n## 0.01x to 1.00x\n";
-    out << "PlaybackMode=" << play_mode_name(s.play_mode) << "\n## list , loop , shuffle , stop , repeat queue\n";
+    out << "PlaybackMode=" << play_mode_name(s.play_mode) << "\n## list , loop , shuffle , stop , queue then stop\n";
     out << "VisualizerDegradationSpeed=" << s.visualizer_degradation_speed << "\n## 1 to 10\n";
     out << "VisualizerViscosity=" << s.visualizer_viscosity << "\n## 1 to 10\n";
     out << "LyricsAlignment=" << (s.lyrics_alignment == 1 ? "left" : s.lyrics_alignment == 2 ? "right" : "center") << "\n## center , left , right\n";

@@ -1909,46 +1909,47 @@ void App::play_relative_random() {
     play_selected();
 }
 
+void App::queue_reset_lap() {
+    for (auto& q : queue_) q.played = false;
+}
+
 void App::play_next_from_queue() {
     // Shuffle: pick a random queue item instead of strictly FIFO order.
-    // Repeat Queue: rotate the played item to the back instead of
-    // discarding it, so the whole queue loops indefinitely rather than
-    // draining to empty. Both apply here (not just to library playback)
-    // -- this is exactly the "queue mode won't respect shuffle or
-    // repeat" bug: previously advance_track()'s queue branch always did
-    // plain FIFO regardless of play_mode.
+    // What happens to the item once it is taken depends on the lock ("!"):
+    //   * LOCKED (the default): it goes to the END of the queue, so the queue
+    //     keeps all its tracks and loops indefinitely instead of draining.
+    //   * UNLOCKED: it leaves the queue for good once it is played.
+    // Queue-then-stop (play mode 4) on a locked queue plays the queue ONCE:
+    // every item that goes to the back is flagged `played`, the next one is
+    // the first item not flagged yet, and advance_track() stops playback once
+    // none is left (the order is then back to what it was).
     int idx = 0;
     queue_next_run_ = 0; // the head is moving: "a" starts a fresh run
-    QueueItem item;
-    if (queue_locked_) {
-        // Locked ("!"): nothing is erased, the queue is walked in place. Next
-        // = the item after the one played last (wrapping to the top), or a
-        // random other one in Shuffle.
-        const int n = static_cast<int>(queue_.size());
-        if (settings_.play_mode == 2 /*shuffle*/ && n > 1) {
-            static std::mt19937 rng(std::random_device{}());
-            std::uniform_int_distribution<int> dist(0, n - 1);
-            do { idx = dist(rng); } while (idx == queue_play_idx_);
-        } else {
-            idx = (queue_play_idx_ + 1) % n; // -1 (nothing played yet) -> 0
+    const bool queue_once = settings_.play_mode == 4 && queue_locked_;
+    if (queue_once) {
+        auto first = std::find_if(queue_.begin(), queue_.end(), [](const QueueItem& q) { return !q.played; });
+        if (first == queue_.end()) {   // a manual skip after the pass was over: start a new pass
+            queue_reset_lap();
+            first = queue_.begin();
         }
-        queue_play_idx_ = idx;
-        item = queue_[idx];
-        clamp_queue_selected();
+        idx = static_cast<int>(first - queue_.begin());
     } else {
+        queue_reset_lap(); // the flags only mean something in queue-then-stop on a locked queue
         if (settings_.play_mode == 2 /*shuffle*/ && queue_.size() > 1) {
             static std::mt19937 rng(std::random_device{}());
             std::uniform_int_distribution<int> dist(0, static_cast<int>(queue_.size()) - 1);
             idx = dist(rng);
         }
-        item = queue_[idx];
-        queue_.erase(queue_.begin() + idx);
-        if (settings_.play_mode == 4 /*repeat queue*/) {
-            queue_.push_back(item); // rotate to the back instead of discarding -- keeps the queue looping
-        }
-        if (queue_selected_ >= idx && queue_selected_ > 0) --queue_selected_; // index shifted down by the erase
-        clamp_queue_selected();
     }
+    QueueItem item = queue_[idx];
+    queue_.erase(queue_.begin() + idx);
+    if (queue_locked_) {                       // played track -> end of the list
+        QueueItem back = item;
+        back.played = queue_once;
+        queue_.push_back(std::move(back));
+    }
+    if (queue_selected_ >= idx && queue_selected_ > 0) --queue_selected_; // index shifted down by the erase
+    clamp_queue_selected();
     if (item.is_local) {
         LocalTrack t{path_utf8(item.local_path.stem()), item.local_path, item.artist};
         start_local_track(t);
@@ -2003,6 +2004,25 @@ void App::advance_track() {
         return; // no auto-advance -- queue or not
     }
 
+    // Queue then stop (play mode 4): the queue is played through once and
+    // playback ends there -- it never falls through to the library. Unlocked,
+    // that is simply "the queue is empty" (played tracks leave it); locked,
+    // played tracks stay (at the back), so the pass is over once every item
+    // is flagged as played.
+    if (settings_.play_mode == 4) {
+        bool pass_over = queue_.empty();
+        if (!pass_over && queue_locked_) {
+            pass_over = std::none_of(queue_.begin(), queue_.end(), [](const QueueItem& q) { return !q.played; });
+        }
+        if (pass_over) {
+            queue_reset_lap();  // the next pass starts fresh
+            has_track_ = false;
+            history_end_current_play(); // playback really ends here: nothing follows it
+            log_event("queue finished: stopped");
+            return;
+        }
+    }
+
     // The queue always takes priority over the library — it's an
     // explicit user-built-up-next list.
     advancing_ = true; // suppress re-entry until poll_pending_load() reports back
@@ -2013,10 +2033,8 @@ void App::advance_track() {
             case 2: // shuffle
                 play_relative_random();
                 break;
-            default: // list (sequential) -- also where Repeat Queue (4) lands
-                     // once the queue's actually empty; there's nothing left
-                     // to "repeat queue" without one, so it just falls back
-                     // to normal sequential playback.
+            default: // list (sequential); queue-then-stop (4) never gets here,
+                     // it stopped above once the queue was used up
                 play_relative(1);
                 break;
         }
@@ -2034,13 +2052,13 @@ char App::play_mode_letter() const {
         case 1: return 'R';  // repeat (loop current track)
         case 2: return 'S';  // shuffle
         case 3: return 'O';  // stop (play, then stop -- not "S", shuffle already owns that)
-        case 4: return 'Q';  // repeat queue
+        case 4: return 'Q';  // queue, then stop
         default: return 'L'; // list (normal sequential)
     }
 }
 
-// "a" -- the hovering track goes in as NEXT: the front of the queue, or right
-// after the track played last while the queue is locked. Consecutive presses
+// "a" -- the hovering track goes in as NEXT: the front of the queue (the head
+// is always what plays next, locked or not). Consecutive presses
 // keep their order (queue_next_run_), so A, B, C play as A, B, C.
 void App::queue_add_selected() { queue_add_selected_impl(false); }
 
@@ -2065,8 +2083,7 @@ void App::queue_add_selected_impl(bool at_end) {
     if (at_end) {
         queue_.push_back(std::move(item));
     } else {
-        const int base = queue_locked_ ? queue_play_idx_ + 1 : 0;
-        const int pos = std::clamp(base + queue_next_run_, 0, static_cast<int>(queue_.size()));
+        const int pos = std::clamp(queue_next_run_, 0, static_cast<int>(queue_.size()));
         queue_.insert(queue_.begin() + pos, std::move(item));
         ++queue_next_run_;
     }
@@ -2096,7 +2113,6 @@ void App::playlist_add_selected_to_queue() {
 
 void App::queue_remove_last() {
     if (!queue_.empty()) queue_.pop_back();
-    if (queue_play_idx_ >= static_cast<int>(queue_.size())) queue_play_idx_ = static_cast<int>(queue_.size()) - 1;
     queue_next_run_ = 0;
     clamp_queue_selected();
 }
@@ -2117,24 +2133,15 @@ void App::queue_remove_hovering() {
     if (queue_.empty() || queue_selected_ < 0 || queue_selected_ >= static_cast<int>(queue_.size())) return;
     const int idx = queue_selected_;
     queue_.erase(queue_.begin() + idx);
-    // Keep queue_play_idx_ on the track it pointed at. Removing the one that
-    // was played last leaves it just in front of the item that slid into its
-    // place, so "next" still lands on that item.
-    if (idx <= queue_play_idx_) --queue_play_idx_;
     queue_next_run_ = 0;
     clamp_queue_selected();
 }
 
 void App::queue_clear() {
     const size_t n = queue_.size();
-    // One level of undo (Ctrl+Shift+Z): what was just cleared, and where the
-    // locked queue's "played last" marker stood.
-    if (n > 0) {
-        queue_undo_ = queue_;
-        queue_undo_play_idx_ = queue_play_idx_;
-    }
+    // One level of undo (Ctrl+Shift+Z): what was just cleared.
+    if (n > 0) queue_undo_ = queue_;
     queue_.clear();
-    queue_play_idx_ = -1;
     queue_next_run_ = 0;
     clamp_queue_selected(); // empty queue -> cursor and scroll back to 0
     log_event("queue cleared (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + " removed) -- "
@@ -2146,44 +2153,27 @@ void App::queue_clear() {
 void App::queue_undo_clear() {
     if (queue_undo_.empty()) { status_line_ = "nothing to undo -- the queue has not been cleared"; return; }
     const int n = static_cast<int>(queue_undo_.size());
-    const bool was_empty = queue_.empty();
     queue_.insert(queue_.begin(), queue_undo_.begin(), queue_undo_.end());
-    if (was_empty) queue_play_idx_ = queue_undo_play_idx_;
-    else if (queue_play_idx_ >= 0) queue_play_idx_ += n;
     queue_undo_.clear();
-    queue_undo_play_idx_ = -1;
     queue_next_run_ = 0;
     clamp_queue_selected();
     log_event("queue restored (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + ")");
 }
 
-// "!" -- lock / unlock. Switching it on points queue_play_idx_ at the track
-// that is playing right now (if it is in the queue), so playback continues
-// with the item after it; otherwise the first "next" is the queue's head.
+// "!" -- lock / unlock (locked is the default). Locked: a played track goes to
+// the end of the queue, so the queue loops. Unlocked: a played track leaves it.
 void App::queue_toggle_lock() {
     queue_locked_ = !queue_locked_;
-    queue_play_idx_ = -1;
     queue_next_run_ = 0;
-    if (queue_locked_ && has_track_) {
-        for (int i = 0; i < static_cast<int>(queue_.size()); ++i) {
-            const auto& q = queue_[i];
-            const bool same = current_is_local_ ? (q.is_local && q.local_path == current_path_)
-                                                : (!q.is_local && q.video_id == current_video_id_);
-            if (same) { queue_play_idx_ = i; break; }
-        }
-    }
-    log_event(queue_locked_ ? "queue locked: played tracks stay in the queue"
-                            : "queue unlocked: played tracks leave the queue again");
+    queue_reset_lap();
+    log_event(queue_locked_ ? "queue locked: played tracks move to the end of the queue"
+                            : "queue unlocked: played tracks leave the queue");
 }
 
-// Re-points queue_play_idx_ after the item at `from` moved to `to`.
-void App::queue_after_move(int from, int to) {
+// The head of the queue is always what plays next, so a manual move only has
+// to end the current "a" run.
+void App::queue_after_move(int /*from*/, int /*to*/) {
     queue_next_run_ = 0;
-    int& p = queue_play_idx_;
-    if (p < 0) return;
-    if (p == from) p = to;
-    else if (from < to && p > from && p <= to) --p;
-    else if (from > to && p >= to && p < from) ++p;
 }
 
 void App::queue_move_hovering(int dir) {
@@ -2291,7 +2281,6 @@ void App::restore_snapshot(const SnapshotData& snap) {
 
     queue_.clear();
     queue_locked_ = snap.queue_locked;
-    queue_play_idx_ = -1;
     queue_next_run_ = 0;
     for (const auto& t : snap.queue) {
         queue_.push_back({t.is_local, t.title, t.artist, t.is_local ? path_from_utf8(t.path) : fs::path(), t.video_id});
@@ -2790,7 +2779,7 @@ std::string App::settings_get_value(int row, int col) const {
             case 1: return settings_.waveform_smooth ? "smooth" : "raw";
             case 2: return std::to_string(settings_.disk_rotation_speed).substr(0, 4);
             case 3: {
-                static const char* names[] = {"list", "loop", "shuffle", "stop", "repeat queue"};
+                static const char* names[] = {"list", "loop", "shuffle", "stop", "queue then stop"};
                 return names[std::clamp(settings_.play_mode, 0, 4)];
             }
             case 4: return std::to_string(settings_.visualizer_degradation_speed);
@@ -2829,7 +2818,7 @@ std::vector<std::string> App::settings_options_for(int tab, int row) const {
             case 0: return {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
             case 1: return {"raw", "smooth"};
             case 2: return {"0.01", "0.05", "0.10", "0.17", "0.25", "0.50", "0.75", "1.00"};
-            case 3: return {"list", "loop", "shuffle", "stop", "repeat queue"};
+            case 3: return {"list", "loop", "shuffle", "stop", "queue then stop"};
             case 4: return {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
             case 5: return {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
             case 6: return {"left", "center", "right"};
@@ -2938,7 +2927,7 @@ void App::settings_commit_edit() {
             case 0: try { settings_.visualizer_fluidity = std::stoi(buf); } catch (...) {} break;
             case 1: settings_.waveform_smooth = (v == "smooth"); break;
             case 2: try { settings_.disk_rotation_speed = std::stod(buf); } catch (...) {} break;
-            case 3: settings_.play_mode = (v == "loop") ? 1 : (v == "shuffle") ? 2 : (v == "stop") ? 3 : (v == "repeat queue") ? 4 : 0; break;
+            case 3: settings_.play_mode = (v == "loop") ? 1 : (v == "shuffle") ? 2 : (v == "stop") ? 3 : (v == "queue then stop") ? 4 : 0; queue_reset_lap(); break;
             case 4: try { settings_.visualizer_degradation_speed = std::stoi(buf); } catch (...) {} break;
             case 5: try { settings_.visualizer_viscosity = std::stoi(buf); } catch (...) {} break;
             case 6: settings_.lyrics_alignment = (v == "left") ? 1 : (v == "right") ? 2 : 0; break;
@@ -3715,10 +3704,10 @@ void App::handle_key(int key) {
         if (has_track_) player_.set_volume(std::max(0, player_.volume() - 5));
     } else if (action == "HKeyPlayNextSong") {
         // The queue (if any) takes priority, same as auto-advance-on-
-        // finish does, and respects Shuffle/Repeat Queue via
+        // finish does, and respects Shuffle/Queue-then-stop via
         // play_next_from_queue() -- a manual skip still always actually
-        // skips, though: Repeat/Stop only govern *automatic* advance,
-        // not an explicit "next" press.
+        // skips, though: Repeat/Stop/Queue-then-stop only govern
+        // *automatic* advance, not an explicit "next" press.
         if (!queue_.empty()) play_next_from_queue();
         else play_relative(1);
     } else if (action == "HKeyPlayPreviousSong") {
@@ -3791,14 +3780,15 @@ void App::handle_key(int key) {
         queue_remove_hovering();
         log_event("removed from queue");
     } else if (action == "HKeyCyclePlayMode") {
-        // Cycle play mode: list -> repeat -> shuffle -> repeat queue ->
+        // Cycle play mode: list -> repeat -> shuffle -> stop -> queue then
         // stop -> list -- one key for all five instead of a separate
         // toggle per mode.
         settings_.play_mode = (settings_.play_mode + 1) % 5;
+        queue_reset_lap();
         {
-            // Indexed 0=list,1=repeat,2=shuffle,3=stop,4=repeat queue,
+            // Indexed 0=list,1=repeat,2=shuffle,3=stop,4=queue then stop,
             // matching play_mode's own numbering (not cycle order).
-            static const char* mode_names[] = {"list", "repeat", "shuffle", "stop", "repeat queue"};
+            static const char* mode_names[] = {"list", "repeat", "shuffle", "stop", "queue then stop"};
             log_event(std::string("play mode: ") + mode_names[settings_.play_mode]);
         }
     } else if (action == "HKeyRefreshUi") {
@@ -4834,7 +4824,7 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
     std::vector<std::string> out;
     int search_w = total_width - 5;
     out.push_back(box_top(label, search_w, border_ansi) + border_ansi + "╭───╮\x1b[0m");
-    // Play-mode indicator: L=list, R=repeat, S=shuffle, Q=repeat queue,
+    // Play-mode indicator: L=list, R=repeat, S=shuffle, Q=queue then stop,
     // O=stop -- one letter for whichever of the five settings_.play_mode
     // states is active, cycled with a single "m" press
     // (HKeyCyclePlayMode) rather than a separate toggle per mode.
@@ -7939,7 +7929,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyPlayNextSong", "Play next in list/queue"},
         {nullptr, "HKeyPlayPreviousSong", "Play previous in list"},
         {nullptr, "HKeyShuffleNext", "Shuffle to a random next track"},
-        {nullptr, "HKeyCyclePlayMode", "Cycle play mode (list/repeat/shuffle/repeat queue/stop)"},
+        {nullptr, "HKeyCyclePlayMode", "Cycle play mode (list/repeat/shuffle/stop/queue then stop)"},
         {nullptr, "HKeySeekForward", "Seek forward 5s"},
         {nullptr, "HKeySeekBackward", "Seek backward 5s"},
         {nullptr, "HKeyIncreaseVolume", "Volume up"},
@@ -7983,7 +7973,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyQueueMoveDown", "Move hovering queue item down"},
         {nullptr, "HKeyQueueMoveTop", "Move hovering queue item to the top"},
         {nullptr, "HKeyQueueMoveBottom", "Move hovering queue item to the bottom"},
-        {nullptr, "HKeyQueueLock", "Lock / unlock the queue (locked: played tracks stay in it)"},
+        {nullptr, "HKeyQueueLock", "Lock / unlock the queue (locked = default: played track goes to the end; unlocked: it leaves)"},
         {nullptr, "HKeyClearQueue", "Clear the whole queue (asks Yes / No first)"},
         {nullptr, "#CTRL+SHIFT+Z", "Undo the last queue clear"},
         {nullptr, "#CTRL+SHIFT+U", "Save the queue as a playlist (opens the playlist editor)"},
