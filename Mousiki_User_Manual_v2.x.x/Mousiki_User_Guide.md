@@ -102,7 +102,7 @@ The main screen while a track plays: the disk, the metadata panel, the visualize
 | `1` | Volume up | Raises the in-app volume in steps of 5 (up to 100). |
 | `2` | Volume down | Lowers the in-app volume in steps of 5 (down to 0). |
 | `x` | Mute | Sets the volume to 0 without pausing. Pressing it again restores the previous volume. |
-| `v` | Toggle loudness normalization | Turns loudness normalization on or off, so you can compare a track with and without it. When turned on, the status line shows the track's measured loudness and the correction applied. The target and maximum boost are set in **Settings → Reference** (loudness section) or `config.txt`. |
+| `v` | Toggle loudness normalization | Turns loudness normalization on or off, so you can compare a track with and without it. When turned on, the status line shows the track's measured loudness and the correction applied. The target and maximum boost are set with the `SHIFT+V` overlay (see *Loudness normalization overlay* below) or in `config.txt`. |
 | `E` (Shift+E) | Equalizer | Opens the **10-band equalizer** overlay with presets. The sound changes live while you adjust it. See *Equalizer overlay* below. |
 
 
@@ -181,8 +181,8 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | `N` (Shift+N) | Toggle metadata-only track list | Switches every list row between **filename** and **metadata title** (the embedded title tag). Files with no title tag, or whose tags have not been read yet, keep showing their filename. This also switches what "title A-Z" sorts by (see below). Also available in **Settings → ON/OFF**. |
 | `l` | Retry lyrics | Opens a small form to fetch lyrics again with a **manual title and artist**. Use it when the automatic match was wrong. |
 | `ALT+l` | Adjust lyrics | Opens a small overlay menu for live adjustment of the lyrics timing. |
-
 | `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope's afterglow, line thickness and tail **live**. See *The oscilloscope* below. |
+| `V` (Shift+V) | Normalization tuning | Opens a small overlay to switch loudness normalization on or off and to change its target level and maximum boost **live**. See *Loudness normalization overlay* below. |
 | `Z` (Shift+Z) | Sleep timer | Opens a small overlay to pause playback after 15, 30, 60, 90 or 120 minutes, or to stop after the current song. See *Sleep timer overlay* below. |
 
 
@@ -267,6 +267,30 @@ Playback keeps running while the overlay is open, but its keys are the only ones
 Two starting points: for a crisp, "real oscilloscope" look try Decay `0.65`, Dot threshold `0.35`, Tail `0.60`. For a glowing, dreamy look try `0.90`, `0.20`, `0.25`.
 
 ![The oscillator parameter overlay menu next to the oscillator itself](images/Playback_Main_UI_OSCI_MENU.png)
+
+### Loudness normalization overlay (`SHIFT+V`)
+
+Opens a small window in the middle of the screen where loudness normalization can be switched on and off and tuned **while the music plays**. What you change is what you hear: the level glides to the new value within about a second, so there is no click. (The plain `v` key still toggles normalization on and off without opening anything.)
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Select a row (wraps around) |
+| `←` / `→` | On the **Normalize** row: switch off / on. On the other two rows: decrease / increase the value by 1. |
+| `SPACE` or `v` | Switch normalization on / off from any row |
+| `R` | Reset **Target level** and **Max boost** to their defaults. The on / off state is not changed. |
+| `ESC` or `SHIFT+V` | Close the overlay. The values are **saved to `config.txt`** when it closes. |
+
+Playback keeps running while the overlay is open, but its keys are the only ones that react until you close it. The overlay opens on every main screen.
+
+| Row | Range | Step | Default | What it does |
+|---|---|---|---|---|
+| Normalize | off / on | | on | Loudness normalization on or off. Same switch as the `v` key and **Settings → ON/OFF → Normalize Volume**. |
+| Target level | -40 – 0 LUFS | 1 | -16 | The loudness every track is measured against and played at. `-16` leaves more headroom, `-14` matches YouTube and Spotify. A lower number is quieter overall. |
+| Max boost | 0 – 24 dB | 1 | 9 | The most a quiet track may be raised. Loud or heavily compressed tracks are lowered regardless. |
+
+**Live line.** Below the three rows a grey line shows what is happening with the track that is playing right now: its measured loudness and the gain that is applied to it (`+` = raised, `-` = lowered). If a quiet track would need more than **Max boost**, the applied gain stops at that limit, so this line is the quickest way to see whether the boost limit is holding a track back. For the first seconds of a track it shows *measuring loudness* until enough audio has been analysed.
+
+![Loudness normalization overlay](images/Playlist_menu_NORM_OVERLAY.png)
 
 ### Sleep timer overlay (`SHIFT+Z`)
 
@@ -632,7 +656,7 @@ The first part is a list of **switches** (change them with `←`/`→`). Most ar
 | Lyric Viz | Which visual fills the lyrics area while a track is loaded and there are no lyrics to show: `sphere` (the audio-reactive ball) or `osci` (the XY oscilloscope, see *The oscilloscope* above). Both are drawn in the **VIZ** colors (Settings → Colors → VIZ). Replaces the old *Lyric Ball* on/off switch. The oscilloscope's look is tuned with `SHIFT+O`. |
 | Visualizer | Shows or hides the spectrum visualizer. |
 | Stereo Sound | On plays in stereo (about twice the memory per loaded track), off folds left and right into mono. Turning it **off** is immediate. Turning it **on** applies from the next track. |
-| Normalize Volume | Loudness normalization on or off. Same as the `v` key. Target and boost are set on the REFERENCE tab. |
+| Normalize Volume | Loudness normalization on or off. Same as the `v` key. Target and boost are set with the `SHIFT+V` overlay. |
 | Show meta data only | Rows show the embedded title tag instead of the file name. Same as `SHIFT+N`. The list is re-sorted straight away. |
 
 **Folder lists** (the tab scrolls with the cursor, so a short terminal is fine):
@@ -671,16 +695,7 @@ All rows are cycled with `←`/`→` (or typed after `ENTER`).
 
 *The REFERENCE tab: loudness normalization at the top, then the rebindable hotkeys (scroll for the rest).*
 
-
-The longest tab. It scrolls as one list and has three parts.
-
-**LOUDNESS NORMALIZATION** (editable)
-
-| Row | Values | What it does |
-|---|---|---|
-| Normalize Volume | true / false | Same switch as on the ON/OFF tab and the `v` key. |
-| Target Level (LUFS) | -40 to 0 | The loudness every track is measured against and played at. `-16` leaves more headroom, `-14` matches YouTube and Spotify. A lower number is quieter overall. |
-| Max Boost (dB) | 0 to 24 | The most a quiet track may be raised. Loud or heavily compressed tracks are lowered regardless. |
+The longest tab. It scrolls as one list and has two parts.
 
 **Hotkeys** (editable). Below a grey note pointing to the cheat sheet (`?`), the rebindable commands are listed under the headers PLAYBACK, NAVIGATION & VIEW, SEARCH, QUEUE, PLAYLISTS, META EDITOR, HISTORY, DOWNLOADS and SYSTEM. Each row shows a label and the key currently bound to it.
 
@@ -692,7 +707,7 @@ The longest tab. It scrolls as one list and has three parts.
 
 **FONT / CHARACTER MAP** (read-only). Shows the `A = A, a` table from `config.txt`, which lets you re-font the interface with fancy Unicode letters without changing the terminal font. It cannot be edited here. Edit the `font_en={ … }` block in `config.txt` while the app is closed.
 
-### Settings that exist only in `config.txt`
+### Settings that exist (only) in `config.txt`
 
 | Key in `config.txt` | What it does |
 |---|---|
@@ -701,6 +716,7 @@ The longest tab. It scrolls as one list and has three parts.
 | `AutoSave` | Resumes the exact song, position, queue and play mode at the next launch. |
 | `AutoSaveIndicator`, `AutoSaveChr`, `AutoSaveIndicatorType`, `AutoSaveC1`, `AutoSaveC2` | The small autosave indicator: whether it shows, its character, `blink` or `color` style, and the two pulse colours. |
 | `OsciDecay`, `OsciDotThreshold`, `OsciTailBrightness` | The oscilloscope's afterglow (0.00 – 0.99), dot threshold (0.01 – 1.00) and tail brightness (0.00 – 1.00). Normally changed with the `SHIFT+O` overlay, which writes them here. Values outside the range are limited to it when the file is loaded. |
+| `NormalizeVolume`, `NormalizeTargetLufs`, `NormalizeMaxBoostDb` | Loudness normalization on or off, its target level (-40 to 0 LUFS, default -16) and the most a quiet track may be raised (0 to 24 dB, default 9). Normally changed with the `SHIFT+V` overlay, which writes them here. Values outside the range are limited to it when the file is loaded. |
 | `AutoSaveDelayInSec` | How often the session snapshot is saved (default 30 seconds). |
 | `UpperLeftCorner`, `Vertical`, `Horizontal`, `Seprator`, `ListSeparator` and the other border entries | The characters used to draw frames and the list column separator. |
 | `EqualizerEnabled`, `EqualizerBands` | Whether the equalizer is on, and its ten band gains in dB (−12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8 and 16 kHz, for example `EqualizerBands=0,3,-2,0,0,0,0,0,0,0`. Normally changed with the `SHIFT+E` overlay, which writes them here. Values outside the range are limited to it. A line with fewer or more than ten valid numbers is ignored. |
