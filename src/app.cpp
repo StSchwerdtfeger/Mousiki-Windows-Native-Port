@@ -2699,6 +2699,7 @@ std::string* App::color_field_ptr(int row, int col) {
         case 12: return col == 0 ? &settings_.active_line_color : &settings_.active_line_bg_color;
         case 13: return col == 0 ? &settings_.active_word_color : &settings_.active_word_bg_color;
         case 14: return col == 0 ? &settings_.header_color : nullptr; // HEADER: text color only, no background cell
+        case 15: return col == 0 ? &settings_.legend_color : nullptr; // LEGEND: text color only, no background cell
         default: return nullptr;
     }
 }
@@ -2709,7 +2710,7 @@ int App::settings_max_row() const {
     // scrollable text (both computed dynamically, not hardcoded, so they
     // track the actual font_map/about_app_lines content).
     switch (settings_tab_) {
-        case 0: return 14; // COLOR_SCHEMA: 15 rows (the extra one is HEADER)
+        case 0: return 15; // COLOR_SCHEMA: 16 rows (the extras are HEADER and LEGEND)
         case 1: {          // ON/OFF: the toggles plus the LOCAL PATH /
             // PLAYLIST PATH lists -- computed from the layout instead of
             // hardcoded, since it now depends on how many paths are
@@ -5157,11 +5158,13 @@ void App::playlist_delete_selected() {
     if (list_source_ == ListSource::Playlist) playlist_view_ = filter_playlists(last_playlist_query_);
 }
 
-// HOME -- saves and exits back to Browse. Deliberately not a plain
-// letter (an earlier version used "S", which meant typing an "s" into
-// the name field or the library search saved and kicked you out
-// mid-keystroke); HOME can never appear inside typed text.
-void App::playlist_save_current() {
+// HOME -- saves and STAYS in the playlist menu (ESC leaves it), so the
+// confirmation shows in the menu's own status row. Only the "Save before
+// exiting?" prompt passes leave=true: there the save is part of leaving.
+// Deliberately not a plain letter (an earlier version used "S", which meant
+// typing an "s" into the name field or the library search saved and kicked
+// you out mid-keystroke); HOME can never appear inside typed text.
+void App::playlist_save_current(bool leave) {
     std::string name = playlist_edit_name_;
     while (!name.empty() && name.front() == ' ') name.erase(name.begin());
     while (!name.empty() && name.back() == ' ') name.pop_back();
@@ -5179,11 +5182,12 @@ void App::playlist_save_current() {
         return;
     }
     status_line_ = "saved playlist \"" + name + "\" (" + std::to_string(pl.tracks.size()) + " tracks)";
+    playlist_status_ = status_line_; // the menu stays open now, so say it here too
     // If the main UI is currently browsing "/p:" results, refresh them
     // so a newly-saved (or renamed) playlist shows up immediately.
     if (list_source_ == ListSource::Playlist) playlist_view_ = filter_playlists(last_playlist_query_);
     playlist_edit_dirty_ = false;
-    mode_ = Mode::Browse;
+    if (leave) mode_ = Mode::Browse;
 }
 
 void App::handle_playlist_key(int key) {
@@ -5192,7 +5196,7 @@ void App::handle_playlist_key(int key) {
     // Swallows every key except the three it cares about so nothing
     // gets edited underneath it by accident.
     if (playlist_confirm_exit_) {
-        if (key == 'y' || key == 'Y') { playlist_confirm_exit_ = false; playlist_save_current(); return; }
+        if (key == 'y' || key == 'Y') { playlist_confirm_exit_ = false; playlist_save_current(true); return; }
         if (key == 'n' || key == 'N') { playlist_confirm_exit_ = false; mode_ = Mode::Browse; return; }
         if (key == 27) { playlist_confirm_exit_ = false; } // cancel the prompt, keep editing
         return;
@@ -5345,6 +5349,7 @@ void App::handle_playlist_key(int key) {
 }
 
 static std::string header_sgr(const Settings& s); // defined further down (Settings panel section)
+static std::string legend_sgr(const Settings& s); // likewise
 
 std::vector<std::string> App::build_playlist_library_panel(int total_width, int height) const {
     int inner = total_width - 4;
@@ -5692,12 +5697,9 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     }
     frame << box_bottom(W, "", border_bottom) << "\n";
 
-    // Deliberately NOT sized to fill whatever room player_view_height()
-    // happens to have (that made the list feel oddly tall/short
-    // depending on terminal size) -- clamped to a fixed, comfortable
-    // range instead so up to 22 tracks are visible regardless of
-    // terminal height (fewer on a short terminal, down to the 8-row
-    // floor).
+    // Sized to the room the terminal has (via target_height) with an 8-row
+    // floor on short terminals. It used to be capped at 22 rows, which left
+    // blank lines under the menu once the window was maximised.
     // Sized against BOTH bounds that matter (same reasoning as
     // build_meta_screen()): target_height is player_view_height(), but
     // clamp_output_rows() keeps term_rows_ - 1 lines and a full-width
@@ -5711,7 +5713,7 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     // "added ..." -- off every single frame. Keeping that sum exact is also
     // what stops the second legend row (the text-field keys) from pushing
     // the frame past term_rows_ - 1 and scrolling the terminal.
-    int panel_h = std::clamp(budget - fixed_rows - 5, 8, 22);
+    int panel_h = std::max(8, budget - fixed_rows - 5); // no upper cap: fills a maximised window
     if (playlist_tab_ == 0) {
         // Stacked, full width: playlist box (above), LIBRARY, then TRACKS.
         // The two panes together take exactly the lines the old side-by-
@@ -5747,14 +5749,14 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     } else {
         std::string hint = "[" MUISC_ALT_NAME "+\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
                             "[DEL] Remove | [4/5] Move \u2191\u2193 | [HOME] Save";
-        frame << "\x1b[90m" << hint << "\x1b[0m\n";
+        frame << legend_sgr(settings_) << hint << "\x1b[0m\n";
         // Row 2: the text-field keys, plus Exit. Kept off row 1 so each row
         // fits comfortably inside a 120-column terminal without wrapping
         // (the meta editor splits its legend the same way) -- panel_h's
         // budget above already accounts for exactly these two rows. [ESC]
         // Exit used to sit at the end of row 1, but that pushed row 1 past
         // the wrap width and cost a spurious third line; it lives here now.
-        frame << "\x1b[90m[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [ESC] Exit\x1b[0m\n";
+        frame << legend_sgr(settings_) << "[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [ESC] Exit\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
     }
@@ -5785,6 +5787,17 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
 static std::string header_sgr(const Settings& s) {
     std::string params = sgr_params_for(s.header_color);
     return params.empty() ? "\x1b[1m" : "\x1b[1;" + params + "m";
+}
+
+// SGR prefix for the key command legends (the "[ESC] close | [ENTER] ..."
+// hint lines of the Settings panel, the big list / queue overlays and the
+// playlist / meta / history screens): settings_.legend_color, the Colors
+// tab's LEGEND row. The default "90" yields "\x1b[90m", the grey these lines
+// were always drawn in. An explicit 0/empty means "no color" like everywhere
+// else, i.e. the terminal's own text color -- an empty prefix, not a stray
+// escape. Callers close the run with "\x1b[0m" themselves.
+static std::string legend_sgr(const Settings& s) {
+    return ansi_for(s.legend_color, false);
 }
 
 // ---------------------------------------------------------------------
@@ -6884,7 +6897,7 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
     // smaller of the two: 2 for the panel's own border rows, 3 for the
     // footer (two legend rows + status -- see where it's written below).
     int budget = std::min(target_height, term_rows_ - 1);
-    int panel_h = std::clamp(budget - fixed_rows - 5, 6, 22);
+    int panel_h = std::max(6, budget - fixed_rows - 5); // no upper cap: fills a maximised window
     if (meta_tab_ == 0) {
         int left_w = W / 2;
         int right_w = W - left_w;
@@ -6973,7 +6986,7 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
             // empty line reads as a rendering glitch, not as a blank row
             // (same reasoning as in the prompt branch above).
             if (l.empty()) frame << "\n";
-            else frame << "\x1b[90m" << truncate_str(l, W) << "\x1b[0m\n";
+            else frame << legend_sgr(settings_) << truncate_str(l, W) << "\x1b[0m\n";
         }
         if (!meta_status_.empty()) frame << "\x1b[32m" << truncate_str(meta_status_, W) << "\x1b[0m\n";
         else frame << "\n";
@@ -7201,24 +7214,12 @@ void App::build_history_screen(std::ostringstream& frame, int W, int target_heig
     int fixed_rows = 3; // top border + tab strip + bottom border
     frame << box_bottom(W, "", border_bottom) << "\n";
 
-    // Same two bounds build_meta_screen() sizes against: term_rows_ - 1 is
-    // what clamp_output_rows() keeps, target_height is what the other
-    // overlays use. 5 = the panel's own two border rows + the three footer rows.
-    int budget = std::min(target_height, term_rows_ - 1);
-    // Top Tracks carries a second pane (ADD TOP TRACKS TO QUEUE: four option
-    // rows + its own two border rows) below the list, so the list gives those
-    // rows up -- the whole tab still adds up to `budget` lines (29 on a
-    // 30-line terminal).
-    const bool top_tab = (history_tab_ == 1);
-    const int add_body = 4;                       // Top 10 / 25 / 50 / 100
-    const int add_rows = top_tab ? add_body + 2 : 0;
-    int panel_h = std::clamp(budget - fixed_rows - 5 - add_rows, top_tab ? 3 : 6, 22);
-    for (const auto& l : build_history_panel(W, panel_h)) frame << l << "\n";
-    if (top_tab)
-        for (const auto& l : build_history_add_panel(W, add_body)) frame << l << "\n";
-
-    // Footer: two legend rows + one status row, always exactly three, so a
-    // message appearing can never change the height of what sits above it.
+    // Footer first, because the panel takes exactly the rows it leaves: the
+    // legend (as many rows as it needs at this width -- one on a 120-column
+    // terminal) plus a status row ONLY while a message is showing. Nothing is
+    // reserved to sit blank any more (there used to be three fixed rows, two
+    // of them empty on a normal terminal); while a message is up the list
+    // simply gives up one row for it, the way Browse does for its prompt.
     const std::string hint = (history_tab_ == 1)
         ? "[\u2190\u2192] Tab | [1/2/3] Tab | [TAB] Switch pane | [\u2191\u2193] Move | [ENTER] Add to queue | [r] Flip sort | [ESC] Exit"
         : "[\u2190\u2192/TAB] Tab | [1/2/3] Tab | [\u2191\u2193] Move | [r] Flip sort | [ESC] Exit";
@@ -7234,13 +7235,28 @@ void App::build_history_screen(std::ostringstream& frame, int W, int target_heig
         if (sep == std::string::npos) break;
         pos = sep + 3;
     }
-    while (hint_lines.size() < 2) hint_lines.push_back(std::string());
-    for (const auto& l : hint_lines) {
-        if (l.empty()) frame << "\n";
-        else frame << "\x1b[90m" << truncate_str(l, W) << "\x1b[0m\n";
-    }
-    if (!history_status_.empty()) frame << "\x1b[32m" << truncate_str(history_status_, W) << "\x1b[0m\n";
-    else frame << "\n";
+    const int legend_rows = static_cast<int>(hint_lines.size());
+    const int status_rows = history_status_.empty() ? 0 : 1;
+
+    // Same two bounds build_meta_screen() sizes against: term_rows_ - 1 is
+    // what clamp_output_rows() keeps, target_height is what the other
+    // overlays use. 2 = the panel's own border rows.
+    int budget = std::min(target_height, term_rows_ - 1);
+    // Top Tracks carries a second pane (ADD TOP TRACKS TO QUEUE: four option
+    // rows + its own two border rows) below the list, so the list gives those
+    // rows up -- the whole tab still adds up to `budget` lines (29 on a
+    // 30-line terminal). No upper cap on the list: it fills a maximised window.
+    const bool top_tab = (history_tab_ == 1);
+    const int add_body = 4;                       // Top 10 / 25 / 50 / 100
+    const int add_rows = top_tab ? add_body + 2 : 0;
+    int panel_h = std::max(top_tab ? 3 : 6, budget - fixed_rows - 2 - legend_rows - status_rows - add_rows);
+    for (const auto& l : build_history_panel(W, panel_h)) frame << l << "\n";
+    if (top_tab)
+        for (const auto& l : build_history_add_panel(W, add_body)) frame << l << "\n";
+
+    for (const auto& l : hint_lines)
+        frame << legend_sgr(settings_) << truncate_str(l, W) << "\x1b[0m\n";
+    if (status_rows) frame << "\x1b[32m" << truncate_str(history_status_, W) << "\x1b[0m\n";
 }
 
 std::vector<std::string> App::build_history_panel(int total_width, int height) {
@@ -7505,17 +7521,17 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     // 2. Content.
     int y = 3;
     if (settings_tab_ == 0) {
-        static const char* grp[15]  = {"BORDER_COLOR", "DISK", "METADATA", "VIZ", "PROGRESS_BAR",
-                                        "LIST", "", "", "QUEUE", "", "", "LYRICS", "", "", "HEADER"};
-        static const char* l1n[15]  = {"TOP", "TOP", "KEY", "LEFT", "PLAYED",
+        static const char* grp[16]  = {"BORDER_COLOR", "DISK", "METADATA", "VIZ", "PROGRESS_BAR",
+                                        "LIST", "", "", "QUEUE", "", "", "LYRICS", "", "", "HEADER", "LEGEND"};
+        static const char* l1n[16]  = {"TOP", "TOP", "KEY", "LEFT", "PLAYED",
                                         "INACTIVE  FG", "PLAYING   FG", "CURSOR    FG",
                                         "INACTIVE  FG", "PLAYING   FG", "CURSOR    FG",
                                         "INACTIVE  FG", "ACTIVE L  FG", "ACTIVE W  FG",
-                                        "TEXT"};
-        static const char* l2n[15]  = {"BOTTOM", "BOTTOM", "VAL", "RIGHT", "PENDING",
+                                        "TEXT", "TEXT"};
+        static const char* l2n[16]  = {"BOTTOM", "BOTTOM", "VAL", "RIGHT", "PENDING",
                                         "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG",
-                                        ""}; // HEADER is a foreground-only field: no background cell at all
-        for (int i = 0; i < 15; ++i) {
+                                        "", ""}; // HEADER and LEGEND are foreground-only fields: no background cell at all
+        for (int i = 0; i < 16; ++i) {
             if (i == 5) { pos(y, 1, B(y) + "\u251c" + repeat("\u2500", W - 2) + "\u2524" + R); y++; }
             pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
 
@@ -7529,7 +7545,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 pos(y, 38, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
             }
 
-            // Second (background) column: the HEADER row has no background
+            // Second (background) column: the HEADER and LEGEND rows have no background
             // cell at all, so it renders neither a label nor a ":" here --
             // without this guard there'd be a dangling colon at col 56 with
             // nothing between it and the preview.
@@ -7559,6 +7575,10 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 // section titles with, so the swatch shows the exact result.
                 std::string params = sgr_params_for(valA);
                 rt = (params.empty() ? std::string("\x1b[1m") : "\x1b[1;" + params + "m") + "SECTION HEADER" + R;
+            } else if (i == 15) {
+                // Same prefix legend_sgr() gives the real hint lines, so the
+                // swatch shows the exact result (an unset color is plain text).
+                rt = ansi_for(valA, false) + "[ESC] close | [ENTER] OK" + R;
             }
             if (!rt.empty()) pos(y, 72, rt);
             y++;
@@ -7638,13 +7658,13 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 } else if (r.kind == OnOffRow::Kind::AddPath) {
                     pos(y, 6, pad(r.label, 25)); pos(y, 32, ":");
                     pos(y, 35, (sel ? HI : "") + std::string(20, ' ') + R);
-                    if (sel) pos(y, 57, "\x1b[90m[ENTER] add a line\x1b[0m");
+                    if (sel) pos(y, 57, legend_sgr(settings_) + "[ENTER] add a line\x1b[0m");
                 } else { // Toggle
                     pos(y, 6, pad(r.label, 25)); pos(y, 32, ":");
                     std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(r.sel, 0), 20);
                     pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                     if (sel && !settings_options_for(settings_tab_, r.sel).empty())
-                        pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
+                        pos(y, 57, legend_sgr(settings_) + "< \u2194 >\x1b[0m");
                 }
                 y++;
             }
@@ -7662,7 +7682,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
             pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
 
-            if (sel && !settings_options_for(settings_tab_, i).empty()) pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
+            if (sel && !settings_options_for(settings_tab_, i).empty()) pos(y, 57, legend_sgr(settings_) + "< \u2194 >\x1b[0m");
             y++;
         }
     } else if (settings_tab_ == 3) {
@@ -7720,7 +7740,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             disp++;
         };
         auto draw_note = [&](const char* text) {
-            // blank spacer line, then the read-only note in dim grey.
+            // blank spacer line, then the read-only note in the legend color.
             // Two display lines, matching the `headers += 2` that
             // ref_display_row() adds at kRefStart.
             if (in_view()) {
@@ -7730,7 +7750,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             disp++;
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, std::string("\x1b[90m") + text + R);
+                pos(y, 6, legend_sgr(settings_) + text + R);
                 y++;
             }
             disp++;
@@ -7783,7 +7803,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     }
     y++;
 
-    pos(y, 1, "\x1b[90m[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [S] Save | [Q] Quit\x1b[0m");
+    pos(y, 1, legend_sgr(settings_) + "[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [S] Save | [Q] Quit\x1b[0m");
     y++;
     // The log/status line lives here now -- render_frame() deliberately no
     // longer prints it under the Browse list (an untruncated message there
@@ -8012,8 +8032,13 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
     };
 
-    int height = std::max(term_rows_ - 4, 8); // real terminal height, minus this overlay's own top/bottom border rows
-    int visible = std::max(1, height - 2);
+    // Same height as every other full-screen view: term_rows_ - 1 lines (the
+    // terminal's last row stays untouched so a trailing newline can never
+    // scroll), of which 2 are this overlay's own top/bottom border rows. It
+    // used to stop 3 lines short of that, leaving blank rows below the box
+    // on every terminal size (120x30 included) -- there is no status/prompt
+    // row here that would need them.
+    int visible = std::max(1, term_rows_ - 3);
     // Counted in DISPLAY lines rather than rows: a category costs three
     // (blank spacer + title + the row the title sits on) exactly like
     // ref_display_row() counts them on the Reference tab, and
@@ -8192,11 +8217,12 @@ std::vector<std::string> App::queue_overlay_legend(int panel_w) const {
 }
 
 namespace {
-// One legend line as drawn below an overlay frame: gray, padded to the panel
-// width (so it overwrites whatever the background has under it).
-std::string legend_row(const std::string& text, int panel_w) {
+// One legend line as drawn below an overlay frame: in the legend color (the
+// Colors tab's LEGEND row, `sgr` = legend_sgr()), padded to the panel width
+// (so it overwrites whatever the background has under it).
+std::string legend_row(const std::string& text, int panel_w, const std::string& sgr) {
     const int pad = std::max(0, panel_w - display_width(text));
-    return "\x1b[90m" + text + std::string(pad, ' ') + "\x1b[0m";
+    return sgr + text + std::string(pad, ' ') + "\x1b[0m";
 }
 } // namespace
 
@@ -8285,8 +8311,8 @@ std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_row
         }
         if (parts.empty()) footer.clear();
         list.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
-        // Key legend: below the frame, outside it, in gray.
-        for (const auto& l : list_overlay_legend(panel_w)) list.push_back(legend_row(l, panel_w));
+        // Key legend: below the frame, outside it, in the legend color.
+        for (const auto& l : list_overlay_legend(panel_w)) list.push_back(legend_row(l, panel_w, legend_sgr(settings_)));
     }
     out.insert(out.end(), list.begin(), list.end());
     return out;
@@ -8377,8 +8403,8 @@ std::vector<std::string> App::build_queue_overlay_panel(int panel_w, int queue_r
         }
         if (parts.empty()) footer.clear();
         out.back() = box_bottom(panel_w, footer, ansi_for(settings_.border_color_bottom, false));
-        // Key legend: below the frame, outside it, in gray.
-        for (const auto& l : queue_overlay_legend(panel_w)) out.push_back(legend_row(l, panel_w));
+        // Key legend: below the frame, outside it, in the legend color.
+        for (const auto& l : queue_overlay_legend(panel_w)) out.push_back(legend_row(l, panel_w, legend_sgr(settings_)));
     }
     return out;
 }
@@ -9187,7 +9213,14 @@ int App::player_view_height(int w) const {
     int h = static_cast<int>(build_metadata_panel(w).size());
     h += static_cast<int>(build_progress_panel(w).size());
     h += static_cast<int>(build_search_bar(w).size());
-    h += list_visible_rows_;
+    // The list rows the Browse view would get on THIS terminal, computed from
+    // term_rows_ right here instead of read from list_visible_rows_: that
+    // member is only refreshed by Browse frames, so after a resize (going
+    // full screen while a menu is open) it was one resize behind and the
+    // overlays kept the old, shorter height. Same formula as render_frame():
+    // the rows left under the chrome minus the box's 2 border rows and the
+    // untouched last terminal row.
+    h += std::max(0, term_rows_ - h - 1 - 2);
     h += 2; // the list/queue box's own top+bottom border rows (build_list_panel()/
             // build_queue_panel() add them ON TOP of the content rows they're given)
     h += 1; // the row Browse draws the AcoustID prompt / loading indicator in
@@ -9391,7 +9424,11 @@ std::string App::render_frame(TerminalIO& term) {
     // a scroll (see clamp_output_rows()'s comment for the same reasoning
     // applied as a hard backstop).
     int available_for_list = term_rows_ - fixed_h - 1 - 2;
-    list_visible_rows_ = std::clamp(available_for_list, 0, kListVisibleRows);
+    // No upper cap: the list/queue panes take every row the terminal leaves,
+    // so a maximised window is filled to its last row. (It used to be capped
+    // at kListVisibleRows = 8, which is exactly what a 30-row terminal has
+    // room for -- on a taller one the extra rows stayed blank.)
+    list_visible_rows_ = std::max(0, available_for_list);
 
     ensure_visible_row_meta();
 

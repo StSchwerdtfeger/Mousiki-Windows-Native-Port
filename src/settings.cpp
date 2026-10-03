@@ -604,7 +604,7 @@ static Settings load_from_config(const fs::path& path) {
             {"ColorLyricsInactiveFg", "inactive_line_color"}, {"ColorLyricsInactiveBg", "inactive_line_bg_color"},
             {"ColorLyricsActiveLineFg", "active_line_color"}, {"ColorLyricsActiveLineBg", "active_line_bg_color"},
             {"ColorLyricsActiveWordFg", "active_word_color"}, {"ColorLyricsActiveWordBg", "active_word_bg_color"},
-            {"ColorHeader", "header_color"},
+            {"ColorHeader", "header_color"}, {"ColorLegend", "legend_color"},
             {"MetaDataOnly", "meta_only"},
             {"ElimentDisk", "Eliment_disk"}, {"ElimentDummyButtons", "Element_dummy_buttons"},
             {"ElimentQueue", "Eliment_queue"}, {"ElimentWaveForm", "Eliment_waveform_progress_bar"},
@@ -732,6 +732,7 @@ static Settings load_from_config(const fs::path& path) {
         if (key == "border_color") { if (!value.empty()) s.border_color = normalize_color_value(value); continue; }
         if (key == "border_color_bottom") { if (!value.empty()) s.border_color_bottom = normalize_color_value(value); continue; }
         if (key == "header_color") { if (!value.empty()) s.header_color = normalize_color_value(value); continue; }
+        if (key == "legend_color") { if (!value.empty()) s.legend_color = normalize_color_value(value); continue; }
         if (key == "active_line_color") { if (!value.empty()) s.active_line_color = normalize_color_value(value); continue; }
         if (key == "active_line_bg_color") { if (!value.empty()) s.active_line_bg_color = normalize_color_value(value); continue; }
         if (key == "active_word_color") { if (!value.empty()) s.active_word_color = normalize_color_value(value); continue; }
@@ -1029,6 +1030,9 @@ void save_settings(const Settings& s) {
     out << "\n# Section headers (the REFERENCE tab's category titles and the ON/OFF tab's\n";
     out << "# LOCAL PATH / PLAYLIST PATH titles) -- 0 = no color, plain bold text\n";
     out << "ColorHeader=" << s.header_color << "\n";
+    out << "\n# Key command legends (the grey hint lines such as \"[ESC] close\" in the Settings, the big\n";
+    out << "# list / queue overlays, the playlist / meta editor and the history) -- 0 = terminal default\n";
+    out << "ColorLegend=" << s.legend_color << "\n";
     out << "\n# List\n";
     out << "ColorListInactiveFg=" << s.list_color << "\n";
     out << "ColorListInactiveBg=" << s.list_inactive_bg_color << "\n";

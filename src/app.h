@@ -89,7 +89,7 @@ private:
     std::string pre_search_local_query_;
     std::string last_online_query_;
     int local_sort_mode_ = 0; // 0=folder order, 1=title A-Z, 2=artist A-Z
-    static constexpr int kListVisibleRows = 8; // the *maximum*/preferred list height when there's room for it
+    static constexpr int kListVisibleRows = 8; // initial list height before the first frame; from then on the list/queue panes take ALL the rows the terminal leaves (render_frame()), so a maximised window is filled instead of ending in blank lines
 
     // --- terminal-height awareness --------------------------------------
     // The render loop used to only ever look at term.cols() (see the
@@ -111,7 +111,10 @@ private:
     // how many list/queue rows *actually* fit this frame -- clamped
     // between 0 and kListVisibleRows based on how much room term_rows_
     // leaves after the fixed chrome (metadata/progress/search bar/status
-    // line). Every place that used to scroll-clamp or size against the
+    // line) -- 0 and UP: since the cap was lifted the panes grow with the
+    // terminal, so going full screen no longer leaves unused rows below the
+    // main UI, and every overlay that mirrors the main UI's height
+    // (player_view_height()) follows. Every place that used to scroll-clamp or size against the
     // kListVisibleRows constant now uses this instead, so what's
     // rendered and what the scroll math thinks is visible never
     // disagree. render_frame() also applies a hard line-count safety net
@@ -291,7 +294,7 @@ private:
     void playlist_remove_hovering_track();
     void playlist_move_hovering_track(int dir); // dir=-1 up, +1 down -- keys 4/5, mirrors queue_move_hovering
     void playlist_delete_selected(); // tab 1's DEL, after playlist_confirm_delete_ confirms
-    void playlist_save_current();
+    void playlist_save_current(bool leave = false); // leave: also close the editor (only the "save before exiting?" prompt does)
     void handle_playlist_key(int key);
     void build_playlist_screen(std::ostringstream& frame, int W, int player_h) const;
     std::vector<std::string> build_playlist_library_panel(int width, int height) const;

@@ -127,6 +127,14 @@ struct Settings {
     // in config.txt. "0"/empty = plain bold, no color.
     std::string header_color = "10";
 
+    // Key command legends: the grey "[ESC] close | [ENTER] confirm" hint lines
+    // of the Settings panel, the big list / queue overlays, the playlist
+    // editor, the meta editor and the listening history. Default "90" --
+    // direct SGR 90 (bright black), exactly the grey they have always been
+    // drawn in -- changeable from the Colors tab's LEGEND row, or ColorLegend=
+    // in config.txt. "0"/empty = the terminal's own text color.
+    std::string legend_color = "90";
+
     std::string visualizer_color = "32";
     std::string visualizer_color_end = "33";
 
