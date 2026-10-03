@@ -1027,8 +1027,8 @@ void save_settings(const Settings& s) {
     out << "ColorVizRight=" << s.visualizer_color_end << "\n";
     out << "ColorProgressBarPlayed=" << s.progress_played_color << "\n";
     out << "ColorProgressBarPending=" << s.progress_remaining_color << "\n";
-    out << "\n# Section headers (the REFERENCE tab's category titles and the ON/OFF tab's\n";
-    out << "# LOCAL PATH / PLAYLIST PATH titles) -- 0 = no color, plain bold text\n";
+    out << "\n# Section headers (the REFERENCE tab's category titles and its\n";
+    out << "# LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH titles) -- 0 = no color, plain bold text\n";
     out << "ColorHeader=" << s.header_color << "\n";
     out << "\n# Key command legends (the grey hint lines such as \"[ESC] close\" in the Settings, the big\n";
     out << "# list / queue overlays, the playlist / meta editor and the history) -- 0 = terminal default\n";
