@@ -7022,7 +7022,7 @@ void App::history_open() {
 }
 
 void App::history_refresh_top() {
-    history_top_view_ = history_top(history_.plays(), history_most_first_);
+    history_top_view_ = history_top(history_.plays(), history_most_first_, &history_.archive());
 }
 
 // Closes the record of whatever is playing right now. Called on every
@@ -7063,7 +7063,7 @@ void App::history_begin_current_play() {
 void App::history_add_top_to_queue(int n) {
     // Ranked independently of the list above (which 'r' can flip to
     // least-played first): "top N" always means the N most-played titles.
-    const std::vector<HistoryTopRow> top = history_top(history_.plays(), /*most_first=*/true);
+    const std::vector<HistoryTopRow> top = history_top(history_.plays(), /*most_first=*/true, &history_.archive());
     if (top.empty()) {
         history_status_ = "nothing played yet -- nothing to queue";
         return;
@@ -7072,12 +7072,9 @@ void App::history_add_top_to_queue(int n) {
     int added = 0, missing = 0;
     for (int i = 0; i < take; ++i) {
         const HistoryTopRow& r = top[static_cast<size_t>(i)];
-        // The record only keeps the title; the artist comes from the newest
-        // play of the same track (plays_ is newest-first).
-        std::string artist;
-        for (const HistoryPlay& p : history_.plays()) {
-            if (p.id == r.id) { artist = p.artist; break; }
-        }
+        // history_top() already carries the newest known artist of the title
+        // (from the window or, for older plays, the archive).
+        const std::string artist = r.artist;
         if (r.id.compare(0, 3, "yt:") == 0) {
             queue_.push_back({false, r.title, artist, {}, r.id.substr(3)});
             ++added;
@@ -7334,7 +7331,7 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
         }
     } else {
         // --- Habits: three categories, each under a highlighted header ---
-        const HistoryStats s = history_stats(history_.plays());
+        const HistoryStats s = history_stats(history_.plays(), &history_.archive());
         const int lbl_w = std::max(20, inner - 20);
         auto num1 = [](double v) { char b[32]; std::snprintf(b, sizeof b, "%.1f", v); return std::string(b); };
         auto pct = [](double v) { char b[32]; std::snprintf(b, sizeof b, "%.0f", v * 100.0); return std::string(b); };

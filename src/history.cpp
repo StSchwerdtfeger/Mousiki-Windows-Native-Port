@@ -20,11 +20,14 @@ using namespace tinyjson;
 
 namespace {
 
-// Two limits that keep this file honest over months of use: how many plays
-// are kept at all (the History tab only shows 100, but the aggregates need
-// history behind them), and how long a silence has to be before it starts a
-// new session.
-constexpr size_t kMaxPlays = 2000;
+// Two limits that keep this file honest over months of use: how many INDIVIDUAL
+// plays are kept (the History tab shows only the newest 100; the rest of the
+// window is what keeps history.json small, as it is rewritten after every
+// track) and how long a silence has to be before it starts a new session.
+// Nothing counted is lost when a record leaves the window: it is folded into
+// the HistoryArchive (per-title / per-day / session totals) first, so the
+// Habits and Top Tracks numbers are lifetime figures with no cap at all.
+constexpr size_t kMaxPlays = 1000;
 constexpr long long kSessionGapSec = 30 * 60;
 
 fs::path history_path() {
@@ -80,6 +83,65 @@ std::string day_key(long long unix_sec) {
     return buf;
 }
 
+Value archive_to_json(const HistoryArchive& a) {
+    Value v = Value::make_obj();
+    v.set("plays", Value::make_num(static_cast<double>(a.plays)));
+    v.set("done", Value::make_num(static_cast<double>(a.finished)));
+    v.set("heard", Value::make_num(a.listened_sec));
+    Value titles = Value::make_arr();
+    for (const auto& kv : a.titles) {
+        Value t = Value::make_obj();
+        t.set("id", Value::make_str(kv.first));
+        t.set("t", Value::make_str(kv.second.title));
+        t.set("a", Value::make_str(kv.second.artist));
+        t.set("len", Value::make_num(kv.second.len_sec));
+        t.set("n", Value::make_num(kv.second.plays));
+        t.set("heard", Value::make_num(kv.second.listened_sec));
+        titles.arr.push_back(t);
+    }
+    v.set("titles", titles);
+    Value days = Value::make_obj();
+    for (const auto& kv : a.per_day) days.set(kv.first, Value::make_num(kv.second));
+    v.set("days", days);
+    v.set("sess_closed", Value::make_num(a.sessions_closed));
+    v.set("sess_sum", Value::make_num(a.session_sum_sec));
+    v.set("sess_open", Value::make_bool(a.session_open));
+    v.set("sess_start", Value::make_num(static_cast<double>(a.sess_start)));
+    v.set("sess_end", Value::make_num(static_cast<double>(a.sess_end)));
+    return v;
+}
+
+void archive_from_json(const Value& v, HistoryArchive& a) {
+    a = HistoryArchive();
+    if (v.type != Type::Object) return;
+    if (auto* x = v.find("plays")) a.plays = static_cast<long long>(x->as_number(0.0));
+    if (auto* x = v.find("done")) a.finished = static_cast<long long>(x->as_number(0.0));
+    if (auto* x = v.find("heard")) a.listened_sec = x->as_number(0.0);
+    if (auto* x = v.find("titles")) {
+        if (x->type == Type::Array) {
+            for (const auto& item : x->arr) {
+                const Value* id = item.find("id");
+                if (!id) continue;
+                HistoryArchiveTitle t;
+                if (auto* y = item.find("t")) t.title = y->as_string();
+                if (auto* y = item.find("a")) t.artist = y->as_string();
+                if (auto* y = item.find("len")) t.len_sec = y->as_number(0.0);
+                if (auto* y = item.find("n")) t.plays = static_cast<int>(y->as_number(0.0));
+                if (auto* y = item.find("heard")) t.listened_sec = y->as_number(0.0);
+                a.titles[id->as_string()] = t;
+            }
+        }
+    }
+    if (auto* x = v.find("days")) {
+        if (x->type == Type::Object) for (const auto& kv : x->obj) a.per_day[kv.first] = kv.second.as_number(0.0);
+    }
+    if (auto* x = v.find("sess_closed")) a.sessions_closed = static_cast<int>(x->as_number(0.0));
+    if (auto* x = v.find("sess_sum")) a.session_sum_sec = x->as_number(0.0);
+    if (auto* x = v.find("sess_open")) a.session_open = x->as_bool(false);
+    if (auto* x = v.find("sess_start")) a.sess_start = static_cast<long long>(x->as_number(0.0));
+    if (auto* x = v.find("sess_end")) a.sess_end = static_cast<long long>(x->as_number(0.0));
+}
+
 } // namespace
 
 // The identity this whole feature aggregates by: a local path as-is, a stream
@@ -91,12 +153,47 @@ std::string history_track_id(bool is_local, const std::string& path, const std::
     return "yt:" + video_id;
 }
 
+
+// Same bookkeeping history_stats() does for the window, applied to one record
+// that is about to leave it. Oldest -> newest, so the session walk below is
+// the forward direction too.
+void HistoryArchive::fold(const HistoryPlay& p) {
+    ++plays;
+    if (p.finished) ++finished;
+    listened_sec += p.listened_sec;
+    if (!p.id.empty()) {
+        HistoryArchiveTitle& t = titles[p.id];
+        if (!p.title.empty()) t.title = p.title;   // newer folds overwrite: the latest name wins
+        if (!p.artist.empty()) t.artist = p.artist;
+        if (p.len_sec > 0) t.len_sec = p.len_sec;
+        ++t.plays;
+        t.listened_sec += p.listened_sec;
+    }
+    if (p.started_at > 0) {
+        per_day[day_key(p.started_at)] += p.listened_sec;
+        const long long p_end = p.started_at + static_cast<long long>(p.listened_sec + 0.5);
+        if (!session_open || p.started_at - sess_end > kSessionGapSec) {
+            if (session_open) {
+                ++sessions_closed;
+                session_sum_sec += static_cast<double>(std::max<long long>(0, sess_end - sess_start));
+            }
+            session_open = true;
+            sess_start = p.started_at;
+            sess_end = p_end;
+        } else {
+            sess_start = std::min(sess_start, p.started_at);
+            sess_end = std::max(sess_end, p_end);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
 void HistoryStore::load() {
     plays_.clear();
+    archive_ = HistoryArchive();
     live_index_ = -1;
 
     fs::path p = history_path();
@@ -113,6 +210,7 @@ void HistoryStore::load() {
     // and must never be able to stop the app from starting.
     Value root;
     if (!parse(text, root) || root.type != Type::Object) return;
+    if (auto* arch = root.find("archive")) archive_from_json(*arch, archive_);
     if (auto* arr = root.find("plays")) {
         if (arr->type == Type::Array) {
             for (const auto& item : arr->arr) plays_.push_back(play_from_json(item));
@@ -121,7 +219,16 @@ void HistoryStore::load() {
     // A play that was still in progress when the app died last time simply
     // stays historical -- it does not get its live record back, which is why
     // it remains a skip rather than being silently re-counted next run.
-    if (plays_.size() > kMaxPlays) plays_.resize(kMaxPlays);
+    // Anything beyond the window (an older, longer file) is folded into the
+    // archive, not thrown away.
+    trim_overflow();
+}
+
+void HistoryStore::trim_overflow() {
+    while (plays_.size() > kMaxPlays) {
+        archive_.fold(plays_.back()); // oldest record; the live one sits at the front and is never reached
+        plays_.pop_back();
+    }
 }
 
 void HistoryStore::save() const {
@@ -130,7 +237,8 @@ void HistoryStore::save() const {
     fs::create_directories(p.parent_path(), ec);
 
     Value root = Value::make_obj();
-    root.set("version", Value::make_num(1));
+    root.set("version", Value::make_num(2));
+    if (!archive_.empty()) root.set("archive", archive_to_json(archive_));
     Value arr = Value::make_arr();
     for (const auto& pl : plays_) arr.arr.push_back(play_to_json(pl));
     root.set("plays", arr);
@@ -154,11 +262,7 @@ void HistoryStore::save() const {
 void HistoryStore::begin_play(const HistoryPlay& p) {
     plays_.insert(plays_.begin(), p);
     live_index_ = 0;
-    if (plays_.size() > kMaxPlays) {
-        // Trim from the oldest end -- the live record sits at the front, so
-        // it can never be the one dropped.
-        plays_.erase(plays_.begin() + static_cast<long>(kMaxPlays), plays_.end());
-    }
+    trim_overflow(); // oldest records are folded into the archive; the live one is at the front
 }
 
 void HistoryStore::add_listened(double sec) {
@@ -196,7 +300,8 @@ const HistoryPlay* HistoryStore::live_play() const {
 // Aggregation
 // ---------------------------------------------------------------------------
 
-std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bool most_first) {
+std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bool most_first,
+                                       const HistoryArchive* archive) {
     std::vector<HistoryTopRow> rows;
     std::map<std::string, size_t> by_id;
     // Newest-first walk: a title's most recent play supplies the display
@@ -209,6 +314,7 @@ std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bo
             HistoryTopRow r;
             r.id = p.id;
             r.title = p.title;
+            r.artist = p.artist;
             r.len_sec = p.len_sec;
             r.plays = 1;
             r.listened_sec = p.listened_sec;
@@ -217,8 +323,35 @@ std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bo
             HistoryTopRow& r = rows[it->second];
             ++r.plays;
             r.listened_sec += p.listened_sec;
-            if (!p.title.empty()) r.title = p.title;
-            if (p.len_sec > 0) r.len_sec = p.len_sec;
+            if (r.title.empty() && !p.title.empty()) r.title = p.title;
+            if (r.artist.empty() && !p.artist.empty()) r.artist = p.artist;
+            if (r.len_sec <= 0 && p.len_sec > 0) r.len_sec = p.len_sec;
+        }
+    }
+    // Plays that already left the window of individual records. The window is
+    // newer, so its name/artist/length win and the archive only fills gaps.
+    if (archive) {
+        for (const auto& kv : archive->titles) {
+            const HistoryArchiveTitle& t = kv.second;
+            auto it = by_id.find(kv.first);
+            if (it == by_id.end()) {
+                HistoryTopRow r;
+                r.id = kv.first;
+                r.title = t.title;
+                r.artist = t.artist;
+                r.len_sec = t.len_sec;
+                r.plays = t.plays;
+                r.listened_sec = t.listened_sec;
+                by_id[kv.first] = rows.size();
+                rows.push_back(r);
+            } else {
+                HistoryTopRow& r = rows[it->second];
+                r.plays += t.plays;
+                r.listened_sec += t.listened_sec;
+                if (r.title.empty()) r.title = t.title;
+                if (r.artist.empty()) r.artist = t.artist;
+                if (r.len_sec <= 0) r.len_sec = t.len_sec;
+            }
         }
     }
     std::sort(rows.begin(), rows.end(), [most_first](const HistoryTopRow& a, const HistoryTopRow& b) {
@@ -229,37 +362,56 @@ std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bo
     return rows;
 }
 
-HistoryStats history_stats(const std::vector<HistoryPlay>& plays) {
+HistoryStats history_stats(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive) {
     HistoryStats s;
-    s.plays = static_cast<int>(plays.size());
-
+    // Lifetime totals = the archive (records that left the window) + the window.
+    long long total_plays = static_cast<long long>(plays.size());
+    long long total_finished = 0;
     std::map<std::string, int> per_title;
     std::map<std::string, double> per_day;
+    if (archive) {
+        total_plays += archive->plays;
+        total_finished += archive->finished;
+        s.total_sec += archive->listened_sec;
+        for (const auto& kv : archive->titles) per_title[kv.first] += kv.second.plays;
+        per_day = archive->per_day;
+    }
     for (const HistoryPlay& p : plays) {
-        if (p.finished) ++s.finished;
+        if (p.finished) ++total_finished;
         if (!p.id.empty()) ++per_title[p.id];
         s.total_sec += p.listened_sec;
         if (p.started_at > 0) per_day[day_key(p.started_at)] += p.listened_sec;
     }
+    s.plays = static_cast<int>(total_plays);
+    s.finished = static_cast<int>(total_finished);
     s.skipped = s.plays - s.finished;
     s.completion = s.plays > 0 ? static_cast<double>(s.finished) / s.plays : 0.0;
     for (const auto& kv : per_title) {
         if (kv.second > 1) s.replays += kv.second - 1;
     }
 
-    // Sessions: walk newest -> oldest and cut wherever the silence between
-    // one play's END and the next one's start exceeds 30 minutes. Measuring
-    // from the previous end (not from its start) is what stops one long album
-    // or podcast run from being counted as many short sessions.
-    int sessions = 0;
-    double session_sum = 0.0;
-    long long sess_start = 0, sess_end = 0; // earliest start / latest end of the session being grown
-    bool in_session = false;
+    // Sessions: walk oldest -> newest (plays is newest-first, so the loop
+    // runs backwards) and cut wherever the silence between the END of the
+    // session so far and the start of the next play exceeds 30 minutes.
+    // Measuring from the previous end (not from its start) is what stops one
+    // long album or podcast run from being counted as many short sessions.
+    // The walk starts from the archive's state, so sessions that began before
+    // the window are neither lost nor split.
+    int sessions = archive ? archive->sessions_closed : 0;
+    double session_sum = archive ? archive->session_sum_sec : 0.0;
+    long long sess_start = archive ? archive->sess_start : 0;
+    long long sess_end = archive ? archive->sess_end : 0; // earliest start / latest end of the session being grown
+    bool in_session = archive ? archive->session_open : false;
     for (size_t i = plays.size(); i-- > 0;) {
         const HistoryPlay& p = plays[i];
         if (p.started_at <= 0) continue;
         long long p_end = p.started_at + static_cast<long long>(p.listened_sec + 0.5);
-        if (!in_session || sess_start - p_end > kSessionGapSec) {
+        // The gap is measured from the latest end seen so far to this (newer)
+        // play's start. (It used to be sess_start - p_end, which is only right
+        // when walking newest -> oldest; walking the other way it is always
+        // hugely negative, so no gap was ever detected and the whole history
+        // came out as ONE session.)
+        if (!in_session || p.started_at - sess_end > kSessionGapSec) {
             if (in_session) {
                 ++sessions;
                 session_sum += static_cast<double>(std::max<long long>(0, sess_end - sess_start));

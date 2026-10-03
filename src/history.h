@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,7 @@ struct HistoryTopRow {
     double len_sec = 0.0;
     int plays = 0;
     double listened_sec = 0.0;
+    std::string artist;         // newest known artist of this title (for "add top tracks to queue")
 };
 
 // Everything the "Habits" tab shows, derived from the stored plays.
@@ -51,6 +53,40 @@ struct HistoryStats {
     double avg_day_sec = 0.0;   // listened per day that had any music at all
     double total_sec = 0.0;
     int days = 0;               // distinct calendar days with music
+};
+
+// ---------------------------------------------------------------------------
+// Lifetime totals. The store only keeps the newest kMaxPlays individual
+// records (that is what keeps history.json small -- it is rewritten after every
+// track), but nothing counted may ever get lost with them: a record that falls
+// out of the window is FOLDED into this archive first. The archive grows with
+// the number of distinct titles and distinct days -- not with the number of
+// plays -- so a few hundred KB cover years of listening.
+// ---------------------------------------------------------------------------
+struct HistoryArchiveTitle {
+    std::string title, artist;
+    double len_sec = 0.0;
+    int plays = 0;
+    double listened_sec = 0.0;
+};
+
+struct HistoryArchive {
+    long long plays = 0;        // every folded play ...
+    long long finished = 0;     // ... and how many of them were heard to the end
+    double listened_sec = 0.0;
+    std::map<std::string, HistoryArchiveTitle> titles;  // per title: play count + time (Top Tracks, Replays)
+    std::map<std::string, double> per_day;              // "YYYY-MM-DD" -> seconds (Days with music, averages)
+    // Sessions, kept exactly: closed ones as count + summed length, plus the
+    // one still "open" at the oldest end of the live window, which the window's
+    // oldest plays may still continue (see history_stats()).
+    int sessions_closed = 0;
+    double session_sum_sec = 0.0;
+    bool session_open = false;
+    long long sess_start = 0, sess_end = 0;
+
+    // Adds one record. Must be called oldest -> newest.
+    void fold(const HistoryPlay& p);
+    bool empty() const { return plays == 0; }
 };
 
 class HistoryStore {
@@ -85,15 +121,23 @@ public:
     // "completed" verdict when a track is handed over to its successor).
     const HistoryPlay* live_play() const;
 
+    // Totals of everything that has already left the window of individual records.
+    const HistoryArchive& archive() const { return archive_; }
+
 private:
+    void trim_overflow();             // folds the oldest records into archive_ while over the cap
+    HistoryArchive archive_;
     std::vector<HistoryPlay> plays_;  // newest first, capped
     int live_index_ = -1;             // index of the in-progress record, -1 when none
 };
 
 // Aggregation. `most_first` is the Top Tracks default (play count descending);
 // false is the `r` key's "least played on top" alternative.
-std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bool most_first);
-HistoryStats history_stats(const std::vector<HistoryPlay>& plays);
+// Both take the store's archive so the numbers are lifetime totals, not just
+// "what is still in the window of individual records".
+std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bool most_first,
+                                       const HistoryArchive* archive = nullptr);
+HistoryStats history_stats(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive = nullptr);
 
 // The key a play is recorded and aggregated under: a local file's path, or
 // "yt:<video id>" for a stream (so the same track reached two ways counts
