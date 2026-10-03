@@ -48,7 +48,7 @@ The main screen has a **local/online/playlist list** on the left (titled `LOCAL 
 
 ### Play mode letter
 
-The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` repeat queue.
+The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` queue then stop.
 
 ---
 
@@ -155,7 +155,7 @@ The equalizer works on everything the player plays and changes the sound **while
 
 ### The five play modes (`m`)
 
-Each press moves to the next mode in this order: **list → repeat → shuffle → stop → repeat queue → list …**
+Each press moves to the next mode in this order: **list → repeat → shuffle → stop → queue then stop → list …**
 
 | Mode | Letter | Behavior when a track finishes |
 |---|---|---|
@@ -163,7 +163,7 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | Repeat | `R` | Replays the same track again. |
 | Shuffle | `S` | Plays a random track. If the queue has more than one item, a random queue item is chosen. |
 | Stop | `O` | Plays the track and then stops, with no automatic advance. The "no track loaded" screen with the cassette is shown. |
-| Repeat queue | `Q` | The queue loops: each played item is moved to the back instead of being removed. With an empty queue it behaves like list mode. |
+| Queue then stop | `Q` | Plays the queue **once**, then stops. It never falls through to the library: when the queue is used up, playback ends (like Stop mode), also when the queue was empty to begin with and a library track finishes. With the queue **locked** (default) each item goes to the back as it is played and the pass ends after the last unplayed item, so the queue is back in its original order afterwards. Tracks you add during the pass (`a`, `e`, bulk add) still play before it ends. Unlocked, played items leave the queue and it stops when it is empty. `n` always skips on, also after the pass is over (it starts a new one). |
 
 ---
 
@@ -183,6 +183,7 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | `N` (Shift+N) | Toggle metadata-only track list | Switches every list row between **filename** and **metadata title** (the embedded title tag). Files with no title tag, or whose tags have not been read yet, keep showing their filename. This also switches what "title A-Z" sorts by (see below). Also available in **Settings → ON/OFF**. |
 | `l` | Retry lyrics | Opens a small form to fetch lyrics again with a **manual title and artist**. Use it when the automatic match was wrong. |
 | `ALT+l` | Adjust lyrics | Opens a small overlay menu for live adjustment of the lyrics timing. |
+
 | `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope's afterglow, line thickness and tail **live**. See *The oscilloscope* below. |
 | `V` (Shift+V) | Normalization tuning | Opens a small overlay to switch loudness normalization on or off and to change its target level and maximum boost **live**. See *Loudness normalization overlay* below. |
 | `Z` (Shift+Z) | Sleep timer | Opens a small overlay to pause playback after 15, 30, 60, 90 or 120 minutes, or to stop after the current song. See *Sleep timer overlay* below. |
@@ -292,8 +293,6 @@ Playback keeps running while the overlay is open, but its keys are the only ones
 
 **Live line.** Below the three rows a grey line shows what is happening with the track that is playing right now: its measured loudness and the gain that is applied to it (`+` = raised, `-` = lowered). If a quiet track would need more than **Max boost**, the applied gain stops at that limit, so this line is the quickest way to see whether the boost limit is holding a track back. For the first seconds of a track it shows *measuring loudness* until enough audio has been analysed.
 
-![Loudness normalization overlay](images/Playlist_menu_NORM_OVERLAY.png)
-
 ### Sleep timer overlay (`SHIFT+Z`)
 
 A small overlay for falling asleep to music. Playback keeps running while it is open.
@@ -354,14 +353,14 @@ The queue is a list of tracks that play **before** the normal list continues. Pr
 
 | Key | Action | What it does |
 |---|---|---|
-| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next (while the queue is locked: right after the track that was played last). Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
+| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next. Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
 | `e` | Add hovering track to the **end** | With the **list** focused, adds the highlighted track to the end of the queue. On a playlist row it queues the whole playlist at the end. With the queue focused it only reminds you to focus the list first. |
 | `d` | Remove hovering track from queue | Removes the highlighted queue item. Focus the queue with `TAB` first. |
 | `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
 | `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
 | `$` (Shift+4) | Move to top | Moves the highlighted queue item to the very top of the queue. |
 | `%` (Shift+5) | Move to bottom | Moves the highlighted queue item to the very bottom of the queue. |
-| `!` | Lock / unlock the queue | A **locked** queue keeps its tracks when they are played. See *Locked queue* below. |
+| `!` | Lock / unlock the queue | The queue is **locked by default**: a played track moves to the end of the queue. Unlocked, it leaves the queue. See *Locked queue* below. |
 | `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
 | `CTRL+SHIFT+Z` | Undo the last queue clear | Brings back the queue that `SHIFT+X` cleared. See *Undo clear* below. |
 | `CTRL+SHIFT+U` | Queue to playlist | Saves the queue's local tracks as a playlist. See *Queue to playlist* below. |
@@ -394,7 +393,9 @@ Only one of the two overlays can be open at a time: `SHIFT+K` while the list ove
 
 ### Locked queue (`!`)
 
-Normally a track **leaves the queue** when it is played. With the queue **locked** it stays: nothing is erased by auto-advance or by `n`; playback walks through the queue in place instead, from the track that was played last to the one after it, and wraps around from the end to the start (in shuffle mode a random queue item is picked). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`, and `a` then inserts right after the track that was played last. Press `!` again to unlock; played tracks then leave the queue again. The lock state is part of the saved session.
+The queue is **locked by default**. A locked queue keeps all its tracks: when a track is played (by auto-advance or by `n`) it **moves to the end of the queue**, so the queue loops instead of draining, and the next track is always the one at the top (in shuffle mode a random queue item is picked and sent to the end). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`.
+
+Press `!` to **unlock**: a track then **leaves the queue** once it is played, and the queue runs empty. Press `!` again to lock it. The lock state is part of the saved session, so a session saved by an older version keeps the state it was saved with (press `!` once if it comes back unlocked). The play modes do not change this, with one exception: in `Q` (queue then stop) a locked queue is played through once and playback then stops instead of looping.
 
 ### Undo clear (`CTRL+SHIFT+Z`)
 
@@ -402,7 +403,7 @@ Brings back the queue that was cleared last with `SHIFT+X`. The restored tracks 
 
 ### Queue to playlist (`CTRL+SHIFT+U`)
 
-Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` or `Fn+←` to save. Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
+Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` to save (the editor stays open, `ESC` leaves it). Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
 
 ### Clear queue prompt (`SHIFT+X`)
 
@@ -451,7 +452,7 @@ Paste a YouTube playlist link to queue tracks from it.
 | `ENTER` | Depends on focus. See the table below. |
 | `4` / `5` | Move the highlighted track up or down in the playlist you are building |
 | `D` / `DEL` / `BACKSPACE` | Remove the highlighted track (track list focused). On the Saved Playlists tab, `DEL` deletes the selected playlist after a Yes/No confirmation. |
-| `HOME` / `Fn + ←` | Save the playlist |
+| `HOME` | Save the playlist. The editor **stays open** and the status line below the legend confirms the save (or asks for a name first); leave with `ESC`. |
 | `SHIFT+←` / `SHIFT+→` | Mark text in the name and search fields |
 | `CTRL+C` / `CTRL+X` / `CTRL+V` | Copy, cut and paste text in those fields |
 
@@ -466,7 +467,7 @@ Paste a YouTube playlist link to queue tracks from it.
 
 ### Leaving
 
-`ESC` closes the editor. If there are unsaved changes on the Create/Edit tab, it asks whether to save: `y` saves, `n` discards and leaves, `ESC` cancels the question and keeps editing.
+`ESC` closes the editor. If there are unsaved changes on the Create/Edit tab, it asks whether to save: `y` saves **and leaves**, `n` discards and leaves, `ESC` cancels the question and keeps editing.
 
 ---
 
@@ -615,7 +616,7 @@ Press `s` on the main screen to open **Settings**. It has five tabs: **COLORS**,
 *The COLORS tab with the live preview on the right.*
 
 
-Sets the colours of the interface. There are **15 rows**, each with a name, one or two value cells, and a **live preview** on the right.
+Sets the colours of the interface. There are **16 rows**, each with a name, one or two value cells, and a **live preview** on the right.
 
 **Values** are numbers from the 256-colour terminal palette (`1`–`255`). `0` or an empty field means "no colour", so the terminal's own default is used. Values in the ranges 30–47 and 90–107 are used as direct terminal colour codes.
 
@@ -644,7 +645,7 @@ Sets the colours of the interface. There are **15 rows**, each with a name, one 
 
 ![Settings, ON/OFF tab](images/Settings_ON_OFF_TAB.png)
 
-*The ON/OFF tab: switches at the top, then the LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST PATH lists.*
+*The ON/OFF tab: switches at the top.*
 
 
 The first part is a list of **switches** (change them with `←`/`→`). Most are true/false, but **Lyric Viz** picks between `sphere` and `osci`. Below it are the folder settings, which you edit with `ENTER`.
@@ -686,7 +687,7 @@ All rows are cycled with `←`/`→` (or typed after `ENTER`).
 | Vis. Fluidity | 1–10 | How the visualizer bars **rise**. It affects only the rising motion. |
 | Waveform Style | raw, smooth | Waveform drawing style. Same as the `w` key. |
 | Disk Speed | 0.01, 0.05, 0.10, 0.17, 0.25, 0.50, 0.75, 1.00 | How fast the disk spins. |
-| Playback Mode | list, loop, shuffle, stop, repeat queue | The play mode. Same as the `m` key (`loop` is the mode shown as *repeat*). |
+| Playback Mode | list, loop, shuffle, stop, queue then stop | The play mode. Same as the `m` key (`loop` is the mode shown as *repeat*). |
 | Vis. Degradation | 1–10 | How quickly bars **fall**. `1` is a slow, VU-meter-like fade, `10` a near-instant cutoff. |
 | Vis. Viscosity | 1–10 | How strongly the bar motion is damped and smoothed between neighbouring bars. |
 | Lyrics Alignment | left, center, right | Where lyric lines sit in their area. |
@@ -696,9 +697,19 @@ All rows are cycled with `←`/`→` (or typed after `ENTER`).
 
 ![Settings, Reference tab](images/Settings_REFERENCE_TAB.png)
 
-*The REFERENCE tab: loudness normalization at the top, then the rebindable hotkeys (scroll for the rest).*
+*The REFERENCE tab: the rebindable hotkeys (scroll for the rest).*
 
-The longest tab. It scrolls as one list and has two parts.
+The longest tab. It scrolls as one list and has two parts. 
+
+**Folder settings** (editable, below the hotkeys, under the headers LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST PATH). Move onto a row and press `ENTER` to edit it:
+
+| Section | Rows | What it does |
+|---|---|---|
+| LOCAL PATH | `Local Path 1`, `2`, … plus `+ new path` | The folders scanned for music. `ENTER` edits one. `+ new path` (`ENTER`) adds an empty line and opens it for typing. Committing a change **rescans the library immediately**. |
+| DOWNLOAD FOLDER | one row | Where `y` (Save stream) puts downloaded tracks. Until you set one it shows the default cache folder (`~/.cache/mousiki`). It is added to the scanned folders automatically, so you do not repeat it as a local path. |
+| PLAYLIST PATH | `Playlist Path 1`, `2`, … plus `+ new path` | The folders playlists are loaded from. **All** of them are searched. New playlists are saved and deleted in the **first** one. If none is set, the first local path plus `/playlists` is used. |
+
+Paths accept `~` and `%USERPROFILE%` shortcuts, and both slash directions on Windows. Emptying a path line and pressing `ENTER` removes that path. (These three sections used to be on the ON/OFF tab.)
 
 **Hotkeys** (editable). Below a grey note pointing to the cheat sheet (`?`), the rebindable commands are listed under the headers PLAYBACK, NAVIGATION & VIEW, SEARCH, QUEUE, PLAYLISTS, META EDITOR, HISTORY, DOWNLOADS and SYSTEM. Each row shows a label and the key currently bound to it.
 
@@ -710,7 +721,7 @@ The longest tab. It scrolls as one list and has two parts.
 
 **FONT / CHARACTER MAP** (read-only). Shows the `A = A, a` table from `config.txt`, which lets you re-font the interface with fancy Unicode letters without changing the terminal font. It cannot be edited here. Edit the `font_en={ … }` block in `config.txt` while the app is closed.
 
-### Settings that exist (only) in `config.txt`
+### Settings that exist only in `config.txt`
 
 | Key in `config.txt` | What it does |
 |---|---|
