@@ -430,6 +430,8 @@ Below is a list of major and minor addition on top of the original v1.0. The des
   <p align="center"><img width="850" height="358" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" /></p>
   
 - **Icon for .exe** is now included.
+- **Full resizing of main playback UI** and menus when size of terminal is changed, e.g. fullscreen
+- **Added color for legends** except those that are right on the border which remain using the border_color. 
 - **Search Folder by Name via `/f:`** hit `Enter` and the content is shown in the local audio pane, similar using `f`; use `c` or `ESC` to clear. 
 - **Folder Order and Sorting** `f` shows only the titles in a folder of the hovering track in the list. It now shows which folder. `SHIFT+n` was added in the past to toggle between showing the file name and the meta data track name in the local audio files list. I adjusted the sorting algorithm now sorts what is shown in the respective column, adapting to the set `SHIFT+n` mode. 
 - **Copy/Paste/Cut in Search and Path Fields** All search fields now allow copy/paste/cut and the necessary marking. Same for fields to add local path.
