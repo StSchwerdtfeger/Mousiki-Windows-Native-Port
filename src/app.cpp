@@ -2441,12 +2441,14 @@ void App::commit_bulk_add(bool all) {
 
 // Tab layout: 0=Colors, 1=On/Off, 2=Animation, 3=Reference, 4=About App.
 //
-// The Reference tab opens with the editable LOUDNESS NORMALIZATION rows
-// (kNormLabels), then a one-line read-only note pointing at the cheat sheet
-// ('?') for the full command list, then every rebindable hotkey (kRefRows),
-// grouped into categories via the optional `header` field -- set only on a
-// category's first row, and rendered as a section title above it -- and
-// finally the read-only font-mapping table loaded from config.txt. This tab
+// The Reference tab opens with a one-line read-only note pointing at the
+// cheat sheet ('?') for the full command list, then every rebindable hotkey
+// (kRefRows), grouped into categories via the optional `header` field -- set
+// only on a category's first row, and rendered as a section title above it --
+// and finally the read-only font-mapping table loaded from config.txt. (The
+// loudness normalization values used to be editable here as well; they now
+// live in the SHIFT+V overlay of the main UI, see build_norm_menu_panel().
+// Only the on/off toggle remains on the ON/OFF tab.) This tab
 // deliberately does NOT also list the app's literal/non-rebindable key
 // commands (ESC, Y/N, the playlist and meta editors' own fixed navigation
 // and text-editing keys, and so on): there is nothing to configure for
@@ -2491,6 +2493,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
     {nullptr, "HKeyQueueOverlay", "Big Queue Overlay"}, // larger QUEUE pane floated over the main UI
     {nullptr, "HKeyOscMenu", "Oscilloscope Tuning"},  // decay / dot threshold / tail brightness, live
+    {nullptr, "HKeyNormMenu", "Normalization Tuning"}, // on/off, target level, max boost, live
     {nullptr, "HKeySleepTimer", "Sleep Timer"},       // 15/30/60/90/120 min or stop after the current song
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
@@ -2525,80 +2528,34 @@ static const RefHotkeyRow kRefRows[] = {
 };
 static constexpr int kRefRowCount = sizeof(kRefRows) / sizeof(kRefRows[0]);
 
-// The one-line, read-only note drawn right after the LOUDNESS NORMALIZATION
-// section (with a blank spacer line above it, same as a header) and before
-// the hotkeys start. Not selectable -- it costs a display line, same as a
-// header, but no entry in the row-index space below.
+// The one-line, read-only note drawn first on the tab (with a blank spacer
+// line above it, same as a header) and before the hotkeys start. Not
+// selectable -- it costs a display line, same as a header, but no entry in
+// the row-index space below.
 static const char* const kRefNote = "SEE CHEAT SHEET FOR FULL LIST OF COMMANDS, `?`";
 
-// ---------------------------------------------------------------------------
-// LOUDNESS NORMALIZATION -- the two parameters behind the "Normalize Volume"
-// toggle, editable on this tab (rather than buried in config.txt, where
-// they used to be the only way to change them). This section is first on
-// the tab, ahead of the hotkeys, so it -- and the toggle right above it on
-// the ON/OFF tab -- are the first thing this tab shows. Their selectable
-// row range sits ahead of the rebindable hotkeys and the read-only font-map
-// section:
+// Selectable row range of this tab, in order:
 //
-//     kNormStart .. kNormEnd-1        these three rows (editable)
 //     kRefStart .. kRefEnd-1          rebindable hotkeys (kRefRows)
 //     kRefEnd ..                      font-map rows (read-only)
 //
 // Every row-index translation on this tab (ref_display_row(), the scroll
 // window, settings_max_row(), the Enter-to-edit guard) has to go through
-// these four constants, which is exactly where they all used to assume a
-// single hard/soft split at kRefRowCount.
-// ---------------------------------------------------------------------------
-static const char* const kNormLabels[] = {
-    "Normalize Volume",    // bool, same setting as the ON/OFF tab's row
-    "Target Level (LUFS)", // -40..0, what every track is measured to
-    "Max Boost (dB)",      // 0..24, how much a quiet track may be lifted
-};
-static constexpr int kNormRowCount =
-    static_cast<int>(sizeof(kNormLabels) / sizeof(kNormLabels[0]));
-static constexpr int kNormStart = 0;
-static constexpr int kNormEnd = kNormStart + kNormRowCount;
-static constexpr int kRefStart = kNormEnd;
+// these two constants.
+static constexpr int kRefStart = 0;
 static constexpr int kRefEnd = kRefStart + kRefRowCount;
 
-// "-16" instead of "-16.000000". These are the only two fractional values
-// on the tab, and settings_options_for() has to render its option list with
-// exactly this formatter -- settings_cycle() finds the current value by
-// string equality, so a mismatch would silently jump to the first option.
-static std::string fmt_loudness(double v) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.1f", v);
-    std::string s(buf);
-    // Drop the ".0" of a whole number -- the '.' as well, not just the zero:
-    // a leftover "-16." is not what settings_options_for() offers, so
-    // settings_cycle() would never find it and every Left/Right would snap
-    // back to the first option instead of stepping from the current one.
-    if (s.size() > 2 && s.back() == '0' && s[s.size() - 2] == '.') {
-        s.pop_back(); // the zero
-        s.pop_back(); // ...and the point that only existed to show it
-    }
-    return s;
-}
-
-// The label column of every row on this tab is 25 cells wide, with the
-// ":" barrier sitting right behind it -- every kRefRows/kNormLabels label
-// is short enough to fit inside that without wrapping.
-static constexpr int kRefLabelW = 25;
-
-// Maps a selectable row index -- kNormStart..kNormEnd-1 for the loudness
-// parameters, kRefStart..kRefEnd-1 for the hotkeys, then the font-map
-// letters -- to the row it's actually drawn on, once the section
-// header/divider lines inserted along the way (one above the loudness
-// section, one for the read-only note right after it, one above each hotkey
-// category, one above the font map) are accounted for. Used by both the
+// Maps a selectable row index -- kRefStart..kRefEnd-1 for the hotkeys, then
+// the font-map letters -- to the row it's actually drawn on, once the
+// section header/divider lines inserted along the way (one for the
+// read-only note at the top, one above each hotkey category, one above the
+// font map) are accounted for. Used by both the
 // render block and the ColorEdit cursor placement below, so the two always
 // agree on where a given row lands.
 static int ref_display_row(int selectable_row) {
     int headers = 0;
     for (int i = 0; i <= selectable_row; ++i) {
-        if (i < kNormEnd) {
-            if (i == kNormStart) headers += 2;   // "LOUDNESS NORMALIZATION"
-        } else if (i < kRefEnd) {
+        if (i < kRefEnd) {
             if (i == kRefStart) headers += 2;    // the read-only note (blank + text), just before the hotkeys
             if (kRefRows[i - kRefStart].header) headers += 2;
         } else {
@@ -2765,7 +2722,7 @@ int App::settings_max_row() const {
         case 3: {
             int letters = 0;
             for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) ++letters;
-            return kRefEnd + letters - 1; // loudness rows + hotkeys + N font-map rows
+            return kRefEnd + letters - 1; // hotkeys + N font-map rows
         }
         case 4: {
             int MAX_Y = std::max(term_rows_ - 2, 10);
@@ -2848,18 +2805,6 @@ std::string App::settings_get_value(int row, int col) const {
         auto it = settings_.hotkeys.find(kRefRows[row - kRefStart].action);
         return it != settings_.hotkeys.end() ? it->second : "";
     }
-    // LOUDNESS NORMALIZATION rows: same three values the ON/OFF tab's
-    // "Normalize Volume" toggle and config.txt expose -- the point of
-    // putting them here is that the numbers are finally reachable without
-    // editing a file, and fmt_loudness() is what keeps them looking like
-    // "-16" rather than "-16.000000".
-    if (settings_tab_ == 3 && row >= kNormStart && row < kNormEnd) {
-        switch (row - kNormStart) {
-            case 0: return settings_.normalize ? "true" : "false";
-            case 1: return fmt_loudness(settings_.normalize_target_lufs);
-            case 2: return fmt_loudness(settings_.normalize_max_boost_db);
-        }
-    }
     return "";
 }
 
@@ -2888,26 +2833,6 @@ std::vector<std::string> App::settings_options_for(int tab, int row) const {
             case 5: return {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
             case 6: return {"left", "center", "right"};
             case 7: return {"full", "word by word", "line by line", "letter by letter", "active line only", "active word only"};
-        }
-    }
-    if (tab == 3 && row >= kNormStart && row < kNormEnd) {
-        // The loudness rows are the one non-bool cyclable thing on the
-        // Reference tab: whole numbers only, rendered through the very same
-        // formatter settings_get_value() uses so the current value is
-        // found by settings_cycle()'s string compare instead of jumping
-        // back to the first option.
-        switch (row - kNormStart) {
-            case 0: return {"true", "false"};
-            case 1: {
-                std::vector<std::string> v;
-                for (int i = -40; i <= 0; ++i) v.push_back(std::to_string(i)); // LUFS target
-                return v;
-            }
-            case 2: {
-                std::vector<std::string> v;
-                for (int i = 0; i <= 24; ++i) v.push_back(std::to_string(i)); // max boost in dB
-                return v;
-            }
         }
     }
     return {};
@@ -3027,36 +2952,6 @@ void App::settings_commit_edit() {
         }
     } else if (settings_tab_ == 3 && settings_row_ >= kRefStart && settings_row_ < kRefEnd) {
         settings_.hotkeys[kRefRows[settings_row_ - kRefStart].action] = buf;
-    } else if (settings_tab_ == 3 && settings_row_ >= kNormStart && settings_row_ < kNormEnd) {
-        // LOUDNESS NORMALIZATION: clamped to the same ranges the option
-        // lists advertise (typing a stray letter must not derail a value),
-        // then pushed into the player immediately, exactly like the ON/OFF
-        // tab's "Normalize Volume" toggle does above -- otherwise the
-        // numbers would only take effect at the next restart.
-        switch (settings_row_ - kNormStart) {
-            case 0: {
-                std::string v = to_lower(buf);
-                if (v == "true") settings_.normalize = true;
-                else if (v == "false") settings_.normalize = false;
-                else return;
-                break;
-            }
-            case 1:
-                try { settings_.normalize_target_lufs = std::clamp(std::stod(buf), -40.0, 0.0); }
-                catch (...) { return; }
-                break;
-            case 2:
-                try { settings_.normalize_max_boost_db = std::clamp(std::stod(buf), 0.0, 24.0); }
-                catch (...) { return; }
-                break;
-            default: return;
-        }
-        player_.set_normalization(settings_.normalize,
-                                  static_cast<float>(settings_.normalize_target_lufs),
-                                  static_cast<float>(settings_.normalize_max_boost_db));
-        status_line_ = std::string("loudness: ") + (settings_.normalize ? "on, target " : "off, target ")
-                     + fmt_loudness(settings_.normalize_target_lufs) + " LUFS, boost max "
-                     + fmt_loudness(settings_.normalize_max_boost_db) + " dB";
     }
 }
 
@@ -3218,9 +3113,8 @@ void App::handle_settings_key(int key) {
     }
 
     if (key == '\r' || key == '\n') {
-        // Reference tab: the loudness rows (kNormStart..kNormEnd-1) and the
-        // hotkeys (kRefStart..kRefEnd-1) are editable and sit back-to-back;
-        // the note between them and the font-map rows after them are
+        // Reference tab: the hotkeys (kRefStart..kRefEnd-1) are editable;
+        // the note above them and the font-map rows after them are
         // read-only display and never enter ColorEdit at all.
         if (settings_tab_ == 3 && settings_row_ >= kRefEnd) {
             return;
@@ -3372,6 +3266,41 @@ void App::handle_key(int key) {
         if (!arrow && (key == 27 || osc_action == "HKeyOscMenu")) {
             mode_ = Mode::Browse;
             save_settings(settings_);
+        }
+        return;
+    }
+
+    if (mode_ == Mode::NormMenu) {
+        // Loudness normalisation. Playback keeps running underneath and the
+        // level follows every change immediately; only this overlay takes
+        // keys. Unknown keys are ignored (the footer lists every key), ESC or
+        // the overlay hotkey again closes and saves.
+        const bool arrow = last_key_was_arrow();
+        if (arrow && key == 'A') { norm_menu_row_ = (norm_menu_row_ + 2) % 3; return; } // up
+        if (arrow && key == 'B') { norm_menu_row_ = (norm_menu_row_ + 1) % 3; return; } // down
+        if (arrow && key == 'D') { norm_menu_adjust(-1); return; }                      // left
+        if (arrow && key == 'C') { norm_menu_adjust(+1); return; }                      // right
+        if (!arrow && key == ' ') {
+            settings_.normalize = !settings_.normalize;
+            norm_apply();
+            return;
+        }
+        if (!arrow && (key == 'r' || key == 'R')) { // target + boost back to the defaults; on/off is left alone
+            const Settings defaults{};
+            settings_.normalize_target_lufs = defaults.normalize_target_lufs;
+            settings_.normalize_max_boost_db = defaults.normalize_max_boost_db;
+            norm_apply();
+            return;
+        }
+        std::string norm_action = resolve_hotkey_action(key);
+        if (norm_action.empty() && key >= 'a' && key <= 'z') norm_action = resolve_hotkey_action(key - 32);
+        if (norm_action.empty() && key >= 'A' && key <= 'Z') norm_action = resolve_hotkey_action(key + 32);
+        if (!arrow && (key == 27 || norm_action == "HKeyNormMenu")) {
+            mode_ = Mode::Browse;
+            save_settings(settings_);
+        } else if (!arrow && norm_action == "HKeyToggleNormalize") { // the on/off key works in here too
+            settings_.normalize = !settings_.normalize;
+            norm_apply();
         }
         return;
     }
@@ -3717,6 +3646,9 @@ void App::handle_key(int key) {
     } else if (action == "HKeyOscMenu") { // SHIFT+O: oscilloscope tuning overlay
         osci_menu_row_ = 0;
         mode_ = Mode::OsciMenu;
+    } else if (action == "HKeyNormMenu") { // SHIFT+V: loudness normalization overlay
+        norm_menu_row_ = 0;
+        mode_ = Mode::NormMenu;
     } else if (action == "HKeySleepTimer") { // SHIFT+Z: sleep timer overlay
         sleep_menu_row_ = sleep_stop_after_track_ ? 5
                         : sleep_timer_active_ ? (sleep_timer_minutes_ == 15 ? 0 : sleep_timer_minutes_ == 30 ? 1
@@ -7734,9 +7666,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 3) {
-        // Reference tab: the editable LOUDNESS NORMALIZATION rows
-        // (kNormLabels) first, then a one-line read-only note pointing at
-        // the cheat sheet, then the rebindable hotkeys grouped under
+        // Reference tab: a one-line read-only note pointing at the cheat
+        // sheet first, then the rebindable hotkeys grouped under
         // category headers (kRefRows), then a read-only display of the
         // font-mapping table (section 4 of the config, "A={A,a}" style)
         // loaded from config.txt -- as "A = A, a" rows. Combined they're
@@ -7804,24 +7735,6 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             }
             disp++;
         };
-        auto draw_norm_row = [&](int i) {
-            // LOUDNESS NORMALIZATION: same shape as a hotkey row, but the
-            // value is editable -- a bool for the first row, a formatted
-            // number for the other two -- with the "< <-> >" hint wherever
-            // Left/Right has a list to walk (settings_options_for()).
-            if (in_view()) {
-                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, pad(kNormLabels[i - kNormStart], kRefLabelW)); pos(y, 32, ":");
-                bool sel = (i == settings_row_ && mode_ != Mode::ColorEdit);
-                bool ed = (i == settings_row_ && mode_ == Mode::ColorEdit);
-                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
-                pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
-                if (sel && !settings_options_for(settings_tab_, i).empty())
-                    pos(y, 57, "\x1b[90m< \u2194 >\x1b[0m");
-                y++;
-            }
-            disp++;
-        };
         auto draw_font_row = [&](char c, int selectable_row) {
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
@@ -7834,8 +7747,6 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             disp++;
         };
 
-        if (y < MAX_Y) draw_header("LOUDNESS NORMALIZATION");
-        for (int i = kNormStart; i < kNormEnd && y < MAX_Y; ++i) draw_norm_row(i);
         if (y < MAX_Y) draw_note(kRefNote);
         for (int i = 0; i < kRefRowCount && y < MAX_Y; ++i) {
             if (kRefRows[i].header) draw_header(kRefRows[i].header);
@@ -7919,15 +7830,13 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             } else if (settings_tab_ == 3) {
                 // Reference tab scrolls once its row list exceeds the
                 // visible window -- the common case, since it holds every
-                // rebindable hotkey plus the loudness-normalization rows
-                // and any font-map rows.
+                // rebindable hotkey plus any font-map rows.
                 // Recompute the same scroll offset used when rendering (see
                 // the settings_tab_==3 branch above, and ref_display_row())
                 // so the text cursor lands on the row actually drawn there
                 // instead of one that's already scrolled off-screen. Reached
-                // only for the loudness rows and the rebindable hotkeys --
-                // the Enter handler blocks ColorEdit for the read-only
-                // font-map rows.
+                // only for the rebindable hotkeys -- the Enter handler
+                // blocks ColorEdit for the read-only font-map rows.
                 int visible = std::max(1, MAX_Y - 3);
                 int cur_display = ref_display_row(settings_row_);
                 std::vector<char> letters;
@@ -8035,6 +7944,8 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#ESC", "Big list / queue overlay: close (playback, queue and list keys keep working)"},
         {nullptr, "HKeyOscMenu", "Oscilloscope overlay: tune decay / dot threshold / tail live (toggle)"},
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
+        {nullptr, "HKeyNormMenu", "Normalization overlay: on/off, target level, max boost live (toggle)"},
+        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Normalization overlay: pick a value / change it   [SPACE] on/off   [R] reset   [ESC] close"},
         {nullptr, "#" MUISC_ALT_NAME_UC "+L", "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
         {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
         {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min or stop after this song (toggle)"},
@@ -8200,7 +8111,7 @@ bool App::list_overlay_active() const {
     if (!list_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::NormMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return true;
         default: return false;
     }
 }
@@ -8391,7 +8302,7 @@ bool App::queue_overlay_active() const {
     if (!queue_overlay_open_) return false;
     switch (mode_) {
         case Mode::Browse: case Mode::Search: case Mode::BulkAdd:
-        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return true;
+        case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::NormMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return true;
         default: return false;
     }
 }
@@ -8845,6 +8756,109 @@ std::vector<std::string> App::build_osci_menu_panel() const {
     return lines;
 }
 
+// Loudness normalisation overlay (SHIFT+V). Rows: 0 on/off, 1 target level
+// (LUFS), 2 max boost (dB). The ranges match what settings.cpp clamps on
+// load and what Player::set_normalization() accepts.
+namespace {
+struct NormKnob { const char* label; double lo, hi, step; };
+constexpr NormKnob kNormKnobs[3] = {
+    {"Normalize",     0.0,   1.0,  1.0},   // on/off, handled separately
+    {"Target level",  -40.0, 0.0,  1.0},   // LUFS
+    {"Max boost",     0.0,   24.0, 1.0},   // dB
+};
+
+// "-16" instead of "-16.0": whole numbers drop the decimal, a value that was
+// typed into config.txt with a fraction ("-14.5") keeps it.
+std::string fmt_loudness(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f", v);
+    std::string s(buf);
+    if (s.size() > 2 && s.back() == '0' && s[s.size() - 2] == '.') {
+        s.pop_back(); // the zero
+        s.pop_back(); // ...and the point that only existed to show it
+    }
+    return s;
+}
+} // namespace
+
+// Pushes the normalisation settings into the audio side. The player glides to
+// the new gain within about a second, so there is no click.
+void App::norm_apply() {
+    player_.set_normalization(settings_.normalize,
+                              static_cast<float>(settings_.normalize_target_lufs),
+                              static_cast<float>(settings_.normalize_max_boost_db));
+}
+
+void App::norm_menu_adjust(int dir) {
+    if (norm_menu_row_ == 0) {          // Left = off, Right = on
+        settings_.normalize = dir > 0;
+        norm_apply();
+        return;
+    }
+    double* v = norm_menu_row_ == 1 ? &settings_.normalize_target_lufs
+                                    : &settings_.normalize_max_boost_db;
+    const NormKnob& k = kNormKnobs[std::clamp(norm_menu_row_, 0, 2)];
+    // Round to the step grid so repeated presses never accumulate drift (and a
+    // fractional value from config.txt snaps onto whole numbers).
+    const double next = std::round((*v + dir * k.step) / k.step) * k.step;
+    *v = std::clamp(next, k.lo, k.hi);
+    norm_apply();
+}
+
+std::vector<std::string> App::build_norm_menu_panel() const {
+    const int W = kNormMenuPanelWidth;
+    const int inner = W - 4;
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string R = "\x1b[0m", HI = "\x1b[7m", DIM = "\x1b[90m";
+    const std::string bar = border + settings_.box_vertical + R;
+    auto row = [&](const std::string& plain, bool hi) {
+        const std::string body = pad_right(truncate_str(plain, inner), inner);
+        return bar + " " + (hi ? HI + body + R : body) + " " + bar;
+    };
+    auto dim_row = [&](const std::string& plain) {
+        const std::string body = pad_right(truncate_str(plain, inner), inner);
+        return bar + " " + DIM + body + R + " " + bar;
+    };
+
+    const std::string vals[3] = {
+        settings_.normalize ? "on" : "off",
+        fmt_loudness(settings_.normalize_target_lufs) + " LUFS",
+        fmt_loudness(settings_.normalize_max_boost_db) + " dB",
+    };
+
+    // What the player is doing right now with the track that is playing: its
+    // measured loudness and the gain that results (capped by Max boost).
+    std::string live;
+    const float lufs = player_.track_lufs();
+    if (!has_track_) {
+        live = "No track playing";
+    } else if (std::isnan(lufs)) {
+        live = "Track: measuring loudness...";
+    } else if (!settings_.normalize) {
+        char num[48];
+        std::snprintf(num, sizeof num, "Track %.1f LUFS   normalization is off", static_cast<double>(lufs));
+        live = num;
+    } else {
+        char num[48];
+        std::snprintf(num, sizeof num, "Track %.1f LUFS   applied gain %+.1f dB",
+                      static_cast<double>(lufs), static_cast<double>(player_.normalization_gain_db()));
+        live = num;
+    }
+
+    std::vector<std::string> lines;
+    lines.push_back(box_top("Loudness normalization", W, border));
+    for (int i = 0; i < 3; ++i) {
+        const std::string plain = std::string(i == norm_menu_row_ ? "> " : "  ") +
+                                  pad_right(kNormKnobs[i].label, 18) + pad_left(vals[i], 12);
+        lines.push_back(row(plain, i == norm_menu_row_));
+    }
+    lines.push_back(dim_row(live));
+    lines.push_back(row("[UP/DOWN] select   [LEFT/RIGHT] change", false));
+    lines.push_back(box_bottom(W, "[SPACE] on/off  [R] reset  [SHIFT+V / ESC] close", border_bottom));
+    return lines;
+}
+
 // ---------------------------------------------------------------------
 // Lyrics timing overlay (Alt+L) -- see app.h for the design.
 // ---------------------------------------------------------------------
@@ -9235,7 +9249,7 @@ std::string App::render_frame(TerminalIO& term) {
     // change always has.
     auto mode_family = [](Mode m) {
         switch (m) {
-            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return 0;
+            case Mode::Browse: case Mode::Search: case Mode::BulkAdd: case Mode::RetryLyrics: case Mode::ClearQueue: case Mode::OsciMenu: case Mode::NormMenu: case Mode::Equalizer: case Mode::SleepTimer: case Mode::LyricsEdit: return 0;
             case Mode::Settings: case Mode::ColorEdit: return 1;
             case Mode::Console: return 2;
             case Mode::Cheatsheet: return 3;
@@ -9503,6 +9517,8 @@ std::string App::render_frame(TerminalIO& term) {
     } else if (mode_ == Mode::OsciMenu) {
         // Small centred panel, clear of the scope in the top panel's right-hand side.
         draw_floating_panel(floating, build_osci_menu_panel(), kOsciMenuPanelWidth, W);
+    } else if (mode_ == Mode::NormMenu) {
+        draw_floating_panel(floating, build_norm_menu_panel(), kNormMenuPanelWidth, W);
     } else if (mode_ == Mode::LyricsEdit) {
         draw_floating_panel(floating, build_lyrics_edit_panel(), kLyricsEditPanelWidth, W);
     } else if (mode_ == Mode::SleepTimer) {

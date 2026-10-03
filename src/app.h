@@ -33,7 +33,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, Equalizer, SleepTimer, LyricsEdit };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, NormMenu, Equalizer, SleepTimer, LyricsEdit };
 enum class ListSource { Local, Online, Playlist, Folder };
 
 // One row of the main UI's "/f:" folder list: a folder that directly
@@ -950,6 +950,23 @@ private:
     static constexpr int kOsciMenuPanelWidth = 44; // just wide enough for the key legend
     std::vector<std::string> build_osci_menu_panel() const;
     void osci_menu_adjust(int dir);
+    // Shift+V (HKeyNormMenu): the loudness normalisation overlay
+    // (Mode::NormMenu), built on the same small centred floating panel as
+    // the oscilloscope overlay above. Rows: Normalize (on/off), Target level
+    // (LUFS) and Max boost (dB) -- the three values behind NormalizeVolume /
+    // NormalizeTargetLufs / NormalizeMaxBoostDb in config.txt. Every change
+    // is pushed into the player immediately (it glides to the new gain within
+    // about a second), so what you adjust is what you hear; a live line shows
+    // the playing track's measured loudness and the gain being applied.
+    // Up/Down pick a row, Left/Right change it (on the first row they flip
+    // on/off), SPACE or the toggle key (HKeyToggleNormalize) switches
+    // normalisation on/off from any row, R resets target and boost to their
+    // defaults, ESC / Shift+V close (and save the values to config.txt).
+    int norm_menu_row_ = 0;
+    static constexpr int kNormMenuPanelWidth = 54; // wide enough for the key legend in the bottom border
+    std::vector<std::string> build_norm_menu_panel() const;
+    void norm_menu_adjust(int dir);
+    void norm_apply();                 // pushes settings_ -> player_
     // Shift+Z (HKeySleepTimer): the sleep timer overlay (Mode::SleepTimer), a
     // small floating panel over the live playback UI. Pick 15 / 30 / 60 / 90 /
     // 120 minutes (playback is PAUSED when it runs out, so it can be resumed),

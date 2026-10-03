@@ -365,6 +365,10 @@ void apply_default_hotkeys(Settings& s) {
             // threshold / tail brightness, live). Uppercase on purpose, same
             // convention as the other SHIFT+letter overlays above.
             {"HKeyOscMenu",                     "O"},
+            // Shift+V: the loudness normalisation overlay (on/off, target
+            // level, max boost, live). Uppercase on purpose -- plain "v" is
+            // HKeyToggleNormalize, same convention as the other overlays.
+            {"HKeyNormMenu",                    "V"},
             // Shift+E: the equaliser overlay (10 bands + presets). Uppercase
             // on purpose -- plain "e" is HKeyResetPreference.
             {"HKeyEqualizer",                   "E"},
@@ -1121,6 +1125,7 @@ void save_settings(const Settings& s) {
     out << "## Each track is measured (LUFS) while it decodes and played at NormalizeTargetLufs.\n";
     out << "## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.\n";
     out << "## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.\n";
+    out << "## Tune all three live with SHIFT+V in the main UI (the on/off switch is also on the ON/OFF tab and the `v` key)\n";
     out << "\n";
 
     out << "##-------------------------------------------\n";
