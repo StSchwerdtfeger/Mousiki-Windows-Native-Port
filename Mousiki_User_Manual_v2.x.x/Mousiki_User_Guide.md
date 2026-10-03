@@ -44,6 +44,8 @@ Several commands use **Shift + letter** (`T`, `N`, `M`, `P`, `H`, `X`) because t
 
 The main screen has a **local/online/playlist list** on the left (titled `LOCAL AUDIO FILES`, `ONLINE RESULTS` or `SAVED PLAYLISTS`), a **Queue** panel, a metadata panel with lyrics or a visualizer, and a search box. Only one of the list or the queue has **focus** at a time. Focus decides where the arrow keys work (see `TAB` below).
 
+**Window size.** The list and queue panes use every row the terminal has left under the metadata panel, progress bar and search box, so a maximised window is filled down to its last line. Resize at any time, also while a menu is open: Settings, Console, the playlist and meta editors and the listening history take the same height as the main screen, and the cheat sheet (`?`) uses the full terminal height. The playlist and meta editors keep a few rows at the bottom for their legend and status messages. The cheat sheet and the listening history keep no empty rows. The history shows a status message in a row of its own only while there is one.
+
 ### Play mode letter
 
 The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` repeat queue.
@@ -400,7 +402,7 @@ Brings back the queue that was cleared last with `SHIFT+X`. The restored tracks 
 
 ### Queue to playlist (`CTRL+SHIFT+U`)
 
-Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` to save. Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
+Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` or `Fn+←` to save. Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
 
 ### Clear queue prompt (`SHIFT+X`)
 
@@ -449,7 +451,7 @@ Paste a YouTube playlist link to queue tracks from it.
 | `ENTER` | Depends on focus. See the table below. |
 | `4` / `5` | Move the highlighted track up or down in the playlist you are building |
 | `D` / `DEL` / `BACKSPACE` | Remove the highlighted track (track list focused). On the Saved Playlists tab, `DEL` deletes the selected playlist after a Yes/No confirmation. |
-| `HOME` | Save the playlist |
+| `HOME` / `Fn + ←` | Save the playlist |
 | `SHIFT+←` / `SHIFT+→` | Mark text in the name and search fields |
 | `CTRL+C` / `CTRL+X` / `CTRL+V` | Copy, cut and paste text in those fields |
 
@@ -634,6 +636,7 @@ Sets the colours of the interface. There are **15 rows**, each with a name, one 
 | | ACTIVE L FG | BG | The active line. |
 | | ACTIVE W FG | BG | The active word. |
 | HEADER | TEXT | none | The section titles in Reference and in the ON/OFF path lists. Text colour only, no background. |
+| LEGEND | TEXT | none | The key command legends: the hint lines such as `[ESC] close` at the bottom of the Settings, the big list and queue overlays (`SHIFT+L` / `SHIFT+K`), the playlist editor, the meta editor and the listening history, plus the small `< ↔ >` and note hints inside the Settings. Text colour only, no background. Default `90` (the grey they have always had), `0` = the terminal's own text colour. Also available as `ColorLegend=` in `config.txt`. |
 
 `FG` is the text colour, `BG` the background. Use `←`/`→` to pick the cell, then `ENTER` to type a new number.
 
