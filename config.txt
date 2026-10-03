@@ -122,6 +122,7 @@ NormalizeMaxBoostDb=9
 ## Each track is measured (LUFS) while it decodes and played at NormalizeTargetLufs.
 ## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.
 ## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.
+## Tune all three live with SHIFT+V in the main UI (the on/off switch is also on the ON/OFF tab and the `v` key)
 
 ##-------------------------------------------
 ##             EQUALIZER (Shift+E)
@@ -273,6 +274,7 @@ HKeyQueueMoveTop="$"
 HKeyQueueMoveBottom="%"
 HKeySearchFolder="/f:"
 HKeyOscMenu="O"
+HKeyNormMenu="V"
 HKeyListOverlay="L"
 HKeyQueueOverlay="K"
 HKeyShuffleNext="#"
