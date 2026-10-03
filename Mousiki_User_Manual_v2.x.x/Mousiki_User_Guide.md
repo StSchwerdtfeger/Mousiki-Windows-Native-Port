@@ -1,6 +1,6 @@
 # Mousiki User Guide v2.5.0 (Windows · Linux · macOS)
 
-This guide walks through **every entry of the in-app cheat sheet** (`?`) in the same order the cheat sheet lists them, and explains what each command does. Some settings that can only be change in the config.txt are also discussed at the end of this manual. 
+This guide walks through **every entry of the in-app cheat sheet** (`?`) in the same order the cheat sheet lists them, and explains what each command does. Some settings that can only be changed in the config.txt are also discussed at the end of this manual. 
 The key shown for each command is the **default binding**. Your own bindings may differ if you changed them in `config.txt` or under **Settings → Reference**; the cheat sheet always shows the keys you actually have.
 
 ---
@@ -33,7 +33,7 @@ The key shown for each command is the **default binding**. Your own bindings may
 
 This guide writes the modifier as `ALT` (`ALT+L`, `ALT+←` / `ALT+→`). On a Mac that is the **Option (⌥)** key: a macOS build of Mousiki shows `OPTION+L` / `OPTION+LEFT/RIGHT` in the cheat sheet and `[Option+←→]` in the playlist editor's legend, everything else is identical. Two things to know:
 
-- **Terminal setting:** Terminals on macOS only pass Option through as a modifier if you tell them to. In *Terminal.app* tick **Settings → Profiles → Keyboard → "Use Option as Meta key"**; in *iTerm2* set **Settings → Profiles → Keys → Left Option key** to **Esc+**. Without it, Option+L types a special character (e.g. `¬`) that Mousiki never sees as a command.
+- **Terminal setting:** Terminals on macOS only pass Option through as a modifier if you tell them to. In *Terminal.app* tick **Settings → Profiles → Keyboard → "Use Option as Meta key"**; in *iTerm2* set **Settings → Profiles → Keys → Left Option key** to **Esc+**. Without it, Option+L types a special character (e.g. `¬`) that Mousiki never sees as a command. You can skip this setting: the lyrics timing overlay can also be opened (and closed) with `CTRL+L` on macOS and Linux, which needs no terminal setup. `OPTION+←` / `OPTION+→` (playlist tabs) work in Terminal.app and iTerm2 without it, because they send the standard word-movement codes.
 - **Option+←/→** (playlist editor tab switch) is sent as `ESC b` / `ESC f` by Terminal.app and iTerm2 out of the box, and Mousiki understands both that and the xterm form, so it works without the setting above.
 
 ### Uppercase letters
@@ -48,7 +48,7 @@ The main screen has a **local/online/playlist list** on the left (titled `LOCAL 
 
 ### Play mode letter
 
-The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` queue then stop.
+The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` repeat queue.
 
 ---
 
@@ -155,7 +155,7 @@ The equalizer works on everything the player plays and changes the sound **while
 
 ### The five play modes (`m`)
 
-Each press moves to the next mode in this order: **list → repeat → shuffle → stop → queue then stop → list …**
+Each press moves to the next mode in this order: **list → repeat → shuffle → stop → repeat queue → list …**
 
 | Mode | Letter | Behavior when a track finishes |
 |---|---|---|
@@ -163,7 +163,7 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | Repeat | `R` | Replays the same track again. |
 | Shuffle | `S` | Plays a random track. If the queue has more than one item, a random queue item is chosen. |
 | Stop | `O` | Plays the track and then stops, with no automatic advance. The "no track loaded" screen with the cassette is shown. |
-| Queue then stop | `Q` | Plays the queue **once**, then stops. It never falls through to the library: when the queue is used up, playback ends (like Stop mode), also when the queue was empty to begin with and a library track finishes. With the queue **locked** (default) each item goes to the back as it is played and the pass ends after the last unplayed item, so the queue is back in its original order afterwards. Tracks you add during the pass (`a`, `e`, bulk add) still play before it ends. Unlocked, played items leave the queue and it stops when it is empty. `n` always skips on, also after the pass is over (it starts a new one). |
+| Repeat queue | `Q` | The queue loops: each played item is moved to the back instead of being removed. With an empty queue it behaves like list mode. |
 
 ---
 
@@ -183,7 +183,6 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | `N` (Shift+N) | Toggle metadata-only track list | Switches every list row between **filename** and **metadata title** (the embedded title tag). Files with no title tag, or whose tags have not been read yet, keep showing their filename. This also switches what "title A-Z" sorts by (see below). Also available in **Settings → ON/OFF**. |
 | `l` | Retry lyrics | Opens a small form to fetch lyrics again with a **manual title and artist**. Use it when the automatic match was wrong. |
 | `ALT+l` | Adjust lyrics | Opens a small overlay menu for live adjustment of the lyrics timing. |
-
 | `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope's afterglow, line thickness and tail **live**. See *The oscilloscope* below. |
 | `V` (Shift+V) | Normalization tuning | Opens a small overlay to switch loudness normalization on or off and to change its target level and maximum boost **live**. See *Loudness normalization overlay* below. |
 | `Z` (Shift+Z) | Sleep timer | Opens a small overlay to pause playback after 15, 30, 60, 90 or 120 minutes, or to stop after the current song. See *Sleep timer overlay* below. |
@@ -293,6 +292,8 @@ Playback keeps running while the overlay is open, but its keys are the only ones
 
 **Live line.** Below the three rows a grey line shows what is happening with the track that is playing right now: its measured loudness and the gain that is applied to it (`+` = raised, `-` = lowered). If a quiet track would need more than **Max boost**, the applied gain stops at that limit, so this line is the quickest way to see whether the boost limit is holding a track back. For the first seconds of a track it shows *measuring loudness* until enough audio has been analysed.
 
+![Loudness normalization overlay](images/Playlist_menu_NORM_OVERLAY.png)
+
 ### Sleep timer overlay (`SHIFT+Z`)
 
 A small overlay for falling asleep to music. Playback keeps running while it is open.
@@ -353,14 +354,14 @@ The queue is a list of tracks that play **before** the normal list continues. Pr
 
 | Key | Action | What it does |
 |---|---|---|
-| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next. Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
+| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next (while the queue is locked: right after the track that was played last). Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
 | `e` | Add hovering track to the **end** | With the **list** focused, adds the highlighted track to the end of the queue. On a playlist row it queues the whole playlist at the end. With the queue focused it only reminds you to focus the list first. |
 | `d` | Remove hovering track from queue | Removes the highlighted queue item. Focus the queue with `TAB` first. |
 | `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
 | `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
 | `$` (Shift+4) | Move to top | Moves the highlighted queue item to the very top of the queue. |
 | `%` (Shift+5) | Move to bottom | Moves the highlighted queue item to the very bottom of the queue. |
-| `!` | Lock / unlock the queue | The queue is **locked by default**: a played track moves to the end of the queue. Unlocked, it leaves the queue. See *Locked queue* below. |
+| `!` | Lock / unlock the queue | A **locked** queue keeps its tracks when they are played. See *Locked queue* below. |
 | `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
 | `CTRL+SHIFT+Z` | Undo the last queue clear | Brings back the queue that `SHIFT+X` cleared. See *Undo clear* below. |
 | `CTRL+SHIFT+U` | Queue to playlist | Saves the queue's local tracks as a playlist. See *Queue to playlist* below. |
@@ -393,9 +394,7 @@ Only one of the two overlays can be open at a time: `SHIFT+K` while the list ove
 
 ### Locked queue (`!`)
 
-The queue is **locked by default**. A locked queue keeps all its tracks: when a track is played (by auto-advance or by `n`) it **moves to the end of the queue**, so the queue loops instead of draining, and the next track is always the one at the top (in shuffle mode a random queue item is picked and sent to the end). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`.
-
-Press `!` to **unlock**: a track then **leaves the queue** once it is played, and the queue runs empty. Press `!` again to lock it. The lock state is part of the saved session, so a session saved by an older version keeps the state it was saved with (press `!` once if it comes back unlocked). The play modes do not change this, with one exception: in `Q` (queue then stop) a locked queue is played through once and playback then stops instead of looping.
+Normally a track **leaves the queue** when it is played. With the queue **locked** it stays: nothing is erased by auto-advance or by `n`; playback walks through the queue in place instead, from the track that was played last to the one after it, and wraps around from the end to the start (in shuffle mode a random queue item is picked). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`, and `a` then inserts right after the track that was played last. Press `!` again to unlock; played tracks then leave the queue again. The lock state is part of the saved session.
 
 ### Undo clear (`CTRL+SHIFT+Z`)
 
@@ -403,7 +402,7 @@ Brings back the queue that was cleared last with `SHIFT+X`. The restored tracks 
 
 ### Queue to playlist (`CTRL+SHIFT+U`)
 
-Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` to save (the editor stays open, `ESC` leaves it). Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
+Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` or `Fn+←` to save. Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
 
 ### Clear queue prompt (`SHIFT+X`)
 
@@ -452,7 +451,7 @@ Paste a YouTube playlist link to queue tracks from it.
 | `ENTER` | Depends on focus. See the table below. |
 | `4` / `5` | Move the highlighted track up or down in the playlist you are building |
 | `D` / `DEL` / `BACKSPACE` | Remove the highlighted track (track list focused). On the Saved Playlists tab, `DEL` deletes the selected playlist after a Yes/No confirmation. |
-| `HOME` | Save the playlist. The editor **stays open** and the status line below the legend confirms the save (or asks for a name first); leave with `ESC`. |
+| `HOME` / `Fn + ←` | Save the playlist |
 | `SHIFT+←` / `SHIFT+→` | Mark text in the name and search fields |
 | `CTRL+C` / `CTRL+X` / `CTRL+V` | Copy, cut and paste text in those fields |
 
@@ -467,7 +466,7 @@ Paste a YouTube playlist link to queue tracks from it.
 
 ### Leaving
 
-`ESC` closes the editor. If there are unsaved changes on the Create/Edit tab, it asks whether to save: `y` saves **and leaves**, `n` discards and leaves, `ESC` cancels the question and keeps editing.
+`ESC` closes the editor. If there are unsaved changes on the Create/Edit tab, it asks whether to save: `y` saves, `n` discards and leaves, `ESC` cancels the question and keeps editing.
 
 ---
 
@@ -578,7 +577,7 @@ Paste a YouTube playlist link to queue tracks from it.
 
 | Key | Action | What it does |
 |---|---|---|
-| `y` | Save stream | Saves the **currently playing streamed track** into your download folder (**Settings → Download Folder**, or `~/.cache/mousiki` if none is set). The file is named `Title - Artist.ext`, the cached copy is removed, and the library refreshes so the file appears as a local track. |
+| `y` | Save stream | Saves the **currently playing streamed track** into your download folder (**Settings → Paths → Download Folder**, or `~/.cache/mousiki` if none is set). The file is named `Title - Artist.ext`, the cached copy is removed, and the library refreshes so the file appears as a local track. |
 
 Status messages:
 
@@ -590,7 +589,7 @@ Status messages:
 
 ## 10. Settings (individual tabs)
 
-Press `s` on the main screen to open **Settings**. It has five tabs: **COLORS**, **ON/OFF**, **ANIMATION**, **REFERENCE** and **ABOUT APP**. The footer shows `[TAB] Switch | [↑↓←→] Navigate/Cycle | [ENTER] Edit | [S] Save | [Q] Quit`, and the status line below it reports what just changed.
+Press `s` on the main screen to open **Settings**. It has six tabs: **COLORS**, **ON/OFF**, **ANIMATION**, **PATHS**, **REFERENCE** and **ABOUT APP**. The footer shows `[TAB] Switch | [↑↓←→] Navigate/Cycle | [ENTER] Edit | [S] Save | [Q] Quit`, and the status line below it reports what just changed.
 
 ### Moving around and editing (all tabs)
 
@@ -599,7 +598,7 @@ Press `s` on the main screen to open **Settings**. It has five tabs: **COLORS**,
 | `TAB` | Next tab (wraps from ABOUT APP back to COLORS). The cursor returns to the first row. |
 | `↑` / `↓` | Previous or next row. On ABOUT APP they scroll the text. |
 | `←` / `→` | On a row with a fixed list of values (switches, sliders, choices), steps through the values and applies the change **immediately**. On COLORS they move between the first and second cell of a row instead. |
-| `ENTER` | Edits the value in place as free text. Not available on ABOUT APP or on the read-only rows of REFERENCE. |
+| `ENTER` | Edits the value in place as free text. Not available on ABOUT APP or on the read-only rows of REFERENCE. On PATHS it edits the selected path, or adds one on a `+ new path` row. |
 | `s` | **Saves to `config.txt` and returns** to the main screen. |
 | `ESC` / `q` | Returns to the main screen without writing `config.txt` at that moment. |
 
@@ -616,7 +615,7 @@ Press `s` on the main screen to open **Settings**. It has five tabs: **COLORS**,
 *The COLORS tab with the live preview on the right.*
 
 
-Sets the colours of the interface. There are **16 rows**, each with a name, one or two value cells, and a **live preview** on the right.
+Sets the colours of the interface. There are **15 rows**, each with a name, one or two value cells, and a **live preview** on the right.
 
 **Values** are numbers from the 256-colour terminal palette (`1`–`255`). `0` or an empty field means "no colour", so the terminal's own default is used. Values in the ranges 30–47 and 90–107 are used as direct terminal colour codes.
 
@@ -636,7 +635,7 @@ Sets the colours of the interface. There are **16 rows**, each with a name, one 
 | LYRICS | INACTIVE FG | BG | Lyric lines that are not active. |
 | | ACTIVE L FG | BG | The active line. |
 | | ACTIVE W FG | BG | The active word. |
-| HEADER | TEXT | none | The section titles in Reference and in the ON/OFF path lists. Text colour only, no background. |
+| HEADER | TEXT | none | The section titles in Paths and Reference. Text colour only, no background. |
 | LEGEND | TEXT | none | The key command legends: the hint lines such as `[ESC] close` at the bottom of the Settings, the big list and queue overlays (`SHIFT+L` / `SHIFT+K`), the playlist editor, the meta editor and the listening history, plus the small `< ↔ >` and note hints inside the Settings. Text colour only, no background. Default `90` (the grey they have always had), `0` = the terminal's own text colour. Also available as `ColorLegend=` in `config.txt`. |
 
 `FG` is the text colour, `BG` the background. Use `←`/`→` to pick the cell, then `ENTER` to type a new number.
@@ -645,10 +644,10 @@ Sets the colours of the interface. There are **16 rows**, each with a name, one 
 
 ![Settings, ON/OFF tab](images/Settings_ON_OFF_TAB.png)
 
-*The ON/OFF tab: switches at the top.*
+*The ON/OFF tab: a list of switches. (The folder settings are on the PATHS tab.)*
 
 
-The first part is a list of **switches** (change them with `←`/`→`). Most are true/false, but **Lyric Viz** picks between `sphere` and `osci`. Below it are the folder settings, which you edit with `ENTER`.
+This tab is a list of **switches** (change them with `←`/`→`). Most are true/false, but **Lyric Viz** picks between `sphere` and `osci`. The folder settings (LOCAL PATH, DOWNLOAD FOLDER, PLAYLIST PATH) are on the **PATHS** tab.
 
 | Setting | What it does |
 |---|---|
@@ -662,16 +661,6 @@ The first part is a list of **switches** (change them with `←`/`→`). Most ar
 | Stereo Sound | On plays in stereo (about twice the memory per loaded track), off folds left and right into mono. Turning it **off** is immediate. Turning it **on** applies from the next track. |
 | Normalize Volume | Loudness normalization on or off. Same as the `v` key. Target and boost are set with the `SHIFT+V` overlay. |
 | Show meta data only | Rows show the embedded title tag instead of the file name. Same as `SHIFT+N`. The list is re-sorted straight away. |
-
-**Folder lists** (the tab scrolls with the cursor, so a short terminal is fine):
-
-| Section | Rows | What it does |
-|---|---|---|
-| LOCAL PATH | `Local Path 1`, `2`, … plus `+ new path` | The folders scanned for music. `ENTER` edits one. `+ new path` (`ENTER`) adds an empty line and opens it for typing. Committing a change **rescans the library immediately**. |
-| DOWNLOAD FOLDER | one row | Where `y` (Save stream) puts downloaded tracks. Until you set one it shows the default cache folder (`~/.cache/mousiki`). It is added to the scanned folders automatically, so you do not repeat it as a local path. |
-| PLAYLIST PATH | `Playlist Path 1`, `2`, … plus `+ new path` | The folders playlists are loaded from. **All** of them are searched. New playlists are saved and deleted in the **first** one. If none is set, the first local path plus `/playlists` is used. |
-
-Paths accept `~` and `%USERPROFILE%` shortcuts, and both slash directions on Windows.
 
 ### Tab 3: ANIMATION
 
@@ -687,21 +676,17 @@ All rows are cycled with `←`/`→` (or typed after `ENTER`).
 | Vis. Fluidity | 1–10 | How the visualizer bars **rise**. It affects only the rising motion. |
 | Waveform Style | raw, smooth | Waveform drawing style. Same as the `w` key. |
 | Disk Speed | 0.01, 0.05, 0.10, 0.17, 0.25, 0.50, 0.75, 1.00 | How fast the disk spins. |
-| Playback Mode | list, loop, shuffle, stop, queue then stop | The play mode. Same as the `m` key (`loop` is the mode shown as *repeat*). |
+| Playback Mode | list, loop, shuffle, stop, repeat queue | The play mode. Same as the `m` key (`loop` is the mode shown as *repeat*). |
 | Vis. Degradation | 1–10 | How quickly bars **fall**. `1` is a slow, VU-meter-like fade, `10` a near-instant cutoff. |
 | Vis. Viscosity | 1–10 | How strongly the bar motion is damped and smoothed between neighbouring bars. |
 | Lyrics Alignment | left, center, right | Where lyric lines sit in their area. |
 | Lyrics Animation | full, word by word, line by line, letter by letter, active line only, active word only | How lyrics are revealed and highlighted as the song plays. |
 
-### Tab 4: REFERENCE
+### Tab 4: PATHS
 
-![Settings, Reference tab](images/Settings_REFERENCE_TAB.png)
+*The PATHS tab: the folders Mousiki reads music from, downloads to and keeps playlists in. (There is no screenshot for this tab yet.)*
 
-*The REFERENCE tab: the rebindable hotkeys (scroll for the rest).*
-
-The longest tab. It scrolls as one list and has two parts. 
-
-**Folder settings** (editable, below the hotkeys, under the headers LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST PATH). Move onto a row and press `ENTER` to edit it:
+Three sections, each under its own header. Move onto a row and press `ENTER` to edit it. The tab scrolls with the cursor, so a short terminal is fine.
 
 | Section | Rows | What it does |
 |---|---|---|
@@ -709,9 +694,17 @@ The longest tab. It scrolls as one list and has two parts.
 | DOWNLOAD FOLDER | one row | Where `y` (Save stream) puts downloaded tracks. Until you set one it shows the default cache folder (`~/.cache/mousiki`). It is added to the scanned folders automatically, so you do not repeat it as a local path. |
 | PLAYLIST PATH | `Playlist Path 1`, `2`, … plus `+ new path` | The folders playlists are loaded from. **All** of them are searched. New playlists are saved and deleted in the **first** one. If none is set, the first local path plus `/playlists` is used. |
 
-Paths accept `~` and `%USERPROFILE%` shortcuts, and both slash directions on Windows. Emptying a path line and pressing `ENTER` removes that path. (These three sections used to be on the ON/OFF tab.)
+Paths accept `~` and `%USERPROFILE%` shortcuts, and both slash directions on Windows. Emptying a path line and pressing `ENTER` removes that path. (These sections used to be on the ON/OFF tab.)
 
-**Hotkeys** (editable). Below a grey note pointing to the cheat sheet (`?`), the rebindable commands are listed under the headers PLAYBACK, NAVIGATION & VIEW, SEARCH, QUEUE, PLAYLISTS, META EDITOR, HISTORY, DOWNLOADS and SYSTEM. Each row shows a label and the key currently bound to it.
+### Tab 5: REFERENCE
+
+![Settings, Reference tab](images/Settings_REFERENCE_TAB.png)
+
+*The REFERENCE tab: the rebindable hotkeys (scroll for the rest).*
+
+The longest tab. It scrolls as one list and has two parts: the hotkeys, then the font map.
+
+**Hotkeys** (editable). A grey note at the top points to the cheat sheet (`?`), and the rebindable commands are listed under the headers PLAYBACK, NAVIGATION & VIEW, SEARCH, QUEUE, PLAYLISTS, META EDITOR, HISTORY, DOWNLOADS and SYSTEM. Each row shows a label and the key currently bound to it.
 
 - Press `ENTER` on a row, type the new key, and press `ENTER` again.
 - A key is written as the character itself (`n`, `T`, `#`, `+`) or as a name: `ENTER`, `TAB`, `SPACE`, `ESC`, `BACKSPACE`, `ARROW_KEY_UP`, `ARROW_KEY_DOWN`, `ARROW_KEY_LEFT`, `ARROW_KEY_RIGHT`.
@@ -721,7 +714,7 @@ Paths accept `~` and `%USERPROFILE%` shortcuts, and both slash directions on Win
 
 **FONT / CHARACTER MAP** (read-only). Shows the `A = A, a` table from `config.txt`, which lets you re-font the interface with fancy Unicode letters without changing the terminal font. It cannot be edited here. Edit the `font_en={ … }` block in `config.txt` while the app is closed.
 
-### Settings that exist only in `config.txt`
+### Settings that exist (only) in `config.txt`
 
 | Key in `config.txt` | What it does |
 |---|---|
