@@ -205,7 +205,7 @@ HKeySetting="s"
 # Local Music Paths
 # Windows paths and ~ expansion both work; forward and backward slashes
 # are both fine. Several paths are fine too (one line each). Edit them live
-# in Settings -> ON/OFF ("LOCAL PATH", or "+ new path" to add a line):
+# in Settings -> REFERENCE ("LOCAL PATH", or "+ new path" to add a line):
 # committing a change rescans the library right away. Editing the file by
 # hand still works -- do that while mousiki is closed, or rescan afterwards.
 LocalMusicPath=C:\Users\you\Music
@@ -216,7 +216,7 @@ LocalMusicPath=%USERPROFILE%\Music
 # set at all, that silently falls back to %USERPROFILE%\.cache\mousiki\
 # playlists. One line per folder: playlists are listed and loaded from all
 # of them, while saving/deleting always uses the first. Editable live in
-# Settings -> ON/OFF ("PLAYLIST PATH", plus "+ new path" for another line).
+# Settings -> REFERENCE ("PLAYLIST PATH", plus "+ new path" for another line).
 #PlaylistsPath=C:\Users\YOUR NAME!!!!!!\Music\playlists
 #PlaylistsPath=D:\Backups\playlists
 
@@ -225,7 +225,7 @@ LocalMusicPath=%USERPROFILE%\Music
 # %USERPROFILE%\.cache\mousiki, which is also what Settings shows in this
 # field by default. The folder below is added to the local music paths
 # automatically, so there is no need to repeat it as a LocalMusicPath= line.
-# Editable live in Settings -> ON/OFF ("DOWNLOAD FOLDER").
+# Editable live in Settings -> REFERENCE ("DOWNLOAD FOLDER").
 #DownloadFolder=D:\Downloads\mousiki
 
 # Navigation
