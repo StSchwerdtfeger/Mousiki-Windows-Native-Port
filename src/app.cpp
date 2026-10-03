@@ -5813,7 +5813,7 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         frame << "\x1b[41;97m " << prompt << " \x1b[0m\n";
         frame << "\n";
     } else {
-        std::string hint = "[Alt+\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
+        std::string hint = "[" MUISC_ALT_NAME "+\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
                             "[DEL] Remove | [4/5] Move \u2191\u2193 | [HOME] Save";
         frame << "\x1b[90m" << hint << "\x1b[0m\n";
         // Row 2: the text-field keys, plus Exit. Kept off row 1 so each row
@@ -8035,7 +8035,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#ESC", "Big list / queue overlay: close (playback, queue and list keys keep working)"},
         {nullptr, "HKeyOscMenu", "Oscilloscope overlay: tune decay / dot threshold / tail live (toggle)"},
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
-        {nullptr, "#ALT+L", "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
+        {nullptr, "#" MUISC_ALT_NAME_UC "+L", "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
         {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
         {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min or stop after this song (toggle)"},
         {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it   [ESC] close (the Stop play mode is left alone)"},
@@ -8060,7 +8060,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         // is the playlist editor's own fixed legend (build_playlist_screen()'s
         // footer), none of which is a rebindable hotkey.
         {"PLAYLISTS", "HKeyPlaylist", "Open Playlists (create / manage)"},
-        {nullptr, "#ALT+LEFT/RIGHT", "Switch tab (Create/Edit vs Saved Playlists)"},
+        {nullptr, "#" MUISC_ALT_NAME_UC "+LEFT/RIGHT", "Switch tab (Create/Edit vs Saved Playlists)"},
         {nullptr, "#TAB", "Cycle focus (name field / library picker / track list)"},
         {nullptr, "#UP/DOWN", "Navigate the focused list/picker (fixed arrow keys)"},
         {nullptr, "#ENTER", "Add hovering track to playlist / load selected playlist"},

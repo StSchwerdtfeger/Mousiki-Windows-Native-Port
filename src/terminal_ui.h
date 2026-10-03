@@ -79,6 +79,24 @@ constexpr int kKeyCtrlShiftZ = 313;
 // so another sentinel (see kKeyCtrlShiftS/X above); not rebindable.
 constexpr int kKeyAltL = 314;
 
+// Name of the Alt key as shown in legends / the cheat sheet. The Mac keyboard
+// has no key called Alt -- the same key (the modifier the terminal reports as
+// "Alt/Meta") is labelled Option there. Chosen at compile time, so Windows and
+// Linux builds are byte-for-byte unaffected. Two spellings, because the
+// legends use both: mixed case for hint lines ("Option+") and upper case for
+// the cheat sheet's key column ("OPTION+L"). String literals, so they
+// concatenate:
+//   "[" MUISC_ALT_NAME "+L]"
+// Note: only the LABELS change -- the key handling itself is identical (the
+// terminal sends ESC-prefixed / modifier-flagged sequences either way).
+#if defined(__APPLE__)
+#  define MUISC_ALT_NAME      "Option"
+#  define MUISC_ALT_NAME_UC   "OPTION"
+#else
+#  define MUISC_ALT_NAME      "Alt"
+#  define MUISC_ALT_NAME_UC   "ALT"
+#endif
+
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
 class TerminalIO {
