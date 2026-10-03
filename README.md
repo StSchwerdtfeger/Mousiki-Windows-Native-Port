@@ -1,6 +1,6 @@
 <div align="center">
     
-# Mousiki Windows Native Port v2.5.0 🎵 
+# Mousiki v2.5.0 (Windows · Linux · macOS) 🎵 
 
 <p align="center">
   <a href="https://opensource.org/" target="_blank">
@@ -22,11 +22,11 @@
 
 </div>
 
-A native Windows port (including a bunch of modifications and additions; design maintained) of the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) — a terminal music player for macOS/Linux built for people who prefer control, simplicity, and a keyboard. Note about the name: it is the greek word for music and is pronounced mousi-**key**! ;) All credits for the design, main feature set, and the vast majority of the code goes to the original author. Feel free to give feedback in the discussions and report issues you might experience using this modified port.
+Mousiki port that also runs natively on Windows (including a bunch of modifications and additions; design maintained; Linux/macOS compatibility re-added). Mousiki is a terminal music player, originally build for macOS/Linux built by the amazing [itzender5820/mousiki](https://github.com/itzender5820/mousiki) for people who prefer control, simplicity, and a keyboard (mousi-**key**). All credits for the design, main feature set, and the vast majority of the code goes to the original author. Since v2.5.0 the same code base builds natively on **Linux and macOS** again, too (see [Quick start (Linux / macOS)](#quick-start-linux--macos)); Windows remains the primary and most tested platform. Feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
 Build yourself (see [prerequisites](#prerequisites) below) **or use the installer/portable (x64) version** that is included in the latest release (since v2.1.0). A full **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** (also as [PDF](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.pdf)) walks through every entry of the in-app cheat sheet, every settings tab and every overlay.
 
-This fork exists because the original targets POSIX (Linux/macOS/Termux) and has no Windows build path at all. This native port uses no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
+This fork exists because the original targets POSIX (Linux/macOS/Termux) and had no Windows build path at all. The Windows build uses no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. All Windows-specific code is guarded by `_WIN32`, so the very same sources also build on Linux (PulseAudio/PipeWire/ALSA) and macOS (CoreAudio) with the included `setup.sh`. Porting it surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
 Along the Win32 port, **some minor and major additions were made too**. The major ones are a **playlist menu** to create playlists from local (or downloaded) tracks, a **meta data editor** including **fetching artist/title via AcoustID** (audio fingerprinting), a **listening history** (incl. the ability to add top tracks to the playback queue), an **XY oscilloscope** as an alternative to the lyrics ball, a **10 band EQ with 12 presets**, enlarged **list/queue overlays**, and a **user manual** (.md and .pdf). Minor changes/additions are e.g. a general key to shuffle to a next title (before only the next title in the list was possible), stereo audio and loudness normalization, adding paths via the settings menu, toggling the lyrics on/off (also via a key command), an optimized search engine for Windows (searching metadata was very slow and only available 2-3 min. after starting the app), fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without the dash), a categorized cheat sheet... The design remained the same for obvious reasons; the only thing added is a Braille-ASCII music cassette shown when no track is loaded... See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list.  
 
@@ -42,12 +42,12 @@ My current setup looks like the below. The config.txt and everything that comes 
 
 ## Current Status of the Port and Modification (v2.5.0, now with standalone setup.exe / portable, see latest release)
 
-For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB) ... I might even "re-port" my version of Mousiki back to macOS/Linux to make it integratable into the main branch (which currently seems way to hard after dozens of comments in the last two weeks, at least from my perspective). However, this wont happen until I am certain there is nothing that I want or should change in this version. 
+For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I will adjust the code though to be more polished and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB) ... Since v2.5.0 my version of Mousiki also builds on macOS/Linux again (`setup.sh`), which is a first step towards making it integratable into the main branch of the original project (which still seems way too hard after dozens of comments in the last two weeks, at least from my perspective). The Linux/macOS builds are less tested than the Windows one, so reports from users on those platforms are especially welcome. 
 Concerning new feature, further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions and report issues you might experience using this modified port.
 
 ## Quick start
 
-Installer/portable (x64) is included in the latest release (since v2.1.0) or build yourself via:
+Installer/portable (x64) is included in the latest release (since v2.1.0) or build yourself via the commands below. **On Linux or macOS?** Jump to [Quick start (Linux / macOS)](#quick-start-linux--macos).
 
 ```powershell
 # from the repo root
@@ -98,7 +98,9 @@ function lala {
 Save your profile.ps1 via Ctrl + S and open a new terminal in order to be able to test your new function.
 Voilà, you can now open Mousiki from any folder you're at using the command "lala", or whatever you set as command respectively...
 
-## Prerequisites
+## Prerequisites (Windows)
+
+*(This section describes the Windows setup; for Linux/macOS see [Quick start (Linux / macOS)](#quick-start-linux--macos) above.)*
 
 Note, I had a bunch of the below already installed, so I am not sure how smooth setup.ps1 runs installing the below for the first time using setup.ps1 (such as installing Visual Studio 2022 Build Tools...).
 
@@ -153,10 +155,63 @@ PlaylistsPath=C:\Users\YOUR NAME !!!!!!!\Music\playlists
 DownloadFolder=D:\Downloads\mousiki
 ```
 
+## Quick start (Linux / macOS)
+
+Since v2.5.0 the code builds again on Linux and macOS as well (same sources, platform selected at compile time by `CMakeLists.txt`; audio via PulseAudio/PipeWire-pulse or ALSA on Linux and CoreAudio on macOS). Windows remains the primary, most tested platform. `setup.sh` is the counterpart of `setup.ps1`:
+
+```bash
+# from the repo root
+chmod +x setup.sh   # only needed once, if the executable bit got lost (e.g. after unzipping)
+./setup.sh
+```
+
+It detects your package manager (apt, dnf, pacman, zypper, apk, or Homebrew on macOS), installs only what is missing (see the table below), then configures and builds with CMake. The binary ends up in `build/mousiki`, with `scripts/` (including the freshly built `fpcalc`) copied next to it.
+
+Options:
+
+| Option | Effect |
+|---|---|
+| `--skip-deps` | configure and build only, don't touch the package manager / pip |
+| `--debug`, `--build-type Release\|Debug` | build type (default `Release`) |
+| `--install` | additionally creates a launcher `~/.local/bin/mousiki`, so you can start the app from anywhere by typing `mousiki` |
+| `-y`, `--yes` | don't ask before installing packages |
+| `-h`, `--help` | show the options |
+
+> [!NOTE]
+> Package installation uses `sudo` on Linux when you are not root. On macOS the script needs [Homebrew](https://brew.sh) and the Xcode Command Line Tools (`xcode-select --install`, they provide the C++ compiler); if one is missing, the script tells you and stops. The launcher from `--install` is a small wrapper script on purpose and not a symlink: macOS does not resolve symlinks when the binary looks up its `scripts/` folder.
+
+Run it:
+
+```bash
+./build/mousiki
+```
+
+The config file is created at `~/.config/mousiki/config.txt` (the `config.txt` in the repo root is a documented template; Linux/macOS paths such as `LocalMusicPath=~/Music` work, the Windows examples in it do not apply). Any UTF-8 terminal works.
+
+| Tool | Why | Installed by `setup.sh` as |
+|---|---|---|
+| C++17 compiler, CMake ≥ 3.16 | builds the app and the `fpcalc` helper | `build-essential` / `gcc-c++` / `base-devel` / `build-base` + `cmake`; Xcode CLT on macOS |
+| ALSA + PulseAudio libraries (Linux) | audio output (miniaudio loads them at runtime; PipeWire works through `pipewire-pulse` / `pipewire-alsa`) | `libasound2-dev libpulse-dev` (apt), `alsa-lib-devel pulseaudio-libs-devel` (dnf), … |
+| FFmpeg (incl. `ffprobe`) | Opus decoding, metadata, AcoustID decoding, tag writing | `ffmpeg` (on Fedora from RPM Fusion; `setup.sh` falls back to `ffmpeg-free` and prints a hint) |
+| yt-dlp | online search fallback, playlists, streaming, downloads | `yt-dlp` from the package manager, otherwise `pip install --user yt-dlp` (then `~/.local/bin` has to be on your `PATH`) |
+| Python 3 + `requests` | lyrics, fast online search, AcoustID fetch (`requests` is only needed for lyrics) | `python3`, `python3-requests` (or `pip install --user requests`) |
+| `xclip` / `wl-clipboard` (Linux, optional) | pasting into the search field; macOS uses the built-in `pbpaste` | `xclip` on X11, `wl-clipboard` on Wayland |
+
+Just like on Windows, FFmpeg, yt-dlp and Python are independent of each other and of the core player: without them, local playback of MP3/FLAC/WAV etc. still works. If you prefer to install everything yourself, build manually:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+Keep the `scripts/` folder next to the binary if you move it, otherwise lyrics, fast online search and the AcoustID fetch stop working.
+
 ## Default Keybindings
 
 Rebindable in `C:\Users\USER\.config\mousiki\config.txt` or in Settings → Reference (`s`). Keys written as `SHIFT+x` are the **uppercase letter** (e.g. `HKeyCycleSortMode="T"`), because the plain lowercase letter already does something else. Some commands are fixed (not rebindable): `ESC`, `Y`/`N` in prompts, `SHIFT+B`, `SHIFT+↑/↓` in the overlays, and the keys inside the playlist and meta editors including `CTRL+SHIFT+S/X`.
 See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for every command in detail or use `?` for the cheat sheet inside the app (it always shows the keys you actually have bound).
+
+Note that macOS uses the Option key as substitute for ALT! When installing on macOS all key command legends and the cheat sheet should be adjusted accordingly. 
 
 ### System
 | Action | Keybinding | Description |
@@ -249,7 +304,7 @@ In the meta data menu, the tabs can be changed via `left / right`. I guess the h
 
 ## What had to change
 
-Around thirteen files needed direct `#ifdef _WIN32` branches; a similar number needed changes that apply on every platform but were only ever exposed by something Windows does differently (mostly the UTF-8 path handling below). Everything else compiled and ran unmodified. Due to the fast modifications, it became to hard to track what has changed compared the original version. In the future I might create a "re-port" back to macOS/Linux including the various additions I made, such that they eventually can be added to the original branch of this fork... This will only be done when I stopped adjusting and gave a while in order to get feedback from other users, did enough testing myself etc.
+Around thirteen files needed direct `#ifdef _WIN32` branches; a similar number needed changes that apply on every platform but were only ever exposed by something Windows does differently (mostly the UTF-8 path handling below). Everything else compiled and ran unmodified. Due to the fast modifications, it became to hard to track what has changed compared the original version. Since v2.5.0 this adjusted code also builds on macOS/Linux again, additions included (`setup.sh`), so that they can eventually be added to the original branch of this fork. The Linux/macOS side has seen less testing than Windows so far; feedback from other users is welcome.
 
 ### Console & terminal I/O
 
@@ -297,6 +352,7 @@ A few things added on top of the original design rather than required to run it 
 
 ### Major Additions / Modifications
 
+- **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly. 
 - **Sleep timer** with several options to choose from (open via `SHIFT+z`. Can be truned off gain. Timer resets after restart of the app and "off" is set as default.
 - **Adjust lyrics timing** menu where an offset of max. +/-120s can be added tot he lyrics. This is specially helpful when songs where downloaded from yourube, where a video version includes scenes before the actual song starts etc.
 - **Big local audio file list and queue overlay** via `SHIFT+ l / k`. Queues can be locked (so tracks don't disappear anymore) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
