@@ -335,7 +335,7 @@ Track switches used to spin up a fresh OS thread per track to call into WASAPI. 
 
 ### Locale
 
-`main()` calls `setlocale(LC_ALL, "")` to get correct character handling for the active locale — inherited from the original, not Windows-specific. What's Windows-specific is the consequence: that call also sets `LC_NUMERIC`, and on a comma-decimal Windows locale (German, French, ...), every `std::stod()` call in the app — settings parsing, `ffprobe`/JSON durations, lyric timestamps — silently truncated at the first `.` with no exception thrown. `LC_NUMERIC` is now pinned back to `"C"` immediately after, independent of whatever the rest of the locale is doing.
+`main()` calls `setlocale(LC_ALL, "")` to get correct character handling for the active locale — inherited from the original, not Windows-specific. What's Windows-specific is the consequence: that call also sets `LC_NUMERIC`, and on a comma-decimal Windows locale (German, French, ...), every `std::stod()` call in the app — settings parsing, `ffprobe`/JSON duration, lyric timestamps — silently truncated at the first `.` with no exception thrown. `LC_NUMERIC` is now pinned back to `"C"` immediately after, independent of whatever the rest of the locale is doing.
 
 ### Thread-safety net
 
@@ -347,25 +347,30 @@ Every background `std::thread` (metadata sweep, decode, lyrics fetch, waveform p
 
 ## Added Features Beyond the Port
 
-A few things added on top of the original design rather than required to run it at all, some of them minor, some of them major changes/additions.
+Below is a list of major and minor addition on top of the original v1.0. The design remained untouched.
 
 ### Major Additions / Modifications
 
-- **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly. 
-- **Sleep timer** with several options to choose from (open via `SHIFT+z`. Can be truned off gain. Timer resets after restart of the app and "off" is set as default.
-- **Adjust lyrics timing** menu where an offset of max. +/-120s can be added tot he lyrics. This is specially helpful when songs where downloaded from yourube, where a video version includes scenes before the actual song starts etc.
-- **Big local audio file list and queue overlay** via `SHIFT+ l / k`. Queues can be locked (so tracks don't disappear anymore) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
-- **YX mode oscilloscope** as alternative to the lyrics ball. Paramters such as decay can be changed in an overlay menu via `SHIFT+o`.
+
+- **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly.
+- **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
+- **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`.
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
 
+- **Sleep timer** with several options to choose from (open via `SHIFT+z`. Can be turned off gain. Timer resets after restart of the app and "off" is set as default.
+ 
+ <p align="center"><img width="848" height="395" alt="grafik" src="https://github.com/user-attachments/assets/39607465-4293-47b3-a380-dd49fe936a6d" /></p>
+
+- **Adjust lyrics timing** menu where an offset of max. +/-120s can be added tot he lyrics. This is specially helpful when songs where downloaded from youtube, where a video version includes scenes before the actual song starts etc.
+
+<p align="center"><img width="848" height="397" alt="grafik" src="https://github.com/user-attachments/assets/05c23222-efb6-44be-b74b-3e47803df2d1" /></p>
+
+- **Big local audio file list and queue overlay** via `SHIFT+ l / k`. Queues can be locked (so tracks don't disappear anymore) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
 - **10 band EQ** overlay with 13 presets which can be opend in the main playback UI via `SHIFT+e`.
 
 <p align="center"><img width="815" height="380" alt="grafik" src="https://github.com/user-attachments/assets/861491c8-68d5-46f1-bf9f-c38e413f1f12" /></p>
 
-- **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
-- **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
-- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab.
 - **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays.
  
 <p align="center"><img width="850" height="402" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" /></p>
@@ -410,9 +415,20 @@ A few things added on top of the original design rather than required to run it 
 
 <p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" /></p>
 
+- **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
+- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab. Adjust parameters in the reference tab.
+
 
 ### Minor Additions / Modifications
 
+- **Categorized** Key commands in Reference tab within the Settings. The header color is no longer hardcoded: the COLORS tab has an **`HEADER`** field (config.txt: `ColorHeader=`, default `10` = palette index 10 of 256) which drives both those category titles and the path-list titles described below.
+ 
+  <p align="center"><img width="850" height="400" alt="grafik" src="https://github.com/user-attachments/assets/e060895e-e6fa-4132-a9c9-67e2d0ea2167" /></p>
+
+- **Categorized cheat sheet** available via `?`.
+
+  <p align="center"><img width="850" height="358" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" /></p>
+  
 - **Icon for .exe** is now included.
 - **Search Folder by Name via `/f:`** hit `Enter` and the content is shown in the local audio pane, similar using `f`; use `c` or `ESC` to clear. 
 - **Folder Order and Sorting** `f` shows only the titles in a folder of the hovering track in the list. It now shows which folder. `SHIFT+n` was added in the past to toggle between showing the file name and the meta data track name in the local audio files list. I adjusted the sorting algorithm now sorts what is shown in the respective column, adapting to the set `SHIFT+n` mode. 
@@ -422,14 +438,6 @@ A few things added on top of the original design rather than required to run it 
 - **Search Engine Optimization** - Added fuzzy search ("X-Files" didn't show up when searched "X Files", i.e. without dash) and optimized speed for also searching through meta data (not only file titles), which in Windows took >2-3 min. after the app was started to be available (cache cap was also an issue and a bunch of subprocess handling via ffprobe, which remains as a fallback method in case the newly included ID3v2.3/2.4 frame-walker that reads TIT2/TPE1/TALB directly out can't handle the tag layout of a file for some reason...). The speedup currently covers MP3 handling FLAC (Vorbis comments), OGG/Opus, and M4A/AAC. 
 - **Hotkey remapping actually works in app (see above)** — as much as I understood a bug fix rather than a feature, but it's new behavior either way.
 - **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
-- **Categorized** Key commands in Reference tab within the Settings. The header color is no longer hardcoded: the COLORS tab has an **`HEADER`** field (config.txt: `ColorHeader=`, default `10` = palette index 10 of 256) which drives both those category titles and the path-list titles described below.
- 
-  <p align="center"><img width="850" height="400" alt="grafik" src="https://github.com/user-attachments/assets/e060895e-e6fa-4132-a9c9-67e2d0ea2167" /></p>
-
-- **Categorized cheat sheet** available via `?`.
-
-  <p align="center"><img width="850" height="358" alt="grafik" src="https://github.com/user-attachments/assets/f7b2b425-1156-4017-b354-bae54a7a3fb9" /></p>
-  
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à, Japanese letters etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown (can be turned off in settings)... 
 - **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Also applies to the field between the disk animation and lyrics/sphere. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
 - **Scrollable settings panel** — ON/OFF (with its path sections) and REFERENCE now scroll with the cursor instead of growing past the panel, so the tab stays usable on a short terminal (32 rows and below).
