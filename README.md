@@ -230,11 +230,11 @@ Note that macOS uses the Option key as substitute for ALT! When installing on ma
 | **Play / Pause** | `p` | Toggle playback |
 | **Next / Previous Track** | `n` / `b` | Skip between songs (`n` takes the queue first) |
 | **Shuffle Next** | `#` | Jump to a random track of the current list (ignores the queue) |
-| **Change Play-/Cyclemode** | `m` | list → repeat → shuffle → stop → repeat queue (shown as `L` `R` `S` `O` `Q` next to the search bar) |
+| **Change Play-/Cycle mode** | `m` | list → repeat → shuffle → stop → repeat queue (shown as `L` `R` `S` `O` `Q` next to the search bar) |
 | **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward (5 s) |
 | **Volume** | `1` / `2` | Increase / Decrease in-app volume (steps of 5) |
 | **Mute** | `x` | Set volume to 0 without pausing; press again to restore |
-| **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab |
+| **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab, use `SHIFT + v` for overlay menu |
 
 ### Navigation & View
 | Action | Keybinding | Description |
@@ -252,10 +252,10 @@ Note that macOS uses the Option key as substitute for ALT! When installing on ma
 | **Track list overlay** | `SHIFT + l` | Enlarged overlay of the track list pane; `SHIFT + ↑/↓` pages, `ESC` closes |
 | **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
 | **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live (`R` resets, saved on close) |
-| **Lyrics timing** | `ALT + l` | Overlay to shift the lyrics of the playing track earlier / later (`←`/`→` ±0.1 s, `↑`/`↓` ±0.5 s, `R` reset, `ENTER` saves the offset into the track's `.lrc`, `ESC` cancels). Fixed key, not rebindable |
+| **Normalization tuning** | `SHIFT + v` | Overlay to adjust the loudness normalization parameters |
+| **Lyrics timing** | `ALT + l` | Overlay to shift the lyrics of the playing track earlier / later (`←`/`→` ±0.1 s, `↑`/`↓` ±0.5 s, `R` reset, `ENTER` saves the offset into the track's `.lrc`, `ESC` cancels). |
 | **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 13 presets. | 
 | **Sleep timer** | `SHIFT + z` | Small overlay: pause playback after 15 / 30 / 60 / 90 / 120 minutes, or stop after the current song (or switch it off). Independent of the Stop play mode |
-
 
 ### Search
 | Action | Keybinding | Description |
@@ -351,7 +351,6 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 ### Major Additions / Modifications
 
-
 - **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly.
 - **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
 - **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`.
@@ -418,6 +417,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
 - **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab. Adjust parameters in the reference tab.
 
+<p align="center"><img width="874" height="397" alt="grafik" src="https://github.com/user-attachments/assets/c4a217b5-8a81-4707-ad13-dc47b79df95a" /></p>
 
 ### Minor Additions / Modifications
 
