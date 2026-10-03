@@ -210,7 +210,7 @@ Keep the `scripts/` folder next to the binary if you move it, otherwise lyrics, 
 Rebindable in `C:\Users\USER\.config\mousiki\config.txt` or in Settings → Reference (`s`). Keys written as `SHIFT+x` are the **uppercase letter** (e.g. `HKeyCycleSortMode="T"`), because the plain lowercase letter already does something else. Some commands are fixed (not rebindable): `ESC`, `Y`/`N` in prompts, `SHIFT+B`, `SHIFT+↑/↓` in the overlays, and the keys inside the playlist and meta editors including `CTRL+SHIFT+S/X`.
 See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for every command in detail or use `?` for the cheat sheet inside the app (it always shows the keys you actually have bound).
 
-Note that macOS uses the Option key as substitute for ALT! When installing on macOS all key command legends and the cheat sheet should be adjusted accordingly. 
+Note that macOS uses the Option key or Ctrl as substitute for ALT! When installing on macOS all key command legends and the cheat sheet should be adjusted accordingly. 
 
 ### System
 | Action | Keybinding | Description |
@@ -234,7 +234,7 @@ Note that macOS uses the Option key as substitute for ALT! When installing on ma
 | **Seek** | `ARROW_LEFT` / `ARROW_RIGHT` | Seek backward / forward (5 s) |
 | **Volume** | `1` / `2` | Increase / Decrease in-app volume (steps of 5) |
 | **Mute** | `x` | Set volume to 0 without pausing; press again to restore |
-| **Normalize** | `v` | Toggle loudness normalization, edit in settings' reference tab, use `SHIFT + v` for overlay menu |
+| **Normalize** | `v` | Toggle loudness normalization, edit in overlay menu, use `SHIFT + v` |
 
 ### Navigation & View
 | Action | Keybinding | Description |
@@ -397,7 +397,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/f04a4225-f4d1-48c4-a8c5-8ff9adf80a0a" /></p>
 
-- **Editable path lists in the settings panel** — Settings → REFERENCE now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
+- **Editable path lists in the settings panel** — Settings → PATH now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
   - are *live*: committing a local path rescans the library on the spot instead of waiting for the next launch;
   - take effect for playlists too — playlist folders are now searched across **all** configured `PlaylistsPath=` lines (listed/loaded from every one of them, saved/deleted in the first), instead of only a single one.
   - yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
@@ -414,7 +414,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 <p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" /></p>
 
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
-- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the overlay menu tab via `SHIFT+v`. Adjust parameters in the reference tab.
+- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the overlay menu tab via `SHIFT+v`, where parameters can be adjusted.
 
 <p align="center"><img width="874" height="397" alt="grafik" src="https://github.com/user-attachments/assets/c4a217b5-8a81-4707-ad13-dc47b79df95a" /></p>
 
@@ -441,7 +441,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 - **Shuffle-to-next** (`#`) — a manual one-off jump to a random track, independent of the persistent Shuffle play mode, and independent of the queue (which stays FIFO on purpose).
 - **Special letters** (see above) — Fixed displaying and typing special letters like Umlaute (ä, ö ü) or accents á, à, Japanese letters etc. Emojis also work, but some 3-byte Emojis may mess up the UI when shown (can be turned off in settings)... 
 - **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Also applies to the field between the disk animation and lyrics/sphere. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
-- **Scrollable settings panel** — ON/OFF (with its path sections) and REFERENCE now scroll with the cursor instead of growing past the panel, so the tab stays usable on a short terminal (32 rows and below).
+- **Scrollable settings panel** —  REFERENCE now scroll with the cursor instead of growing past the panel, so the tab stays usable on a short terminal (32 rows and below).
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
 - **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
 - **A Lyrics Engine toggle that actually gates fetching**, not just the panel's visibility (`+` to toggle, or Settings → On/Off) — previously the fetch ran and hit the network every single track regardless of whether the panel was shown. Toggling it off now shows the sphere visualization in that space instead of leaving it blank.
