@@ -270,14 +270,14 @@ Note that macOS uses the Option key as substitute for ALT! When installing on ma
 | :--- | :--- | :--- |
 | **Add to Queue (next)** | `a` | Enqueue selected track as the *next* one (several `a` presses keep their order); with the queue focused: bulk-add panel for a pasted YouTube playlist link |
 | **Add to End of Queue** | `e` | Enqueue selected track at the *end* of the queue |
-| **Lock Queue** | `!` | Toggle "locked": played tracks stay in the queue, playback walks through it in place and wraps around (shown as `locked` in the queue title) |
+| **Lock Queue** | `!` | Toggle "locked" (default: on): a played track moves to the end of the queue so it loops; unlocked, a played track leaves the queue (shown as `locked` in the queue title) |
 | **Remove from Queue** | `d` | Dequeue selected track |
 | **Move Track Up** | `4` | Move up in Queue/Playlist |
 | **Move Track down** | `5` | Move down in Queue/Playlist |
 | **Move to Top / Bottom** | `SHIFT + 4` / `SHIFT + 5` | Move the hovering queue item to the very top / bottom |
 | **Clear Queue** | `SHIFT + x` | Clear Queue (asks first) |
 | **Undo Clear Queue** | `CTRL + SHIFT + z` | Bring back the queue that was cleared last (in front of anything queued since) |
-| **Queue to Playlist** | `CTRL + SHIFT + u` | Open the playlist editor with the queue's local tracks, name field focused (type a name, `HOME` saves) |
+| **Queue to Playlist** | `CTRL + SHIFT + u` | Open the playlist editor with the queue's local tracks, name field focused (type a name, `HOME` saves and stays in the menu) |
 
 ### Playlists, Meta Data, History, Downloads
 | Action | Keybinding | Description |
@@ -365,12 +365,11 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 <p align="center"><img width="848" height="397" alt="grafik" src="https://github.com/user-attachments/assets/05c23222-efb6-44be-b74b-3e47803df2d1" /></p>
 
-- **Big local audio file list and queue overlay** via `SHIFT+ l / k`. Queues can be locked (so tracks don't disappear anymore) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
 - **10 band EQ** overlay with 13 presets which can be opend in the main playback UI via `SHIFT+e`.
 
 <p align="center"><img width="815" height="380" alt="grafik" src="https://github.com/user-attachments/assets/861491c8-68d5-46f1-bf9f-c38e413f1f12" /></p>
 
-- **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays.
+- **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays. Queues are locked by default (a played track moves to the end instead of disappearing; unlock with `!` and it leaves the queue) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
  
 <p align="center"><img width="850" height="402" alt="grafik" src="https://github.com/user-attachments/assets/52a502e6-2ccc-4dd9-94e2-84663221bda6" /></p>
 
