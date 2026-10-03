@@ -57,7 +57,7 @@ Installer/portable (x64) is included in the latest release (since v2.1.0) or bui
 
 Optional parameters: `-SkipDeps` (configure and build only, don't touch winget/pip) and `-BuildType Debug` (default is `Release`).
 
-If PowerShell blocks the script, the following temporarily disables script blocking and warning prompts for the current PowerShell session only:
+If PowerShell blocks the script, the following tFemporarily disables script blocking and warning prompts for the current PowerShell session only:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -397,7 +397,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/f04a4225-f4d1-48c4-a8c5-8ff9adf80a0a" /></p>
 
-- **Editable path lists in the settings panel** — Settings → ON/OFF now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
+- **Editable path lists in the settings panel** — Settings → REFERENCE now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
   - are *live*: committing a local path rescans the library on the spot instead of waiting for the next launch;
   - take effect for playlists too — playlist folders are now searched across **all** configured `PlaylistsPath=` lines (listed/loaded from every one of them, saved/deleted in the first), instead of only a single one.
   - yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
@@ -414,7 +414,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 <p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" /></p>
 
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
-- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the "ON / OFF" settings menu tab. Adjust parameters in the reference tab.
+- **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the overlay menu tab via `SHIFT+v`. Adjust parameters in the reference tab.
 
 <p align="center"><img width="874" height="397" alt="grafik" src="https://github.com/user-attachments/assets/c4a217b5-8a81-4707-ad13-dc47b79df95a" /></p>
 
