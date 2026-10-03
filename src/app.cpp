@@ -1169,7 +1169,7 @@ void App::resort_local_view_keep_selection() {
 
 // Re-runs the local library scan over whatever settings_.local_music_paths
 // holds right now, then rebuilds the view on top of the result. This is
-// what makes a path edited in the REFERENCE tab take effect immediately --
+// what makes a path edited in the PATHS tab take effect immediately --
 // config.txt used to promise "the library is scanned once at startup,
 // there's no live rescan", and editing a local path from Settings now IS
 // a live rescan (it still needs [S]/quit for the change to be written to
@@ -1378,7 +1378,7 @@ std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) con
 
 // The folder NEW playlists are written to and deleted from: the first
 // configured PlaylistsPath (settings_.playlists_paths[0] -- config.txt's
-// PlaylistsPath= line, editable from the REFERENCE tab's PLAYLIST PATH
+// PlaylistsPath= line, editable from the PATHS tab's PLAYLIST PATH
 // list), otherwise settings_.local_music_paths[0]/playlists (~/Music if
 // none configured at all, which by the time this runs may itself have
 // become the cache folder -- see load_library()'s cache-dir injection).
@@ -2428,11 +2428,13 @@ void App::commit_bulk_add(bool all) {
     bulk_add_scroll_ = 0;
 }
 
-// Tab layout: 0=Colors, 1=On/Off, 2=Animation, 3=Reference, 4=About App.
+// Tab layout: 0=Colors, 1=On/Off, 2=Animation, 3=Paths, 4=Reference, 5=About App.
 //
-// The Reference tab opens with the LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST
-// PATH sections (editable path rows -- see build_path_rows(); they used to
-// sit on the ON/OFF tab), then a one-line read-only note pointing at the
+// The Paths tab holds the LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH
+// sections (editable path rows -- see build_path_rows(); they used to sit
+// on the ON/OFF tab).
+//
+// The Reference tab opens with a one-line read-only note pointing at the
 // cheat sheet ('?') for the full command list, then every rebindable hotkey
 // (kRefRows), grouped into categories via the optional `header` field -- set
 // only on a category's first row, and rendered as a section title above it --
@@ -2527,17 +2529,14 @@ static const char* const kRefNote = "SEE CHEAT SHEET FOR FULL LIST OF COMMANDS, 
 
 // Selectable row range of this tab, in order:
 //
-//     0 .. ref_hotkey_start()-1                   path rows (build_path_rows())
-//     ref_hotkey_start() .. ref_hotkey_end()-1    rebindable hotkeys (kRefRows)
-//     ref_font_start() ..                         font-map rows (read-only)
+//     kRefStart .. kRefEnd-1          rebindable hotkeys (kRefRows)
+//     kRefEnd ..                      font-map rows (read-only)
 //
-// The path rows come first because the LOCAL PATH / DOWNLOAD FOLDER /
-// PLAYLIST PATH sections sit at the very top of the tab. Their number
-// depends on how many paths are configured, so the hotkey and font-map
-// ranges shift as paths are added or removed: every row-index translation
-// on this tab (ref_display_row(), the scroll window, settings_max_row(),
-// the Enter-to-edit guard) has to go through ref_hotkey_start(),
-// ref_hotkey_end() and ref_font_start() rather than assume fixed offsets.
+// Every row-index translation on this tab (ref_display_row(), the scroll
+// window, settings_max_row(), the Enter-to-edit guard) has to go through
+// these two constants.
+static constexpr int kRefStart = 0;
+static constexpr int kRefEnd = kRefStart + kRefRowCount;
 
 // The ON/OFF tab's toggle rows, in paint order -- and that order IS the
 // tab's selectable row index (settings_row_): both
@@ -2551,12 +2550,11 @@ static const char* const kOnOffToggles[] = {
 static constexpr int kOnOffToggleCount =
     static_cast<int>(sizeof(kOnOffToggles) / sizeof(kOnOffToggles[0]));
 
-// Rebuilds the path section of the REFERENCE tab: a "LOCAL PATH" header +
+// Rebuilds the row list of the PATHS tab: a "LOCAL PATH" header +
 // one row per configured local music path + a "+ new path" row, then the
 // single DOWNLOAD FOLDER row, then the same three for the playlist paths.
 // Headers are display-only (sel stays -1); everything else gets the next
-// selectable index in order, starting at 0 -- these rows are the top of
-// the tab.
+// selectable index in order, starting at 0.
 //
 // A section whose vector is still empty still shows one (empty) row: an
 // unset path has to be an editable blank field, not a missing one,
@@ -2628,56 +2626,50 @@ App::PathRow App::path_row(int selectable_row) const {
     return none;
 }
 
-int App::ref_path_count() const {
+int App::path_row_count() const {
     int n = 0;
     for (const PathRow& r : build_path_rows()) if (r.sel >= 0) ++n;
     return n;
 }
 
-int App::ref_hotkey_start() const {
-    return ref_path_count(); // the path rows come first
-}
-
-int App::ref_hotkey_end() const {
-    return ref_hotkey_start() + kRefRowCount;
-}
-
-int App::ref_font_start() const {
-    return ref_hotkey_end();
-}
-
-bool App::ref_row_is_path(int selectable_row) const {
+bool App::path_row_is_text(int selectable_row) const {
     PathRow r = path_row(selectable_row);
     return r.sel >= 0 && r.kind == PathRow::Kind::Path;
 }
 
-// Maps a selectable row index -- the path rows first, then the hotkeys, then
-// the font-map letters -- to the row it's actually drawn on, once the
-// section header/divider lines inserted along the way (two for each of the
-// path section's headers, one for the read-only note just before the
-// hotkeys, one above each hotkey category, one above the font map) are
-// accounted for. Every header contributes two display rows (a blank spacer
-// above it plus the title itself). Used by both the render block and the
-// ColorEdit cursor placement below, so the two always agree on where a
-// given row lands.
-int App::ref_display_row(int selectable_row) const {
+// Maps a selectable PATHS row to the line it is drawn on, once the section
+// headers (a blank spacer above the title plus the title itself, i.e. two
+// lines each) are accounted for. Used by both the render block and the
+// ColorEdit cursor placement, so the two always agree on where a given
+// row lands.
+int App::path_display_row(int selectable_row) const {
     int disp = 0;
     for (const PathRow& r : build_path_rows()) {
         if (r.kind == PathRow::Kind::Header) { disp += 2; continue; }
         if (r.sel == selectable_row) return disp;
         disp++;
     }
-    const int hk_start = ref_hotkey_start();
-    // Hotkeys: the read-only note (blank + text) comes first, then each
-    // row, with a header (blank + title) above a category's first row.
-    disp += 2;
-    for (int i = 0; i < kRefRowCount; ++i) {
-        if (kRefRows[i].header) disp += 2;
-        if (hk_start + i == selectable_row) return disp;
-        disp++;
+    return disp; // out of range: one past the end
+}
+
+// Maps a selectable REFERENCE row -- kRefStart..kRefEnd-1 for the hotkeys,
+// then the font-map letters -- to the row it's actually drawn on, once the
+// section header/divider lines inserted along the way (one for the
+// read-only note at the top, one above each hotkey category, one above the
+// font map) are accounted for. Every header contributes two display rows
+// (a blank spacer above it plus the title itself). Used by both the render
+// block and the ColorEdit cursor placement below.
+int App::ref_display_row(int selectable_row) const {
+    int headers = 0;
+    for (int i = 0; i <= selectable_row; ++i) {
+        if (i < kRefEnd) {
+            if (i == kRefStart) headers += 2;    // the read-only note (blank + text), just before the hotkeys
+            if (kRefRows[i - kRefStart].header) headers += 2;
+        } else {
+            if (i == kRefEnd) headers += 2;      // "FONT / CHARACTER MAP"
+        }
     }
-    // Font-map rows: "FONT / CHARACTER MAP" header (2 lines), then one line each.
-    return disp + 2 + (selectable_row - ref_font_start());
+    return selectable_row + headers;
 }
 
 std::string* App::color_field_ptr(int row, int col) {
@@ -2711,12 +2703,13 @@ int App::settings_max_row() const {
         case 0: return 15; // COLOR_SCHEMA: 16 rows (the extras are HEADER and LEGEND)
         case 1: return kOnOffToggleCount - 1; // ON/OFF: the toggles, nothing else
         case 2: return 7;  // ANIM_SCHEMA: 8 rows
-        case 3: {
+        case 3: return path_row_count() - 1; // PATHS: every selectable path/"+ new path" row
+        case 4: {
             int letters = 0;
             for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) ++letters;
-            return ref_font_start() + letters - 1; // hotkeys + path rows + N font-map rows
+            return kRefEnd + letters - 1; // hotkeys + N font-map rows
         }
-        case 4: {
+        case 5: {
             int MAX_Y = std::max(term_rows_ - 2, 10);
             int visible = std::max(1, MAX_Y - 3);
             int total = static_cast<int>(settings_.about_app_lines.size());
@@ -2772,11 +2765,11 @@ std::string App::settings_get_value(int row, int col) const {
             }
         }
     }
-    if (settings_tab_ == 3 && row >= ref_hotkey_start() && row < ref_hotkey_end()) {
-        auto it = settings_.hotkeys.find(kRefRows[row - ref_hotkey_start()].action);
+    if (settings_tab_ == 4 && row >= kRefStart && row < kRefEnd) {
+        auto it = settings_.hotkeys.find(kRefRows[row - kRefStart].action);
         return it != settings_.hotkeys.end() ? it->second : "";
     }
-    if (settings_tab_ == 3 && row < ref_hotkey_start()) {
+    if (settings_tab_ == 3) {
         // The path rows (LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH): the
         // string at their index in the owning vector, which is "" both for
         // a not-yet-set path and for a placeholder row shown while the
@@ -2894,9 +2887,9 @@ void App::settings_commit_edit() {
                 else settings_.lyrics_animation = 0;
                 break;
         }
-    } else if (settings_tab_ == 3 && settings_row_ >= ref_hotkey_start() && settings_row_ < ref_hotkey_end()) {
-        settings_.hotkeys[kRefRows[settings_row_ - ref_hotkey_start()].action] = buf;
-    } else if (settings_tab_ == 3 && settings_row_ < ref_hotkey_start()) {
+    } else if (settings_tab_ == 4 && settings_row_ >= kRefStart && settings_row_ < kRefEnd) {
+        settings_.hotkeys[kRefRows[settings_row_ - kRefStart].action] = buf;
+    } else if (settings_tab_ == 3) {
         PathRow r = path_row(settings_row_);
         if (r.kind == PathRow::Kind::Path && r.sel >= 0) {
             // A path row commits a string instead of a bool. Trim the stray
@@ -3000,8 +2993,8 @@ void App::handle_settings_key(int key) {
         le_clamp(color_edit_buffer_, edit_caret_, edit_anchor_);
         if (key == 27) { mode_ = Mode::Settings; return; } // cancel, discard buffer
         if (key == '\r' || key == '\n') {
-            std::string key_name = (settings_tab_ == 3 && settings_row_ >= ref_hotkey_start() && settings_row_ < ref_hotkey_end())
-                                  ? kRefRows[settings_row_ - ref_hotkey_start()].action : "";
+            std::string key_name = (settings_tab_ == 4 && settings_row_ >= kRefStart && settings_row_ < kRefEnd)
+                                  ? kRefRows[settings_row_ - kRefStart].action : "";
             // Hotkey overlap fix: if this is a Reference-tab hotkey being
             // rebound and the typed key is already owned by a different
             // action, reject the commit instead of silently creating a
@@ -3022,7 +3015,7 @@ void App::handle_settings_key(int key) {
             // Path commits write their own status (which path changed, that
             // the library was rescanned) -- don't bury it under the generic
             // "UPDATED".
-            bool wrote_own_status = (settings_tab_ == 3 && ref_row_is_path(settings_row_));
+            bool wrote_own_status = (settings_tab_ == 3 && path_row_is_text(settings_row_));
             settings_commit_edit();
             if (!wrote_own_status) status_line_ = key_name.empty() ? "UPDATED" : ("UPDATED " + key_name);
             mode_ = Mode::Settings;
@@ -3059,7 +3052,7 @@ void App::handle_settings_key(int key) {
         if (key == kKeyCtrlV) {
             // A path gets far more room than a color/hotkey field does --
             // the same cap typing enforces below.
-            const int limit = (settings_tab_ == 3 && ref_row_is_path(settings_row_)) ? 240 : 18;
+            const int limit = (settings_tab_ == 3 && path_row_is_text(settings_row_)) ? 240 : 18;
             le_paste(color_edit_buffer_, edit_caret_, edit_anchor_, clipboard_get(), static_cast<size_t>(limit));
             status_line_ = "PASTED";
             return;
@@ -3081,7 +3074,7 @@ void App::handle_settings_key(int key) {
             return;
         }
         // A path needs far more room than a color/hotkey field does.
-        const int edit_limit = (settings_tab_ == 3 && ref_row_is_path(settings_row_)) ? 240 : 18;
+        const int edit_limit = (settings_tab_ == 3 && path_row_is_text(settings_row_)) ? 240 : 18;
         if (is_text_key(key)) {
             le_insert(color_edit_buffer_, edit_caret_, edit_anchor_, static_cast<char>(key),
                       static_cast<size_t>(edit_limit));
@@ -3103,7 +3096,7 @@ void App::handle_settings_key(int key) {
         mode_ = Mode::Browse;
         return;
     }
-    if (settings_tab_ == 4) {
+    if (settings_tab_ == 5) {
         // About App: no fields to edit, but Up/Down still scroll the text.
         if (key == 'A') { if (settings_row_ > 0) --settings_row_; return; }
         if (key == 'B') { if (settings_row_ < settings_max_row()) ++settings_row_; return; }
@@ -3111,13 +3104,14 @@ void App::handle_settings_key(int key) {
     }
 
     if (key == '\r' || key == '\n') {
-        // Reference tab: the path rows at the top and the hotkeys after
-        // them are editable; the note above the hotkeys and the font-map
-        // rows at the end are read-only display and never enter ColorEdit
-        // at all.
-        if (settings_tab_ == 3 && settings_row_ >= ref_font_start()) {
+        // Reference tab: the hotkeys (kRefStart..kRefEnd-1) are editable;
+        // the note above them and the font-map rows after them are
+        // read-only display and never enter ColorEdit at all.
+        if (settings_tab_ == 4 && settings_row_ >= kRefEnd) {
             return;
         }
+        // PATHS tab: every path row edits in place; "+ new path" adds a
+        // line first.
         if (settings_tab_ == 3) {
             PathRow r = path_row(settings_row_);
             if (r.kind == PathRow::Kind::AddPath && r.sel >= 0) {
@@ -3880,7 +3874,7 @@ void App::handle_key(int key) {
             if (path_utf8(current_path_).find(".cache") != std::string::npos || metadata_.location == "youtube") {
                 // Same folder the DOWNLOAD FOLDER setting promises everywhere
                 // else (see load_library()'s cache-dir injection and the
-                // Settings > ON/OFF tab's Download Folder field): the
+                // Settings > PATHS tab's Download Folder field): the
                 // configured path, or ~/.cache/mousiki when none is set --
                 // never settings_.local_music_paths[0]/$HOME/Music, which
                 // this used to fall back to and had nothing to do with the
@@ -5780,7 +5774,7 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
 // bold plus settings_.header_color -- the Colors tab's HEADER row, a
 // palette index of the 256 by default (10, which is exactly the color
 // the REFERENCE tab's category titles have always been drawn in, and
-// what the ON/OFF tab's LOCAL PATH / PLAYLIST PATH titles borrow). An
+// what the PATHS tab's LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH titles borrow). An
 // explicit 0/empty means "no color" here like it does everywhere else,
 // which degrades these to plain bold rather than to a stray escape.
 static std::string header_sgr(const Settings& s) {
@@ -7469,7 +7463,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     // when it was still empty.
     auto edit_field_width = [&]() -> int {
         if (settings_tab_ == 0) return 7;
-        if (settings_tab_ == 3 && ref_row_is_path(settings_row_)) {
+        if (settings_tab_ == 3 && path_row_is_text(settings_row_)) {
             const int edge = std::max(10, W - 36);
             const int want = display_width(color_edit_buffer_) + 1;
             return std::min(edge, std::max(20, want));
@@ -7489,15 +7483,33 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         return p;
     };
 
-    static const char* kTabNames[] = {"COLORS", "ON/OFF", "ANIMATION", "REFERENCE", "ABOUT APP"};
+    static const char* kTabNames[] = {"COLORS", "ON/OFF", "ANIMATION", "PATHS", "REFERENCE", "ABOUT APP"};
 
     // 1. Tab-wrap algorithm.
     std::vector<int> top_tabs, bot_tabs;
-    int w_track = 22;
-    for (int i = 0; i < 5; ++i) {
-        int t_len = static_cast<int>(std::string(kTabNames[i]).size()) + 10;
-        if (w_track + t_len < W - 2) { top_tabs.push_back(i); w_track += t_len; }
-        else bot_tabs.push_back(i);
+    // Uses the widths the top border line really occupies (see the drawing
+    // loop below): the "SETTINGS" header is 22 columns; every tab is
+    // "  " + label + "  " + "┌" = 5 + label columns, followed by a 3-column
+    // separator ("──┐") -- or a single "─" if it is the last tab on the
+    // line. The active tab's label also carries "[" "]" (+2). The row must
+    // end at column W-1 at the latest (the final "┐" sits in column W).
+    // The old estimate (name + 10 per tab, strict "<") over-counted by 2+
+    // columns per tab, so with six tabs ABOUT APP was pushed onto the
+    // bottom border although the top border had room.
+    int w_track = 22; // columns used so far, every tab counted with its 3-col separator
+    bool top_full = false;
+    for (int i = 0; i < kSettingsTabCount; ++i) {
+        const int lab_cols = static_cast<int>(std::string(kTabNames[i]).size())
+                             + (i == settings_tab_ ? 2 : 0);
+        const int tab_cols = 5 + lab_cols;
+        // Assume this tab is the last on the line (trailing "─" = 1 column).
+        if (!top_full && w_track + tab_cols + 1 <= W - 1) {
+            top_tabs.push_back(i);
+            w_track += tab_cols + 3;
+        } else {
+            top_full = true; // keep the tab order: once one spills, all later ones do too
+            bot_tabs.push_back(i);
+        }
     }
     int w = 0;
     std::string l1, l2;
@@ -7587,7 +7599,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         // follows settings_row_ so the tab stays usable on a very short
         // terminal. (The LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH
         // sections used to be listed under the toggles; they now live on
-        // the REFERENCE tab.)
+        // the PATHS tab.)
         int visible = std::max(1, MAX_Y - 3);
         int scroll = std::clamp(settings_row_ - visible / 2, 0, std::max(0, kOnOffToggleCount - visible));
         for (int i = scroll; i < kOnOffToggleCount && y < MAX_Y; ++i) {
@@ -7617,29 +7629,18 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 3) {
-        // Reference tab: a one-line read-only note pointing at the cheat
-        // sheet first, then the rebindable hotkeys grouped under
-        // category headers (kRefRows), then the LOCAL PATH / DOWNLOAD
-        // FOLDER / PLAYLIST PATH sections (editable path lists, each
-        // ending in a "+ new path" row except the single download
-        // folder), then a read-only display of the font-mapping table (section 4 of the config, "A={A,a}" style)
-        // loaded from config.txt -- as "A = A, a" rows. Combined they're
-        // usually taller than the player view, so this scrolls as one list
-        // (viewport follows settings_row_, centered) rather than ever
-        // growing the panel past player_h. See ref_display_row() for how a
-        // selectable row maps to the row it's drawn on.
-        std::vector<char> letters;
-        for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-        int total_selectable = ref_font_start() + static_cast<int>(letters.size());
-        int display_count = ref_display_row(total_selectable - 1) + 1;
+        // PATHS tab: the LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH
+        // sections (build_path_rows()) -- editable path rows, each list
+        // ending in a "+ new path" row except the single download folder.
+        // Scrolls as one list (viewport follows settings_row_, centered)
+        // so a long list never grows the panel past player_h; see
+        // path_display_row() for how a selectable row maps to the line it
+        // is drawn on.
+        int display_count = path_display_row(path_row_count() - 1) + 1;
         int visible = std::max(1, MAX_Y - 3);
-        int cur_display = ref_display_row(settings_row_);
+        int cur_display = path_display_row(settings_row_);
         int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
 
-        // Walk every display line (headers + rows) in order, only
-        // actually drawing (and advancing y) once we're inside the
-        // visible scroll window -- same "disp/scroll/visible" shape the
-        // rest of this file's scrolling panels use.
         int disp = 0;
         auto in_view = [&]() { return disp >= scroll && y < MAX_Y; };
         auto draw_header = [&](const char* text) {
@@ -7655,35 +7656,6 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
                 pos(y, 6, header_sgr(settings_) + text + R);
-                y++;
-            }
-            disp++;
-        };
-        auto draw_hotkey_row = [&](int selectable_row) {
-            const RefHotkeyRow& row = kRefRows[selectable_row - ref_hotkey_start()];
-            if (in_view()) {
-                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, pad(row.label, 25)); pos(y, 32, ":");
-                bool sel = (selectable_row == settings_row_ && mode_ != Mode::ColorEdit);
-                bool ed = (selectable_row == settings_row_ && mode_ == Mode::ColorEdit);
-                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(selectable_row, 0), 20);
-                pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
-                y++;
-            }
-            disp++;
-        };
-        auto draw_note = [&](const char* text) {
-            // blank spacer line, then the read-only note in the legend color.
-            // Two display lines, matching the `headers += 2` that
-            // ref_display_row() adds just before the hotkeys.
-            if (in_view()) {
-                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                y++;
-            }
-            disp++;
-            if (in_view()) {
-                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
-                pos(y, 6, legend_sgr(settings_) + text + R);
                 y++;
             }
             disp++;
@@ -7735,6 +7707,80 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             }
             disp++;
         };
+        for (const PathRow& r : build_path_rows()) {
+            if (y >= MAX_Y) break;
+            if (r.kind == PathRow::Kind::Header) draw_header(r.label);
+            else draw_path_row(r);
+        }
+    } else if (settings_tab_ == 4) {
+        // Reference tab: a one-line read-only note pointing at the cheat
+        // sheet first, then the rebindable hotkeys grouped under
+        // category headers (kRefRows), then a read-only display of the font-mapping table (section 4 of the config, "A={A,a}" style)
+        // loaded from config.txt -- as "A = A, a" rows. Combined they're
+        // usually taller than the player view, so this scrolls as one list
+        // (viewport follows settings_row_, centered) rather than ever
+        // growing the panel past player_h. See ref_display_row() for how a
+        // selectable row maps to the row it's drawn on.
+        std::vector<char> letters;
+        for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
+        int total_selectable = kRefEnd + static_cast<int>(letters.size());
+        int display_count = ref_display_row(total_selectable - 1) + 1;
+        int visible = std::max(1, MAX_Y - 3);
+        int cur_display = ref_display_row(settings_row_);
+        int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
+
+        // Walk every display line (headers + rows) in order, only
+        // actually drawing (and advancing y) once we're inside the
+        // visible scroll window -- same "disp/scroll/visible" shape the
+        // rest of this file's scrolling panels use.
+        int disp = 0;
+        auto in_view = [&]() { return disp >= scroll && y < MAX_Y; };
+        auto draw_header = [&](const char* text) {
+            // empty spacer row (just the side borders)
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                y++;
+            }
+            disp++;
+
+            // the header itself, in the configurable Header color (bold;
+            // palette index 10 by default, exactly what it always was)
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, header_sgr(settings_) + text + R);
+                y++;
+            }
+            disp++;
+        };
+        auto draw_hotkey_row = [&](int selectable_row) {
+            const RefHotkeyRow& row = kRefRows[selectable_row - kRefStart];
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, pad(row.label, 25)); pos(y, 32, ":");
+                bool sel = (selectable_row == settings_row_ && mode_ != Mode::ColorEdit);
+                bool ed = (selectable_row == settings_row_ && mode_ == Mode::ColorEdit);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(selectable_row, 0), 20);
+                pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                y++;
+            }
+            disp++;
+        };
+        auto draw_note = [&](const char* text) {
+            // blank spacer line, then the read-only note in the legend color.
+            // Two display lines, matching the `headers += 2` that
+            // ref_display_row() adds just before the hotkeys.
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                y++;
+            }
+            disp++;
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, legend_sgr(settings_) + text + R);
+                y++;
+            }
+            disp++;
+        };
         auto draw_font_row = [&](char c, int selectable_row) {
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
@@ -7747,20 +7793,15 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             disp++;
         };
 
-        for (const PathRow& r : build_path_rows()) {
-            if (y >= MAX_Y) break;
-            if (r.kind == PathRow::Kind::Header) draw_header(r.label);
-            else draw_path_row(r);
-        }
         if (y < MAX_Y) draw_note(kRefNote);
         for (int i = 0; i < kRefRowCount && y < MAX_Y; ++i) {
             if (kRefRows[i].header) draw_header(kRefRows[i].header);
-            if (y < MAX_Y) draw_hotkey_row(ref_hotkey_start() + i);
+            if (y < MAX_Y) draw_hotkey_row(kRefStart + i);
         }
         if (y < MAX_Y) draw_header("FONT / CHARACTER MAP");
         for (size_t li = 0; li < letters.size() && y < MAX_Y; ++li)
-            draw_font_row(letters[li], ref_font_start() + static_cast<int>(li));
-    } else if (settings_tab_ == 4) {
+            draw_font_row(letters[li], kRefEnd + static_cast<int>(li));
+    } else if (settings_tab_ == 5) {
         // About App: shows settings_.about_app_lines (loaded verbatim
         // from config.txt's trailing ClassTextAboutApp={...}; block, not
         // a hardcoded string), scrolled so it never exceeds player_h.
@@ -7823,20 +7864,32 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 int scroll = std::clamp(settings_row_ - visible / 2, 0, std::max(0, kOnOffToggleCount - visible));
                 cy = 3 + (settings_row_ - scroll);
             } else if (settings_tab_ == 3) {
+                // PATHS tab scrolls once its row list exceeds the visible
+                // window. Recompute the same scroll offset used when
+                // rendering (see the settings_tab_==3 branch above, and
+                // path_display_row()) so the text cursor lands on the row
+                // actually drawn there. Reached only for path rows -- an
+                // AddPath row opens a new empty path row before editing.
+                int visible = std::max(1, MAX_Y - 3);
+                int cur_display = path_display_row(settings_row_);
+                int display_count = path_display_row(path_row_count() - 1) + 1;
+                int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
+                cy = 3 + (cur_display - scroll);
+            } else if (settings_tab_ == 4) {
                 // Reference tab scrolls once its row list exceeds the
                 // visible window -- the common case, since it holds every
-                // rebindable hotkey plus the path rows and any font-map rows.
-                // Recompute the same scroll offset used when rendering (see
-                // the settings_tab_==3 branch above, and ref_display_row())
-                // so the text cursor lands on the row actually drawn there
+                // rebindable hotkey plus any font-map rows. Recompute the
+                // same scroll offset used when rendering (see the
+                // settings_tab_==4 branch above, and ref_display_row()) so
+                // the text cursor lands on the row actually drawn there
                 // instead of one that's already scrolled off-screen. Reached
-                // only for the rebindable hotkeys and the path rows -- the
-                // Enter handler blocks ColorEdit for the read-only font-map rows.
+                // only for the rebindable hotkeys -- the Enter handler
+                // blocks ColorEdit for the read-only font-map rows.
                 int visible = std::max(1, MAX_Y - 3);
                 int cur_display = ref_display_row(settings_row_);
                 std::vector<char> letters;
                 for (char c = 'A'; c <= 'Z'; ++c) if (settings_.font_map.count(c)) letters.push_back(c);
-                int total_selectable = ref_font_start() + static_cast<int>(letters.size());
+                int total_selectable = kRefEnd + static_cast<int>(letters.size());
                 int display_count = ref_display_row(total_selectable - 1) + 1;
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);

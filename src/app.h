@@ -755,7 +755,7 @@ private:
     void launch_search_async(const std::string& query);
     void poll_pending_search();
 
-    // --- settings panel (5 tabs: Colors, On/Off, Animation, Reference, About App) ---
+    // --- settings panel (6 tabs: Colors, On/Off, Animation, Paths, Reference, About App) ---
     // Rendering uses absolute cursor positioning (\x1b[y;xH) rather than
     // building padded strings line by line -- each field goes exactly
     // where it's told regardless of what else is on that row, which is
@@ -763,7 +763,7 @@ private:
     // class of bug (a mis-sized pad on one row used to bleed into
     // whatever the next escape code was).
     Settings settings_;
-    static constexpr int kSettingsTabCount = 5; // Colors, On/Off, Animation, Reference, About App
+    static constexpr int kSettingsTabCount = 6; // Colors, On/Off, Animation, Paths, Reference, About App
     int settings_tab_ = 0;
     int settings_row_ = 0;   // resets to 0 on every tab switch
     int settings_col_ = 0;   // 0 or 1 -- only the Colors tab has 2-cell rows
@@ -812,20 +812,17 @@ private:
     void build_settings_screen(std::ostringstream& frame, int W, int player_h) const;
     void handle_settings_key(int key);
 
-    // --- REFERENCE tab path section (tab 3) ------------------------------
-    // At the very top of the REFERENCE tab, above the rebindable hotkeys
-    // and the read-only font map, sit the LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST
-    // PATH sections (they used to live on the ON/OFF tab, which is now a
-    // plain list of toggles). Two of them are editable path lists, each
-    // introduced by a section header and ending in a "+ new path" row.
+    // --- PATHS tab (tab 3) --------------------------------------------------
+    // The LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST PATH sections (they used
+    // to live on the ON/OFF tab, which is now a plain list of toggles). Two
+    // of them are editable path lists, each introduced by a section header
+    // and ending in a "+ new path" row.
     // Headers are painted but never selectable, so this struct maps the
     // flat selectable index the arrow keys walk (settings_row_) onto the
     // display row actually drawn on screen. Both the renderer and the
-    // ColorEdit cursor placement go through it (via ref_display_row()), so
-    // they can never disagree on where a row landed. The path rows take the
-    // selectable indices 0 .. ref_path_count()-1; the hotkeys follow at
-    // ref_hotkey_start() and the font-map rows at ref_font_start(), so
-    // those two shift whenever a path is added or removed.
+    // ColorEdit cursor placement go through it (via path_display_row()), so
+    // they can never disagree on where a row landed. The selectable rows
+    // are numbered 0 .. path_row_count()-1.
     struct PathRow {
         enum class Kind { Path, AddPath, Header };
         Kind kind = Kind::Path;
@@ -845,23 +842,21 @@ private:
     // shown as an empty field rather than as no field at all).
     std::vector<PathRow> build_path_rows() const;
     // The row backing the given selectable row; its `sel` field is -1 when
-    // the index is not a path row (a hotkey, a font-map row, out of range).
+    // the index is out of range.
     PathRow path_row(int selectable_row) const;
     // Number of selectable path rows (everything but the headers).
-    int ref_path_count() const;
-    // Selectable index of the first hotkey row (just after the path rows).
-    int ref_hotkey_start() const;
-    // One past the last hotkey row.
-    int ref_hotkey_end() const;
-    // Selectable index of the first font-map row (just after the hotkeys).
-    int ref_font_start() const;
-    // Maps a selectable REFERENCE row (hotkey, path row or font-map row) to
-    // the display line it is drawn on, headers and spacers included.
+    int path_row_count() const;
+    // Maps a selectable PATHS row to the display line it is drawn on,
+    // headers and spacers included.
+    int path_display_row(int selectable_row) const;
+    // True when the given selectable PATHS row edits free text -- a path
+    // row rather than a "+ new path" button -- since those need far more
+    // characters than a hotkey field does. Drives the edit-buffer length
+    // limit.
+    bool path_row_is_text(int selectable_row) const;
+    // Maps a selectable REFERENCE row (hotkey or font-map row) to the
+    // display line it is drawn on, headers and spacers included.
     int ref_display_row(int selectable_row) const;
-    // True when the given selectable REFERENCE row edits free text -- one of
-    // the path rows -- since those need far more characters than a hotkey
-    // field does. Drives the edit-buffer length limit.
-    bool ref_row_is_path(int selectable_row) const;
 
     // Title shown for `path` in the (search-)lists. Honours
     // settings_.meta_only: metadata-only mode substitutes the embedded
@@ -889,7 +884,7 @@ private:
 
     // Re-runs LocalSource::scan() over the current
     // settings_.local_music_paths and rebuilds local_view_ -- called when
-    // a path is edited in the REFERENCE tab, so a path change takes effect
+    // a path is edited in the PATHS tab, so a path change takes effect
     // immediately instead of only on the next launch (config.txt's own
     // comment used to say "there's no live rescan"; there is now).
     void rescan_library();

@@ -120,8 +120,8 @@ struct Settings {
     std::string button_color;
 
     // Section headers drawn by the Settings panel itself: the category
-    // titles on the REFERENCE tab, which include the "LOCAL PATH" /
-    // "DOWNLOAD FOLDER" / "PLAYLIST PATH" titles. Default "10" -- palette index 10 of 256,
+    // titles on the REFERENCE tab and the "LOCAL PATH" / "DOWNLOAD FOLDER" /
+    // "PLAYLIST PATH" titles on the PATHS tab. Default "10" -- palette index 10 of 256,
     // exactly the color the Reference tab headers have always been drawn
     // in -- changeable from the Colors tab's HEADER row, or ColorHeader=
     // in config.txt. "0"/empty = plain bold, no color.
@@ -226,7 +226,7 @@ struct Settings {
     // keeps the same config.txt byte for byte. Whichever folder it resolves
     // to is also injected into local_music_paths (App::load_library() /
     // rescan_library()), so downloads show up in the library without a
-    // second LocalMusicPath line. Editable from the REFERENCE tab's DOWNLOAD
+    // second LocalMusicPath line. Editable from the PATHS tab's DOWNLOAD
     // FOLDER row.
     std::string download_folder;
 
@@ -240,7 +240,7 @@ struct Settings {
     // PlaylistsPath= line adds one): playlists are *listed* and *loaded*
     // from all of them, while saving/deleting always uses the first one,
     // which is also the one App::playlists_dir() returns. Editable from
-    // the REFERENCE tab's PLAYLIST PATH list.
+    // the PATHS tab's PLAYLIST PATH list.
     std::vector<std::string> playlists_paths;
 
     // --- hotkey mapping ------------------------------------------------
